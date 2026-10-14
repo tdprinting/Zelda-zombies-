@@ -316,7 +316,7 @@ extern "C" void ZombiesBarricades_Draw(PlayState* play) {
         ZombiesDraw_Crate(play, w.pos, w.yaw, half, kPostHeight * 0.5f, 0.0f, 0.0f, 10.0f, kPostHeight, 10.0f);
 
         for (int b = 0; b < kBoardsPerWindow; b++) {
-            float y = 14.0f + b * 12.0f;
+            float y = 14.0f + static_cast<float>(b) * 12.0f;
             float roll = (b % 2 == 0) ? 0.12f : -0.1f;
             if (b < w.boards) {
                 ZombiesDraw_Crate(play, w.pos, w.yaw, 0.0f, y, -4.0f, roll, kWindowWidth + 6.0f, 10.0f, 6.0f);

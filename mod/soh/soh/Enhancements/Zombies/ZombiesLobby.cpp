@@ -122,7 +122,7 @@ static void Close(PlayState* play) {
 
 static void WarpToMap(PlayState* play, const LobbyMap& map) {
     gSaveContext.linkAge = ChosenAge();
-    play->linkAgeOnLoad = ChosenAge();
+    play->linkAgeOnLoad = static_cast<u8>(ChosenAge());
     play->nextEntranceIndex = map.entrance;
     play->transitionTrigger = TRANS_TRIGGER_START;
     play->transitionType = TRANS_TYPE_FADE_BLACK;
@@ -224,7 +224,7 @@ void Lobby_Update(PlayState* play, Player* player) {
     }
 
     Input& input = play->state.input[0];
-    u16 press = input.press.button;
+    u16 press = static_cast<u16>(input.press.button);
     s8 stickY = input.rel.stick_y;
     s8 stickX = input.rel.stick_x;
     if (sStickCooldown > 0) {

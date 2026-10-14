@@ -232,7 +232,8 @@ static void MoveChest(PlayState* play) {
             }
         }
         if (!options.empty()) {
-            size_t pick = std::min(static_cast<size_t>(Rand_ZeroOne() * options.size()), options.size() - 1);
+            size_t pick =
+                std::min(static_cast<size_t>(Rand_ZeroOne() * static_cast<float>(options.size())), options.size() - 1);
             SpawnTorch(play, index, options[pick]);
             return;
         }
@@ -285,7 +286,7 @@ static void AutoEquip(PlayState* play, u8 item) {
         if (gSaveContext.equips.buttonItems[b] == ITEM_NONE) {
             gSaveContext.equips.buttonItems[b] = item;
             gSaveContext.equips.cButtonSlots[b - 1] = SLOT(item);
-            Interface_LoadItemIcon1(play, b);
+            Interface_LoadItemIcon1(play, static_cast<u16>(b));
             return;
         }
     }
@@ -405,7 +406,7 @@ static constexpr int kAmmoCost = 500;
 
 static const WeaponOffer* ArmoryOffer() {
     const WeaponOffer* list = LINK_IS_ADULT ? kAdultArmory : kChildArmory;
-    int count = LINK_IS_ADULT ? std::size(kAdultArmory) : std::size(kChildArmory);
+    int count = static_cast<int>(LINK_IS_ADULT ? std::size(kAdultArmory) : std::size(kChildArmory));
     for (int i = 0; i < count; i++) {
         if (!Has(list[i].item)) {
             return &list[i];
@@ -437,12 +438,12 @@ static const ChestPrize kAdultChest[] = {
 
 static const ChestPrize& RollChest() {
     const ChestPrize* list = LINK_IS_ADULT ? kAdultChest : kChildChest;
-    int count = LINK_IS_ADULT ? std::size(kAdultChest) : std::size(kChildChest);
+    int count = static_cast<int>(LINK_IS_ADULT ? std::size(kAdultChest) : std::size(kChildChest));
     int total = 0;
     for (int i = 0; i < count; i++) {
         total += list[i].weight;
     }
-    int roll = std::min(static_cast<int>(Rand_ZeroOne() * total), total - 1);
+    int roll = std::min(static_cast<int>(Rand_ZeroOne() * static_cast<float>(total)), total - 1);
     for (int i = 0; i < count; i++) {
         if (roll < list[i].weight) {
             return list[i];
@@ -553,7 +554,7 @@ static void GiveFairyBottle() {
     for (int b = 1; b <= 3; b++) {
         if (gSaveContext.equips.cButtonSlots[b - 1] == target) {
             gSaveContext.equips.buttonItems[b] = ITEM_FAIRY;
-            Interface_LoadItemIcon1(gPlayState, b);
+            Interface_LoadItemIcon1(gPlayState, static_cast<u16>(b));
         }
     }
 }
@@ -702,7 +703,7 @@ static void Buy(PlayState* play, Station& station, const Offer& offer) {
             Fail();
             return;
         }
-        Rupees_ChangeBy(-offer.rupeeCost);
+        Rupees_ChangeBy(static_cast<s16>(-offer.rupeeCost));
     } else if (!SpendPoints(0, offer.cost)) {
         Fail();
         return;

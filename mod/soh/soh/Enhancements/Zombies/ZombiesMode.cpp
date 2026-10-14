@@ -327,8 +327,8 @@ static void UpdateEnemies(PlayState* play, Player* player) {
                 int repeats = (sRun.players[0].perks[PERK_DOUBLE_TAP] ? 1 : 0) +
                               (Stations_PapSword() && player->meleeWeaponState != 0 ? 1 : 0);
                 if (repeats > 0 && health > 1) {
-                    health = std::max<s16>(1, health - damage * repeats);
-                    actor->colChkInfo.health = health;
+                    health = static_cast<s16>(std::max(1, health - damage * repeats));
+                    actor->colChkInfo.health = static_cast<u8>(health);
                 }
                 AwardPoints(0, kPointsPerHit);
                 enemy.lastHealth = health;
@@ -446,19 +446,19 @@ static void SpawnPowerUp(PlayState* play, const Vec3f& pos, PowerUp type) {
 
 void RefillAmmo() {
     if (INV_CONTENT(ITEM_STICK) == ITEM_STICK) {
-        AMMO(ITEM_STICK) = CUR_CAPACITY(UPG_STICKS);
+        AMMO(ITEM_STICK) = static_cast<s8>(CUR_CAPACITY(UPG_STICKS));
     }
     if (INV_CONTENT(ITEM_NUT) == ITEM_NUT) {
-        AMMO(ITEM_NUT) = CUR_CAPACITY(UPG_NUTS);
+        AMMO(ITEM_NUT) = static_cast<s8>(CUR_CAPACITY(UPG_NUTS));
     }
     if (INV_CONTENT(ITEM_SLINGSHOT) == ITEM_SLINGSHOT) {
-        AMMO(ITEM_SLINGSHOT) = CUR_CAPACITY(UPG_BULLET_BAG);
+        AMMO(ITEM_SLINGSHOT) = static_cast<s8>(CUR_CAPACITY(UPG_BULLET_BAG));
     }
     if (INV_CONTENT(ITEM_BOW) == ITEM_BOW) {
-        AMMO(ITEM_BOW) = CUR_CAPACITY(UPG_QUIVER);
+        AMMO(ITEM_BOW) = static_cast<s8>(CUR_CAPACITY(UPG_QUIVER));
     }
     if (INV_CONTENT(ITEM_BOMB) == ITEM_BOMB) {
-        AMMO(ITEM_BOMB) = CUR_CAPACITY(UPG_BOMB_BAG);
+        AMMO(ITEM_BOMB) = static_cast<s8>(CUR_CAPACITY(UPG_BOMB_BAG));
     }
     if (INV_CONTENT(ITEM_BOMBCHU) == ITEM_BOMBCHU) {
         AMMO(ITEM_BOMBCHU) = 50;
@@ -551,7 +551,7 @@ static void StartRound(int round) {
     gSaveContext.health = gSaveContext.healthCapacity;
     // Black Ops gives two grenades a round; here, two bombs.
     if (INV_CONTENT(ITEM_BOMB) == ITEM_BOMB && round > 1) {
-        AMMO(ITEM_BOMB) = std::min<int>(AMMO(ITEM_BOMB) + 2, CUR_CAPACITY(UPG_BOMB_BAG));
+        AMMO(ITEM_BOMB) = static_cast<s8>(std::min<int>(AMMO(ITEM_BOMB) + 2, CUR_CAPACITY(UPG_BOMB_BAG)));
     }
 
     Extras_OnRoundStart(sRun.dogRound);
