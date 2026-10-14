@@ -34,6 +34,12 @@ static void RegisterZombiesWidgets() {
             "around you on weapons, perks, the Mystery Chest and Pack-a-Punch.\n\n"
             "Songs help: the Sun's Song turns the power on, the Song of Storms slows the horde and "
             "Zelda's Lullaby unseals Pack-a-Punch."));
+    SohGui::mSohMenu->AddWidget(path, "Zombies Only", WIDGET_CVAR_CHECKBOX)
+        .CVar(CVAR_ZOMBIES("ZombiesOnly"))
+        .Options(CheckboxOptions().DefaultValue(true).Tooltip(
+            "The whole game is Zombies of Time: loading a file goes straight to a map at night and opens the "
+            "zombies menu, every run starts with the zombies loadout, and Link can't leave the zombie maps.\n\n"
+            "Off: the normal game, and runs start with the buy button wherever Link is."));
     SohGui::mSohMenu->AddWidget(path, "Buy Button", WIDGET_CVAR_COMBOBOX)
         .CVar(CVAR_ZOMBIES("BuyButton"))
         .Options(ComboboxOptions()

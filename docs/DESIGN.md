@@ -176,6 +176,23 @@ All under Enhancements > Extra Modes > Zombies of Time, stored as
 | Keep Items After Run | off |
 | Best Round (read only) | |
 
+## Zombies-only game and main menu
+
+"Zombies Only" (on by default) turns the whole game into the mode:
+
+- Loading any file skips the intro and drops Link into the chosen map at night.
+- The main menu opens over the map. Like Black Ops', it has a list on the left: Play, Map, Link's age, Starting round, Co-op (coming soon) and Quit. The map's intel and your best round are on the right. It is drawn in Zelda's colours, with a gold Triforce and a red title. Use the D-pad or stick with A, or tap or click an entry, so it works on Android touch controls.
+- Leaving a zombie map warps Link back, and the menu returns after every game over.
+- Every run starts with the same kit:
+  - the age's sword and shield
+  - a slingshot or a bow
+  - four bombs
+  - the Fairy Ocarina, with Zelda's Lullaby, the Sun's Song and the Song of Storms
+  - three hearts and 0 rupees
+- Each round from 2 onwards adds two bombs, like Black Ops' grenades.
+- Your real save inventory comes back when the run ends.
+- Music: the Shadow Temple plays during rounds and the mini-boss theme during Wolfos rounds. Navi calls out low health. Kill all three hidden Gold Skulltulas to hear the easter-egg song.
+
 ## How it is built
 
 The mode is a self-contained SoH enhancement in

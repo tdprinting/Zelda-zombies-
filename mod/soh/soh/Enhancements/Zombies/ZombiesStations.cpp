@@ -339,6 +339,50 @@ static void GiveWeapon(PlayState* play, u8 item) {
     AutoEquip(play, item);
 }
 
+// Zombies-only starting kit, Black Ops style: a sword for the knife, a slingshot or bow
+// for the pistol, four bombs for the grenades, three hearts, and an ocarina with the
+// three songs the mode uses. The run's save snapshot puts the real inventory back after.
+void GiveLoadout(PlayState* play) {
+    bool adult = LINK_IS_ADULT;
+    for (int i = 0; i < static_cast<int>(ARRAY_COUNT(gSaveContext.inventory.items)); i++) {
+        gSaveContext.inventory.items[i] = ITEM_NONE;
+    }
+    for (int i = 0; i < static_cast<int>(ARRAY_COUNT(gSaveContext.inventory.ammo)); i++) {
+        gSaveContext.inventory.ammo[i] = 0;
+    }
+    for (int b = 1; b <= 3; b++) {
+        gSaveContext.equips.buttonItems[b] = ITEM_NONE;
+        gSaveContext.equips.cButtonSlots[b - 1] = SLOT_NONE;
+    }
+    gSaveContext.inventory.equipment &= ~0x00FF; // swords and shields
+    gSaveContext.inventory.upgrades = 0;
+    gSaveContext.isDoubleDefenseAcquired = 0;
+    gSaveContext.isMagicAcquired = 0;
+    gSaveContext.isDoubleMagicAcquired = 0;
+    gSaveContext.magicLevel = 0;
+    gSaveContext.magic = 0;
+    gSaveContext.magicCapacity = 0;
+    gSaveContext.healthCapacity = 0x30;
+    gSaveContext.health = 0x30;
+    gSaveContext.rupees = 0;
+
+    Item_Give(play, adult ? ITEM_SWORD_MASTER : ITEM_SWORD_KOKIRI);
+    Item_Give(play, adult ? ITEM_SHIELD_HYLIAN : ITEM_SHIELD_DEKU);
+    Inventory_ChangeEquipment(EQUIP_TYPE_SWORD, adult ? EQUIP_VALUE_SWORD_MASTER : EQUIP_VALUE_SWORD_KOKIRI);
+    Inventory_ChangeEquipment(EQUIP_TYPE_SHIELD, adult ? EQUIP_VALUE_SHIELD_HYLIAN : EQUIP_VALUE_SHIELD_DEKU);
+    gSaveContext.equips.buttonItems[0] = adult ? ITEM_SWORD_MASTER : ITEM_SWORD_KOKIRI;
+    Interface_LoadItemIcon1(play, 0);
+
+    GiveWeapon(play, adult ? ITEM_BOW : ITEM_SLINGSHOT);
+    AutoEquip(play, adult ? ITEM_BOW : ITEM_SLINGSHOT);
+    Item_Give(play, ITEM_BOMB_BAG_20);
+    AMMO(ITEM_BOMB) = 4;
+    AutoEquip(play, ITEM_BOMB);
+    Item_Give(play, ITEM_OCARINA_FAIRY);
+    AutoEquip(play, ITEM_OCARINA_FAIRY);
+    gSaveContext.inventory.questItems |= (1 << QUEST_SONG_LULLABY) | (1 << QUEST_SONG_SUN) | (1 << QUEST_SONG_STORMS);
+}
+
 struct WeaponOffer {
     u8 item;
     const char* name;

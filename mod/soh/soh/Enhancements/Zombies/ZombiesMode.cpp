@@ -549,6 +549,10 @@ static void StartRound(int round) {
 
     // Zelda twist: hearts come back at the start of each round instead of regenerating.
     gSaveContext.health = gSaveContext.healthCapacity;
+    // Black Ops gives two grenades a round; here, two bombs.
+    if (INV_CONTENT(ITEM_BOMB) == ITEM_BOMB && round > 1) {
+        AMMO(ITEM_BOMB) = std::min<int>(AMMO(ITEM_BOMB) + 2, CUR_CAPACITY(UPG_BOMB_BAG));
+    }
 
     Extras_OnRoundStart(sRun.dogRound);
 
@@ -610,6 +614,9 @@ static void StartRun(PlayState* play, Player* player) {
     sRun.nextDogRound = FirstDogRound(Rand_ZeroOne()) + startRound - 1;
 
     TakeSnapshot();
+    if (ZombiesOnly()) {
+        GiveLoadout(play);
+    }
     ForceNight();
     Arena_Start(play);
     Stations_Place(play);
@@ -699,6 +706,10 @@ static void OnPlayerUpdate() {
     switch (sRun.phase) {
         case Phase::Inactive:
             sRun.prompt.clear();
+            if (ZombiesOnly()) {
+                Lobby_Update(play, player);
+                return;
+            }
             if (CanStartRun(play, player)) {
                 sRun.prompt = std::string(BuyButtonName()) + ": START ZOMBIES OF TIME";
                 if (BuyPressed(play)) {
@@ -776,6 +787,7 @@ static void OnActorDestroy(void* refActor) {
 }
 
 static void OnSceneInit(int16_t sceneNum) {
+    Lobby_OnSceneInit(sceneNum);
     if (!IsRunActive() || sRun.phase == Phase::GameOver) {
         if (sRun.phase == Phase::GameOver) {
             sRun.phase = Phase::Inactive;
@@ -833,8 +845,12 @@ static void OnGameFrameUpdate() {
     }
 }
 
+void Lobby_StartRunHere(PlayState* play) {
+    StartRun(play, GET_PLAYER(play));
+}
+
 static void RegisterZombies() {
-    bool enabled = CVarOn(CVAR_ZOMBIES("Enabled"), 0);
+    bool enabled = CVarOn(CVAR_ZOMBIES("Enabled"), 0) || ZombiesOnly();
 
     if (!enabled && IsRunActive()) {
         EndRun("ZOMBIES OFF", false);
@@ -851,6 +867,7 @@ static void RegisterZombies() {
     COND_HOOK(OnOcarinaSongAction, enabled, OnOcarinaSong);
     COND_HOOK(OnGameFrameUpdate, enabled, OnGameFrameUpdate);
     COND_HOOK(OnPlayDrawEnd, enabled, Barricades_Draw);
+    COND_HOOK(OnLoadGame, enabled, [](int32_t) { Lobby_OnLoadGame(); });
 
     // Stamin-Up: Link runs 25% faster.
     COND_VB_SHOULD(VB_PLAYER_MODIFY_RUN_SPEED, enabled, {
@@ -862,6 +879,6 @@ static void RegisterZombies() {
     });
 }
 
-static RegisterShipInitFunc initFunc(RegisterZombies, { CVAR_ZOMBIES("Enabled") });
+static RegisterShipInitFunc initFunc(RegisterZombies, { CVAR_ZOMBIES("Enabled"), CVAR_ZOMBIES("ZombiesOnly") });
 
 } // namespace Zombies

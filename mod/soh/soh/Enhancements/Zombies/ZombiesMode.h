@@ -244,5 +244,15 @@ void Hud_Draw();
 
 // Inventory helpers (ZombiesStations.cpp)
 void RefillAmmo();
+void GiveLoadout(PlayState* play);
+
+// Zombies-only game and its main menu (ZombiesLobby.cpp)
+bool ZombiesOnly();
+bool Lobby_IsOpen();
+void Lobby_Update(PlayState* play, Player* player);
+void Lobby_OnSceneInit(s16 sceneNum);
+void Lobby_OnLoadGame();
+// Starts a run where Link stands (ZombiesMode.cpp).
+void Lobby_StartRunHere(PlayState* play);
 
 } // namespace Zombies
