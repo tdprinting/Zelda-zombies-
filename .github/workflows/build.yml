@@ -13,6 +13,33 @@ jobs:
       - name: Run rules unit tests
         run: ./scripts/test.sh
 
+  bomap:
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install zlib
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y zlib1g-dev
+      - name: Build bomap
+        run: |
+          cmake -S tools/bomap -B build-bomap -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-bomap --config Release
+      - name: Test bomap
+        shell: bash
+        run: |
+          if [ -f build-bomap/Release/bomap_test.exe ]; then build-bomap/Release/bomap_test.exe; else build-bomap/bomap_test; fi
+      - name: Upload bomap
+        uses: actions/upload-artifact@v4
+        with:
+          name: bomap-${{ runner.os == 'Windows' && 'windows' || 'linux' }}
+          path: |
+            build-bomap/Release/bomap.exe
+            build-bomap/bomap
+          if-no-files-found: ignore
+
   build-linux:
     runs-on: ubuntu-24.04
     steps:
