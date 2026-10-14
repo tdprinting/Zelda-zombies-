@@ -234,6 +234,10 @@ namespace Zombies {
 // Stations (ZombiesStations.cpp)
 void Stations_Place(PlayState* play);
 void Stations_Clear();
+bool Stations_ChestPlaced();
+void Stations_Forget();
+void Stations_NewRun(); // chest uses and the Punched Blade start over // the scene is gone: drop the torches without
+                        // killing them
 void Stations_Update(PlayState* play, Player* player);
 void Stations_OnActorDestroy(Actor* actor);
 int Stations_BoxCost();
@@ -254,11 +258,17 @@ void GiveLoadout(PlayState* play);
 // Zombies-only game and its main menu (ZombiesLobby.cpp)
 bool ZombiesOnly();
 bool Lobby_IsOpen();
+bool Pause_IsOpen();
+void Lobby_Close(PlayState* play);       // Zombies Only switched off
+void Pause_OnMainStart(PlayState* play); // every frame, before the game updates
+void Lobby_SetResults(const std::string& reason, int rounds, int kills, int points, bool newBest);
 void Lobby_Update(PlayState* play, Player* player);
 void Lobby_OnSceneInit(s16 sceneNum);
 void Lobby_OnLoadGame();
 void Lobby_OnFrame(PlayState* play); // every frame, menus and game over included
 // Starts a run where Link stands (ZombiesMode.cpp).
 void Lobby_StartRunHere(PlayState* play);
+// Ends the run from the run menu (ZombiesMode.cpp).
+void Run_Quit();
 
 } // namespace Zombies

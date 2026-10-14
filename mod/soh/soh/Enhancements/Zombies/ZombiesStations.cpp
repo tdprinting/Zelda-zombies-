@@ -28,9 +28,11 @@ static constexpr int kPackAPunchCost = 5000;
 static constexpr int kFountainRupees = 50;
 
 // Torch params: high nibble is the torch type, 0x400 keeps it lit, low bits are a
-// switch flag. 0x3F is a temp flag, so lighting one never trips anything in the arena.
-static constexpr s16 kTorchGolden = 0x0000 | 0x3F;
-static constexpr s16 kTorchStone = 0x1000 | 0x3F;
+// switch flag. 0x3E is a temp flag (cleared on every scene load), so lighting one never
+// trips anything in the arena; Redead kills use 0x3F, so they never light the stone torches.
+static constexpr s16 kTorchFlag = 0x3E;
+static constexpr s16 kTorchGolden = 0x0000 | kTorchFlag;
+static constexpr s16 kTorchStone = 0x1000 | kTorchFlag;
 static constexpr s16 kTorchWooden = 0x2000;
 static constexpr s16 kTorchLit = 0x0400;
 
@@ -99,6 +101,9 @@ static void SpawnTorch(PlayState* play, int index, const Vec3f& pos) {
     Station& station = sStations[index];
     station.pos = pos;
     station.placed = true;
+    if (!GetRun().powerOn) {
+        Flags_UnsetSwitch(play, kTorchFlag); // a stone torch lit by hand stays dark
+    }
     station.torch =
         Actor_Spawn(&play->actorCtx, play, ACTOR_OBJ_SYOKUDAI, pos.x, pos.y, pos.z, 0, 0, 0, TorchParams(station.type));
     if (station.torch != nullptr) {
@@ -165,6 +170,13 @@ void Stations_Clear() {
     }
 }
 
+// The scene is gone, and the torches with it: drop them without touching the actors.
+void Stations_Forget() {
+    for (Station& station : sStations) {
+        station = Station();
+    }
+}
+
 void Stations_OnActorDestroy(Actor* actor) {
     for (Station& station : sStations) {
         if (station.torch == actor) {
@@ -202,6 +214,11 @@ void Stations_Place(PlayState* play) {
         s16 angle = run.originYaw + static_cast<s16>(slot * (0x10000 / count));
         PlaceStation(play, index, angle);
     }
+}
+
+// A new run: the chest's use count and the Punched Blade start over. A void-out
+// re-places the stations but keeps both.
+void Stations_NewRun() {
     sChestUses = 0;
     sPapSword = false;
 }
@@ -300,6 +317,12 @@ static void GiveMagic() {
 }
 
 static void GiveWeapon(PlayState* play, u8 item) {
+    // Giving the slingshot or bow again resets an upgraded seed bag or quiver: refill instead.
+    if ((item == ITEM_SLINGSHOT || item == ITEM_BOW) && Has(item)) {
+        RefillAmmo();
+        AutoEquip(play, item);
+        return;
+    }
     switch (item) {
         case ITEM_BOMB:
             Item_Give(play, CUR_UPG_VALUE(UPG_BOMB_BAG) == 0 ? ITEM_BOMB_BAG_20 : ITEM_BOMBS_20);
@@ -351,7 +374,8 @@ void GiveLoadout(PlayState* play) {
     for (int i = 0; i < static_cast<int>(ARRAY_COUNT(gSaveContext.inventory.ammo)); i++) {
         gSaveContext.inventory.ammo[i] = 0;
     }
-    for (int b = 1; b <= 3; b++) {
+    // C buttons and SoH's D-pad item buttons.
+    for (int b = 1; b < static_cast<int>(ARRAY_COUNT(gSaveContext.equips.buttonItems)); b++) {
         gSaveContext.equips.buttonItems[b] = ITEM_NONE;
         gSaveContext.equips.cButtonSlots[b - 1] = SLOT_NONE;
     }
@@ -381,6 +405,10 @@ void GiveLoadout(PlayState* play) {
     AutoEquip(play, ITEM_BOMB);
     Item_Give(play, ITEM_OCARINA_FAIRY);
     AutoEquip(play, ITEM_OCARINA_FAIRY);
+    // Only the mode's three songs: a warp song would carry Link out of the map.
+    for (int song = QUEST_SONG_MINUET; song <= QUEST_SONG_STORMS; song++) {
+        gSaveContext.inventory.questItems &= ~(1u << song);
+    }
     gSaveContext.inventory.questItems |= (1 << QUEST_SONG_LULLABY) | (1 << QUEST_SONG_SUN) | (1 << QUEST_SONG_STORMS);
 }
 
@@ -557,6 +585,10 @@ static void GiveFairyBottle() {
             Interface_LoadItemIcon1(gPlayState, static_cast<u16>(b));
         }
     }
+}
+
+bool Stations_ChestPlaced() {
+    return sStations[static_cast<int>(StationType::MysteryChest)].placed;
 }
 
 static bool HasPerk(Perk perk) {

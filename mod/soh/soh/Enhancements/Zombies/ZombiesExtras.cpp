@@ -216,7 +216,7 @@ void Extras_Update(PlayState* play, Player* player) {
     // Navi's low-health warning, like Black Ops' "you're down" callouts, but before it happens.
     if (sLowHealthTimer > 0) {
         sLowHealthTimer--;
-    } else if (gSaveContext.health > 0 && gSaveContext.health <= 0x10 && gSaveContext.healthCapacity > 0x30) {
+    } else if (gSaveContext.health > 0 && gSaveContext.health <= 0x10 && gSaveContext.healthCapacity >= 0x30) {
         Navi("LISTEN! YOU NEED HEARTS!", NA_SE_VO_NAVY_CALL);
         sLowHealthTimer = kLowHealthCooldown;
     }

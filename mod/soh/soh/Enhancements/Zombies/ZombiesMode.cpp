@@ -13,8 +13,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <filesystem>
 
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
+#include "soh/Enhancements/game-interactor/GameInteractor_Hooks.h"
 #include "soh/ShipInit.hpp"
 
 extern "C" {
@@ -22,6 +25,7 @@ extern "C" {
 #include "macros.h"
 #include "variables.h"
 extern PlayState* gPlayState;
+void Save_SaveFile(void);
 }
 
 namespace Zombies {
@@ -36,10 +40,12 @@ static constexpr float kPullStopDistWalk = 140.0f;
 static constexpr float kPullStopDistFast = 80.0f;
 static constexpr float kLostDist = 2500.0f;
 // Black Ops respawns a zombie that can't reach the player. Ours gets 15 seconds to
-// close 50 units of distance before it goes back into the round's pool.
+// close 50 units of distance before it goes back into the round's pool. Only one in
+// reach of Link (fighting him) is never stuck: one stranded on a ledge a few steps
+// away would otherwise hold the round open forever.
 static constexpr int kStuckFrames = 15 * 20;
 static constexpr float kStuckProgress = 50.0f;
-static constexpr float kStuckMinDist = 250.0f;
+static constexpr float kStuckMinDist = 110.0f;
 
 static Run sRun;
 
@@ -110,6 +116,55 @@ struct SaveSnapshot {
 
 static SaveSnapshot sSnapshot;
 
+// The snapshot is also kept on disk while a run is going, so the real items come back
+// even if the game is closed or reset mid-run, or an autosave wrote the run's loadout.
+static constexpr u32 kSnapshotMagic = 0x5A4F4D42; // "ZOMB"
+
+static std::string SnapshotPath(int fileNum) {
+    return Ship::Context::GetPathRelativeToAppDirectory("Save") + "/zombies_snapshot_" + std::to_string(fileNum) +
+           ".bin";
+}
+
+static void WriteSnapshotFile() {
+    if (gSaveContext.fileNum < 0 || gSaveContext.fileNum >= 3) {
+        return; // debug and boss rush files are never saved
+    }
+    FILE* file = fopen(SnapshotPath(gSaveContext.fileNum).c_str(), "wb");
+    if (file == nullptr) {
+        return;
+    }
+    u32 header[2] = { kSnapshotMagic, static_cast<u32>(sizeof(SaveSnapshot)) };
+    fwrite(header, sizeof(header), 1, file);
+    fwrite(&sSnapshot, sizeof(SaveSnapshot), 1, file);
+    fclose(file);
+}
+
+static void DeleteSnapshotFile(int fileNum) {
+    std::error_code error;
+    std::filesystem::remove(SnapshotPath(fileNum), error);
+}
+
+// A snapshot left by a run that never ended: put it back into the file being loaded.
+static bool ReadSnapshotFile(int fileNum) {
+    if (fileNum < 0 || fileNum >= 3) {
+        return false;
+    }
+    FILE* file = fopen(SnapshotPath(fileNum).c_str(), "rb");
+    if (file == nullptr) {
+        return false;
+    }
+    u32 header[2] = {};
+    SaveSnapshot snapshot;
+    bool ok = fread(header, sizeof(header), 1, file) == 1 && header[0] == kSnapshotMagic &&
+              header[1] == sizeof(SaveSnapshot) && fread(&snapshot, sizeof(SaveSnapshot), 1, file) == 1;
+    fclose(file);
+    if (ok) {
+        sSnapshot = snapshot;
+        sSnapshot.valid = true;
+    }
+    return ok;
+}
+
 static void TakeSnapshot() {
     sSnapshot.valid = true;
     sSnapshot.equips = gSaveContext.equips;
@@ -125,9 +180,18 @@ static void TakeSnapshot() {
     sSnapshot.bgsFlag = gSaveContext.bgsFlag;
     sSnapshot.rupees = gSaveContext.rupees;
     sSnapshot.dayTime = gSaveContext.dayTime;
+    WriteSnapshotFile();
 }
 
-static void RestoreSnapshot(bool linkIsDead) {
+// Drops the snapshot without restoring it (Keep Items): the run's items stay.
+static void DiscardSnapshot() {
+    sSnapshot.valid = false;
+    DeleteSnapshotFile(gSaveContext.fileNum);
+}
+
+// refresh: update the C button icons and Link's equipment now. Not while a scene is
+// loading or the game is closing; Play_Init rebuilds both from the save anyway.
+static void RestoreSnapshot(bool linkIsDead, bool refresh) {
     if (!sSnapshot.valid) {
         return;
     }
@@ -150,7 +214,14 @@ static void RestoreSnapshot(bool linkIsDead) {
     gSaveContext.rupees = sSnapshot.rupees;
     gSaveContext.dayTime = sSnapshot.dayTime;
 
-    if (gPlayState != nullptr) {
+    // Write the real items back to the file at once, over anything an autosave wrote
+    // mid-run; only then is the copy on disk no longer needed.
+    if (gSaveContext.fileNum >= 0 && gSaveContext.fileNum < 3) {
+        Save_SaveFile();
+    }
+    DeleteSnapshotFile(gSaveContext.fileNum);
+
+    if (refresh && gPlayState != nullptr) {
         for (u16 button = 0; button < 4; button++) {
             Interface_LoadItemIcon1(gPlayState, button);
         }
@@ -295,7 +366,8 @@ static void OnEnemyKilled(PlayState* play, Player* player, TrackedEnemy& enemy) 
     sRun.lastKillPos = enemy.actor->world.pos;
 
     if (sRun.dropTracker.OnKill(ps.totalEarned, Rand_ZeroOne())) {
-        SpawnPowerUp(play, enemy.actor->world.pos, PickPowerUp(Rand_ZeroOne(), true, Barricades_AnyBroken()));
+        SpawnPowerUp(play, enemy.actor->world.pos,
+                     PickPowerUp(Rand_ZeroOne(), Stations_ChestPlaced(), Barricades_AnyBroken()));
     }
 }
 
@@ -520,8 +592,8 @@ static void UpdateDrops(PlayState* play, Player* player) {
     }
 
     for (int& frames : sRun.powerUpFrames) {
-        if (frames > 0) {
-            frames--;
+        if (frames > 0 && --frames == 0) {
+            Sfx_PlaySfxCentered(NA_SE_SY_CANCEL); // a timed power-up ran out
         }
     }
 }
@@ -529,8 +601,11 @@ static void UpdateDrops(PlayState* play, Player* player) {
 // ---------------------------------------------------------------------------
 // Rounds
 
+static bool sLastOneCalled = false;
+
 static void StartRound(int round) {
     sRun.round = round;
+    sLastOneCalled = false;
     sRun.dogRound = CVarOn(CVAR_ZOMBIES("WolfosRounds"), 1) && round == sRun.nextDogRound;
     sRun.dropTracker.NewRound();
     sRun.repairPointsThisRound = 0;
@@ -589,6 +664,10 @@ static void UpdateActiveRound(PlayState* play, Player* player) {
         }
     }
 
+    if (sRun.toSpawn == 0 && sRun.enemies.size() == 1 && !sLastOneCalled && !sRun.dogRound) {
+        sLastOneCalled = true;
+        Sfx_PlaySfxCentered(NA_SE_VO_NAVY_CALL); // Navi: one left
+    }
     if (sRun.toSpawn == 0 && sRun.enemies.empty()) {
         EndRound(play);
     }
@@ -620,6 +699,7 @@ static void StartRun(PlayState* play, Player* player) {
     ForceNight();
     Bounds_Scan(play);
     Arena_Start(play);
+    Stations_NewRun();
     Stations_Place(play);
     Barricades_Place(play);
     Extras_OnRunStart(play);
@@ -634,6 +714,7 @@ static void EndRun(const std::string& reason, bool linkIsDead) {
     }
     // Black Ops counts the round you reached: dying in round 1 survived 1 round.
     int survived = sRun.round;
+    int previousBest = CVarGetInteger(CVAR_ZOMBIES("BestRound"), 0);
     if (survived > CVarGetInteger(CVAR_ZOMBIES("BestRound"), 0)) {
         CVarSetInteger(CVAR_ZOMBIES("BestRound"), survived);
         Ship::Context::GetRawInstance()->GetWindow()->GetGui()->SaveConsoleVariablesNextFrame();
@@ -650,12 +731,16 @@ static void EndRun(const std::string& reason, bool linkIsDead) {
     Stations_Clear();
     Extras_OnRunEnd(gPlayState, linkIsDead);
 
-    if (!CVarOn(CVAR_ZOMBIES("KeepItems"), 0)) {
-        RestoreSnapshot(linkIsDead);
+    // Zombies Only hands out a fresh loadout every run, so it always puts the file back.
+    if (ZombiesOnly() || !CVarOn(CVAR_ZOMBIES("KeepItems"), 0)) {
+        RestoreSnapshot(linkIsDead, true);
+    } else {
+        DiscardSnapshot();
     }
 
+    Lobby_SetResults(reason, survived, sRun.players[0].kills, sRun.players[0].totalEarned, survived > previousBest);
     sRun.phase = Phase::GameOver;
-    sRun.phaseTimer = 8 * kFps;
+    sRun.phaseTimer = (ZombiesOnly() ? 4 : 8) * kFps;
     Announce(reason + ": YOU SURVIVED " + std::to_string(survived) + (survived == 1 ? " ROUND" : " ROUNDS"), 8);
 }
 
@@ -677,15 +762,35 @@ const char* BuyButtonName() {
     return CVarGetInteger(CVAR_ZOMBIES("BuyButton"), 0) == 1 ? "DPAD DOWN" : "L";
 }
 
+// The buy button is read before the game sees it: during a run, an L press goes to the
+// mode alone, so buying doesn't also toggle the minimap.
+static bool sBuyPressed = false;
+
 bool BuyPressed(PlayState* play) {
-    return CHECK_BTN_ALL(play->state.input[0].press.button, BuyButton());
+    (void)play;
+    return sBuyPressed;
 }
 
 bool BuyHeld(PlayState* play) {
     return CHECK_BTN_ALL(play->state.input[0].cur.button, BuyButton());
 }
 
+static void OnGameStateMainStart() {
+    PlayState* play = gPlayState;
+    Pause_OnMainStart(play);
+    if (play == nullptr) {
+        sBuyPressed = false;
+        return;
+    }
+    Input& input = play->state.input[0];
+    sBuyPressed = CHECK_BTN_ALL(input.press.button, BuyButton());
+    if (IsRunActive() && BuyButton() == BTN_L) {
+        input.press.button &= static_cast<u16>(~BTN_L);
+    }
+}
+
 static bool sStationsNeedPlacing = false;
+static bool sLeftArena = false;
 
 static void OnPlayerUpdate() {
     PlayState* play = gPlayState;
@@ -703,6 +808,11 @@ static void OnPlayerUpdate() {
         } else {
             i++;
         }
+    }
+
+    if (sLeftArena) {
+        sLeftArena = false;
+        EndRun("YOU LEFT THE ARENA", false);
     }
 
     switch (sRun.phase) {
@@ -747,6 +857,9 @@ static void OnPlayerUpdate() {
 
     UpdateEnemies(play, player);
     UpdateDrops(play, player);
+    if (sRun.players[0].perks[PERK_FAIRY_REVIVE] && !Inventory_HasSpecificBottle(ITEM_FAIRY)) {
+        sRun.players[0].perks[PERK_FAIRY_REVIVE] = false; // the fairy was used
+    }
     Stations_Update(play, player);
     Arena_Update(play, player);
     Barricades_Update(play, player);
@@ -799,7 +912,8 @@ static void OnSceneInit(int16_t sceneNum) {
         return;
     }
     if (sceneNum != sRun.sceneNum) {
-        EndRun("YOU LEFT THE ARENA", false);
+        // Ended from the first player update: Link and the interface aren't set up yet.
+        sLeftArena = true;
         return;
     }
     // Same scene reloaded (a void out or a room reset): every actor was unloaded.
@@ -815,6 +929,9 @@ static void OnOcarinaSong() {
     }
     switch (gPlayState->msgCtx.lastPlayedSong) {
         case OCARINA_SONG_SUNS:
+            if (CVarOn(CVAR_ZOMBIES("ForceNight"), 1)) {
+                gSaveContext.sunsSongState = SUNSSONG_INACTIVE; // power, not daybreak
+            }
             if (!sRun.powerOn) {
                 sRun.powerOn = true;
                 Announce("THE POWER IS ON");
@@ -854,12 +971,44 @@ void Lobby_StartRunHere(PlayState* play) {
     StartRun(play, GET_PLAYER(play));
 }
 
+void Run_Quit() {
+    EndRun("YOU QUIT", false);
+}
+
+// The game was reset or another file is loading: the actors are gone with the old
+// scene, so the run is dropped without touching them and the real items go back.
+static void AbandonRun() {
+    if (IsRunActive()) {
+        sRun.enemies.clear();
+        sRun.drops.clear();
+        Stations_Forget();
+        Extras_OnSceneReload();
+        RestoreSnapshot(false, false);
+    }
+    sRun.phase = Phase::Inactive;
+    sRun.prompt.clear();
+    sRun.announcement.framesLeft = 0;
+    sStationsNeedPlacing = false;
+    sLeftArena = false;
+}
+
+static void OnLoadGame(int32_t fileNum) {
+    AbandonRun();
+    if (ReadSnapshotFile(fileNum)) {
+        RestoreSnapshot(false, false);
+    }
+    Lobby_OnLoadGame();
+}
+
 static void RegisterZombies() {
     bool enabled = CVarOn(CVAR_ZOMBIES("Enabled"), 0) || ZombiesOnly();
 
     if (!enabled && IsRunActive()) {
         EndRun("ZOMBIES OFF", false);
         sRun.phase = Phase::Inactive;
+    }
+    if (!ZombiesOnly()) {
+        Lobby_Close(gPlayState);
     }
     if (!enabled) {
         sRun.prompt.clear();
@@ -872,7 +1021,34 @@ static void RegisterZombies() {
     COND_HOOK(OnOcarinaSongAction, enabled, OnOcarinaSong);
     COND_HOOK(OnGameFrameUpdate, enabled, OnGameFrameUpdate);
     COND_HOOK(OnPlayDrawEnd, enabled, Barricades_Draw);
-    COND_HOOK(OnLoadGame, enabled, [](int32_t) { Lobby_OnLoadGame(); });
+    COND_HOOK(OnLoadGame, enabled, OnLoadGame);
+    COND_HOOK(OnExitGame, enabled, [](int32_t) { AbandonRun(); });
+    COND_HOOK(OnGameStateMainStart, enabled, OnGameStateMainStart);
+    COND_HOOK(OnDeleteFile, enabled, [](int32_t fileNum) { DeleteSnapshotFile(fileNum); });
+
+    // Power-up drops wear item models but give only the power-up.
+    COND_VB_SHOULD(VB_GIVE_ITEM_FROM_ITEM_00, enabled, {
+        Actor* item = va_arg(args, Actor*);
+        for (size_t i = 0; i < sRun.drops.size(); i++) {
+            if (sRun.drops[i].actor == item) {
+                PowerUp type = sRun.drops[i].type;
+                sRun.drops.erase(sRun.drops.begin() + static_cast<long>(i));
+                *should = false;
+                Actor_Kill(item);
+                if (gPlayState != nullptr) {
+                    ActivatePowerUp(gPlayState, type);
+                }
+                break;
+            }
+        }
+    });
+
+    // The pause screen can't save mid-run: the file would keep the run's loadout.
+    COND_VB_SHOULD(VB_BE_ABLE_TO_SAVE, enabled, {
+        if (IsRunActive()) {
+            *should = false;
+        }
+    });
 
     // Stamin-Up: Link runs 25% faster.
     COND_VB_SHOULD(VB_PLAYER_MODIFY_RUN_SPEED, enabled, {
