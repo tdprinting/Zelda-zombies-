@@ -608,10 +608,11 @@ static void StartRun(PlayState* play, Player* player) {
 
     TakeSnapshot();
     ForceNight();
+    Arena_Start(play);
     Stations_Place(play);
     Barricades_Place(play);
 
-    Announce("ZOMBIES OF TIME", 4);
+    Announce(sRun.layout != nullptr ? sRun.layout->name : "ZOMBIES OF TIME", 4);
     Sfx_PlaySfxCentered(NA_SE_VO_NAVY_HELLO);
 }
 
@@ -662,7 +663,7 @@ const char* BuyButtonName() {
     return CVarGetInteger(CVAR_ZOMBIES("BuyButton"), 0) == 1 ? "DPAD DOWN" : "L";
 }
 
-static bool BuyPressed(PlayState* play) {
+bool BuyPressed(PlayState* play) {
     return CHECK_BTN_ALL(play->state.input[0].press.button, BuyButton());
 }
 
@@ -727,6 +728,7 @@ static void OnPlayerUpdate() {
     UpdateEnemies(play, player);
     UpdateDrops(play, player);
     Stations_Update(play, player);
+    Arena_Update(play, player);
     Barricades_Update(play, player);
 
     switch (sRun.phase) {
@@ -817,7 +819,8 @@ static void OnGameFrameUpdate() {
     if (gPlayState == nullptr) {
         return;
     }
-    if (IsRunActive() || !sRun.prompt.empty() || sRun.announcement.framesLeft > 0) {
+    if (IsRunActive() || !sRun.prompt.empty() || sRun.announcement.framesLeft > 0 ||
+        CVarOn(CVAR_ZOMBIES("ShowCoordinates"), 0)) {
         Hud_Draw();
     }
 }

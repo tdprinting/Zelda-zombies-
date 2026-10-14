@@ -34,24 +34,12 @@ static constexpr s16 kTorchStone = 0x1000 | 0x3F;
 static constexpr s16 kTorchWooden = 0x2000;
 static constexpr s16 kTorchLit = 0x0400;
 
-enum class StationType {
-    Armory,
-    MysteryChest,
-    Juggernog,
-    FairyRevive,
-    DoubleTap,
-    StaminUp,
-    Power,
-    PackAPunch,
-    FairyFountain,
-    Count,
-};
-
 struct Station {
     StationType type;
     Vec3f pos;
     Actor* torch = nullptr;
     bool placed = false;
+    int zone = -1; // arena zone, or -1 when placed around the start point
 };
 
 static Station sStations[static_cast<int>(StationType::Count)];
@@ -107,6 +95,17 @@ static bool TooCloseToOtherStations(const Vec3f& pos, int self) {
     return false;
 }
 
+static void SpawnTorch(PlayState* play, int index, const Vec3f& pos) {
+    Station& station = sStations[index];
+    station.pos = pos;
+    station.placed = true;
+    station.torch =
+        Actor_Spawn(&play->actorCtx, play, ACTOR_OBJ_SYOKUDAI, pos.x, pos.y, pos.z, 0, 0, 0, TorchParams(station.type));
+    if (station.torch != nullptr) {
+        station.torch->room = -1;
+    }
+}
+
 static bool PlaceStation(PlayState* play, int index, s16 baseAngle) {
     const Run& run = GetRun();
     static constexpr float radii[] = { 1.0f, 0.75f, 1.3f, 0.5f, 1.6f };
@@ -124,18 +123,37 @@ static bool PlaceStation(PlayState* play, int index, s16 baseAngle) {
             if (TooCloseToOtherStations(pos, index)) {
                 continue;
             }
-            Station& station = sStations[index];
-            station.pos = pos;
-            station.placed = true;
-            station.torch = Actor_Spawn(&play->actorCtx, play, ACTOR_OBJ_SYOKUDAI, pos.x, pos.y, pos.z, 0, 0, 0,
-                                        TorchParams(station.type));
-            if (station.torch != nullptr) {
-                station.torch->room = -1;
-            }
+            SpawnTorch(play, index, pos);
             return true;
         }
     }
     return false;
+}
+
+// The authored spot for a station in the arena layout, if it has one.
+static const LayoutSpot* LayoutSpotFor(int index, int* zone) {
+    const ArenaLayout* layout = GetRun().layout;
+    if (layout == nullptr) {
+        return nullptr;
+    }
+    for (size_t z = 0; z < layout->zones.size(); z++) {
+        for (const LayoutStation& st : layout->zones[z].stations) {
+            if (static_cast<int>(st.type) == index) {
+                *zone = static_cast<int>(z);
+                return &st.spot;
+            }
+        }
+    }
+    return nullptr;
+}
+
+static bool PlaceAtSpot(PlayState* play, int index, const LayoutSpot& spot) {
+    Vec3f pos;
+    if (!Arena_Resolve(play, spot, GetRun().origin.y, &pos)) {
+        return false;
+    }
+    SpawnTorch(play, index, pos);
+    return true;
 }
 
 void Stations_Clear() {
@@ -172,6 +190,15 @@ void Stations_Place(PlayState* play) {
     };
     for (int slot = 0; slot < count; slot++) {
         int index = static_cast<int>(order[slot]);
+        // In an authored arena, stations go on their spots, and wait for their zone to open.
+        int zone;
+        const LayoutSpot* spot = LayoutSpotFor(index, &zone);
+        if (spot != nullptr) {
+            sStations[index].zone = zone;
+            if (!Arena_ZoneOpen(zone) || PlaceAtSpot(play, index, *spot)) {
+                continue;
+            }
+        }
         s16 angle = run.originYaw + static_cast<s16>(slot * (0x10000 / count));
         PlaceStation(play, index, angle);
     }
@@ -187,7 +214,42 @@ static void MoveChest(PlayState* play) {
     }
     chest.torch = nullptr;
     chest.placed = false;
+
+    // In an authored arena the chest moves between its spots in the open zones.
+    const ArenaLayout* layout = GetRun().layout;
+    if (layout != nullptr) {
+        Vec3f oldPos = chest.pos;
+        std::vector<Vec3f> options;
+        for (size_t z = 0; z < layout->zones.size(); z++) {
+            if (!Arena_ZoneOpen(static_cast<int>(z))) {
+                continue;
+            }
+            for (const LayoutSpot& spot : layout->zones[z].chestSpots) {
+                Vec3f pos;
+                if (Arena_Resolve(play, spot, GetRun().origin.y, &pos) && Math_Vec3f_DistXZ(&pos, &oldPos) > 100.0f) {
+                    options.push_back(pos);
+                }
+            }
+        }
+        if (!options.empty()) {
+            size_t pick = std::min(static_cast<size_t>(Rand_ZeroOne() * options.size()), options.size() - 1);
+            SpawnTorch(play, index, options[pick]);
+            return;
+        }
+    }
     PlaceStation(play, index, static_cast<s16>(Rand_ZeroOne() * 0x10000));
+}
+
+void Stations_OpenZone(PlayState* play, int zone) {
+    for (int i = 0; i < static_cast<int>(StationType::Count); i++) {
+        int stationZone;
+        const LayoutSpot* spot = LayoutSpotFor(i, &stationZone);
+        if (spot != nullptr && stationZone == zone && !sStations[i].placed) {
+            if (!PlaceAtSpot(play, i, *spot)) {
+                PlaceStation(play, i, static_cast<s16>(Rand_ZeroOne() * 0x10000));
+            }
+        }
+    }
 }
 
 static void RelightTorches() {
@@ -668,11 +730,6 @@ static void Buy(PlayState* play, Station& station, const Offer& offer) {
     }
 }
 
-static bool BuyButtonPressed(PlayState* play) {
-    u16 button = CVarGetInteger(CVAR_ZOMBIES("BuyButton"), 0) == 1 ? BTN_DDOWN : BTN_L;
-    return CHECK_BTN_ALL(play->state.input[0].press.button, button);
-}
-
 void Stations_Update(PlayState* play, Player* player) {
     Run& run = GetRun();
     run.prompt.clear();
@@ -712,7 +769,7 @@ void Stations_Update(PlayState* play, Player* player) {
         run.prompt = button + ": " + offer.label;
     }
 
-    if (BuyButtonPressed(play) && !Player_InCsMode(play)) {
+    if (BuyPressed(play) && !Player_InCsMode(play)) {
         Buy(play, *nearest, offer);
     }
 }

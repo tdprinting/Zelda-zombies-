@@ -52,7 +52,7 @@ player's own ROM.
 | Nuke | Every undead on the map explodes, +400 points | |
 | Fire Sale (30s) | Mystery Chest costs 10 | |
 | Barricades: 6 boards per window, zombies tear them off, players repair for 10 points each | **Barricades**: four windows (two posts and six planks) around the start point. Undead spawn outside one and are held there, tearing a board every 1.5 seconds, until it is open. Hold the buy button at a window to put a board back every 0.6 seconds for 10 points, up to 500 points of repairs per round | Wolfos rounds ignore the windows, like hellhounds. The planks are the small wooden crate's model squashed flat. The windows are not solid: Link can walk around them, the undead can't |
-| Doors and debris | Phase 2 | They need an authored arena, see below |
+| Doors and debris | **Debris** piles (1000 points each) between the zones of an authored arena | Clearing one opens that zone's stations and windows. See [Kakariko Graveyard](#kakariko-graveyard) |
 | Round chime, Samantha's voice | OoT sound effects | Round start: Redead scream. Round end: puzzle-solved chime. Power-up: item get jingle |
 
 ## Zelda twists
@@ -109,13 +109,41 @@ The mode runs in any scene. At the start it samples the floor around Link with
 the game's collision raycasts to find spawn points and station spots, so it
 needs no per-scene data. Recommended arenas, all reachable in a normal file:
 
-- **Kakariko Graveyard** (child or adult): the classic. Night, graves, tight
-  paths. Our Nacht der Untoten.
+- **Kakariko Graveyard** (child or adult): the classic, and the one scene with
+  a hand-made map (below).
 - **Market ruins** (adult): Redeads already live here. Our Kino der Toten.
 - **Lon Lon Ranch field** (either age): wide open, good for training hordes.
 - **Hyrule Field** (either age): huge; turn Max Alive up.
 
 Leaving the scene ends the run.
+
+### Kakariko Graveyard
+
+Tee asked for one of the Black Ops maps to be ported. Its geometry and
+assets can't be copied, so the graveyard gets the *flow* of Nacht der
+Untoten, the first Black Ops map, built from the graveyard's own ground:
+
+| Zone | Opens with | Windows | Stations |
+| --- | --- | --- | --- |
+| The Gate (start, by the Kakariko entrance) | | 3 | Armory, Fairy Fountain, Mystery Chest |
+| The Graves (the rows in the middle) | Debris, 1000 | 3 | Juggernog, Double Tap, second chest spot |
+| The Royal Tomb (the far end) | Debris, 1000 | 2 | Power, Pack-a-Punch, Stamin-Up, Fairy Revive, third chest spot |
+
+As in Nacht, the start area is small and survivable for the first rounds,
+opening each zone gives Link more to buy and the horde more ways in, and the
+chest moves between its spots in the open zones. Perks and Pack-a-Punch sit
+at the far end, so getting to them is the mid-game goal.
+
+The spots are written in `ZombiesArena.cpp` as (x, z) positions, estimated
+from the positions of the graveyard's signs, graves and grass in SoH's
+randomizer tables; heights come from the floor at run time. Every spot is
+checked against the scene's collision when the run starts: a station that
+doesn't land on floor is placed around Link instead, a window without room
+behind it for undead is left out, and debris with no floor opens its zone
+from the start. The **Show Coordinates** setting prints Link's position on
+screen, so the spots can be tuned in game. The debris piles are crates, not
+walls: they mark the way and hold the zone's stations and windows back, but
+Link can walk around them.
 
 ## Your save file
 
@@ -139,6 +167,8 @@ All under Enhancements > Extra Modes > Zombies of Time, stored as
 | Starting Round | 1 |
 | Wolfos Rounds | on |
 | Barricades | on |
+| Authored Arenas (the graveyard map) | on |
+| Show Coordinates | off |
 | Horde Pull (undead always walk toward Link) | on |
 | Force Night | on |
 | Redead Scream (Redeads and Gibdos freeze Link) | on |
@@ -179,6 +209,7 @@ Code layout:
 | `ZombiesMode.h/.cpp` | Run state, round state machine, spawning, tracking, power-ups, save snapshot |
 | `ZombiesStations.cpp` | Station placement, prompts and purchases |
 | `ZombiesBarricades.cpp` | Windows: placement, holding undead outside, tearing, repairs, drawing |
+| `ZombiesArena.cpp` | Authored layouts (the graveyard), zones and debris |
 | `ZombiesHud.cpp` | HUD drawing |
 | `ZombiesMenu.cpp` | Menu widgets |
 
@@ -187,11 +218,10 @@ Code layout:
 1. **Core loop (this PR):** rounds, undead mix and scaling, Wolfos rounds,
    points, stations (Armory, Mystery Chest, four perks, power, Pack-a-Punch,
    Fairy Fountain), five power-ups, song abilities, HUD, save snapshot, menu.
-2. **Authored arena:** a hand-placed layout for Kakariko Graveyard modelled on
-   the flow of Nacht der Untoten (a start area with windows and wall buys,
-   debris Link pays to clear to open more of the map, the Mystery Chest in a
-   far corner), with fixed window and station spots. Barricades themselves
-   are already in phase 1.
+2. **Authored arena:** the Kakariko Graveyard map is in this PR with
+   estimated spots. What's left is a walk-through with Show Coordinates on to
+   tune them, solid debris (collision, so Link can't walk around it), and a
+   second map (Market ruins).
 3. **Polish:** a zombies music track built from OoT sequences, perk jingles,
    crawlers (undead that lose their legs to bombs), and a boss round (Dead
    Hand or Iron Knuckle).

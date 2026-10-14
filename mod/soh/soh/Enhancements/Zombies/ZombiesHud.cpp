@@ -3,7 +3,10 @@
 
 #include "ZombiesMode.h"
 
+#include <cstdio>
 #include <cstring>
+
+#include <libultraship/bridge/consolevariablebridge.h>
 
 extern "C" {
 #include "functions.h"
@@ -130,6 +133,16 @@ static void DrawContents(GfxPrint* printer) {
             GfxPrint_SetColor(printer, 120, 200, 255, 255);
             PrintCentered(printer, 3, timers);
         }
+    }
+
+    // Layout helper: Link's position, for placing arena spots.
+    if (CVarGetInteger(CVAR_ZOMBIES("ShowCoordinates"), 0) && gPlayState != nullptr) {
+        Player* player = GET_PLAYER(gPlayState);
+        char buf[48];
+        snprintf(buf, sizeof(buf), "X %d  Y %d  Z %d", static_cast<int>(player->actor.world.pos.x),
+                 static_cast<int>(player->actor.world.pos.y), static_cast<int>(player->actor.world.pos.z));
+        GfxPrint_SetColor(printer, 200, 200, 200, 255);
+        PrintAt(printer, 2, 1, buf);
     }
 
     if (run.announcement.framesLeft > 0) {

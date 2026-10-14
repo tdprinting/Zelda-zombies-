@@ -55,11 +55,59 @@ bool Barricades_Enabled() {
     return CVarGetInteger(CVAR_ZOMBIES("Barricades"), 1) != 0 && !GetRun().windows.empty();
 }
 
+// A window at pos facing toward inside, if it has floor outside for undead to spawn on.
+static bool MakeWindow(PlayState* play, const Vec3f& pos, const Vec3f& inside, int zone, Window* out) {
+    s16 yaw = Math_Vec3f_Yaw(const_cast<Vec3f*>(&pos), const_cast<Vec3f*>(&inside));
+    for (float behind : { kSpawnBehind, kSpawnBehind * 0.6f }) {
+        Vec3f spawn = { pos.x - Math_SinS(yaw) * behind, pos.y, pos.z - Math_CosS(yaw) * behind };
+        if (FloorAt(play, spawn.x, spawn.z, pos.y, &spawn.y) && LineIsClear(play, pos, spawn)) {
+            out->pos = pos;
+            out->yaw = yaw;
+            out->spawnPos = spawn;
+            out->zone = zone;
+            return true;
+        }
+    }
+    return false;
+}
+
+static void PlaceFromLayout(PlayState* play, const ArenaLayout& layout) {
+    Run& run = GetRun();
+    for (size_t z = 0; z < layout.zones.size(); z++) {
+        const LayoutZone& zone = layout.zones[z];
+        Vec3f centre;
+        if (!Arena_Resolve(play, zone.centre, run.origin.y, &centre)) {
+            continue;
+        }
+        for (const LayoutSpot& spot : zone.windows) {
+            Vec3f pos;
+            Window window;
+            if (Arena_Resolve(play, spot, run.origin.y, &pos) &&
+                MakeWindow(play, pos, centre, static_cast<int>(z), &window)) {
+                run.windows.push_back(window);
+            }
+        }
+    }
+}
+
 void Barricades_Place(PlayState* play) {
     Run& run = GetRun();
     run.windows.clear();
     if (CVarGetInteger(CVAR_ZOMBIES("Barricades"), 1) == 0) {
         return;
+    }
+
+    if (run.layout != nullptr) {
+        PlaceFromLayout(play, *run.layout);
+        int startWindows = 0;
+        for (const Window& w : run.windows) {
+            startWindows += w.zone == 0 ? 1 : 0;
+        }
+        if (startWindows >= 2) {
+            return;
+        }
+        // The authored spots didn't fit this file's version of the scene; fall back.
+        run.windows.clear();
     }
 
     for (int i = 0; i < kWindowCount; i++) {
@@ -80,16 +128,10 @@ void Barricades_Place(PlayState* play) {
                 continue;
             }
 
-            s16 yaw = Math_Vec3f_Yaw(&pos, &run.origin);
-            Vec3f spawn = { x - Math_SinS(yaw) * kSpawnBehind, y, z - Math_CosS(yaw) * kSpawnBehind };
-            if (!FloorAt(play, spawn.x, spawn.z, y, &spawn.y) || !LineIsClear(play, pos, spawn)) {
+            Window window;
+            if (!MakeWindow(play, pos, run.origin, 0, &window)) {
                 continue;
             }
-
-            Window window;
-            window.pos = pos;
-            window.yaw = yaw;
-            window.spawnPos = spawn;
             run.windows.push_back(window);
             break;
         }
@@ -106,7 +148,18 @@ int Barricades_PickWindow() {
     if (!Barricades_Enabled()) {
         return -1;
     }
-    return std::min(static_cast<int>(Rand_ZeroOne() * run.windows.size()), static_cast<int>(run.windows.size()) - 1);
+    // Only windows in zones Link has opened let undead in.
+    int open[32];
+    int count = 0;
+    for (size_t i = 0; i < run.windows.size() && count < 32; i++) {
+        if (Arena_ZoneOpen(run.windows[i].zone)) {
+            open[count++] = static_cast<int>(i);
+        }
+    }
+    if (count == 0) {
+        return -1;
+    }
+    return open[std::min(static_cast<int>(Rand_ZeroOne() * count), count - 1)];
 }
 
 bool Barricades_HoldEnemy(TrackedEnemy& enemy, float speed) {
@@ -194,7 +247,8 @@ void Barricades_Update(PlayState* play, Player* player) {
     float nearestDist = kRepairRange;
     for (Window& w : run.windows) {
         float dist = Math_Vec3f_DistXZ(&w.pos, &player->actor.world.pos);
-        if (w.boards < kBoardsPerWindow && dist < nearestDist && fabsf(w.pos.y - player->actor.world.pos.y) < 60.0f) {
+        if (w.boards < kBoardsPerWindow && dist < nearestDist && fabsf(w.pos.y - player->actor.world.pos.y) < 60.0f &&
+            Arena_ZoneOpen(w.zone)) {
             nearest = &w;
             nearestDist = dist;
         }
@@ -231,8 +285,8 @@ void Barricades_Update(PlayState* play, Player* player) {
 // Drawing, from SoH's world draw hook. Kept at file scope with C linkage for the
 // same reason as the HUD helper: the display list macros expect it.
 
-static void DrawCrate(PlayState* play, const Vec3f& base, s16 yaw, float x, float y, float z, float roll, float width,
-                      float height, float depth) {
+extern "C" void ZombiesDraw_Crate(PlayState* play, const Vec3f& base, s16 yaw, float x, float y, float z, float roll,
+                                  float width, float height, float depth) {
     Matrix_Translate(base.x, base.y, base.z, MTXMODE_NEW);
     Matrix_RotateY(BINANG_TO_RAD(yaw), MTXMODE_APPLY);
     Matrix_Translate(x, y, z, MTXMODE_APPLY);
@@ -255,19 +309,19 @@ extern "C" void ZombiesBarricades_Draw(PlayState* play) {
 
         // Posts either side, so an empty window still reads as a way in.
         float half = kWindowWidth * 0.5f + 4.0f;
-        DrawCrate(play, w.pos, w.yaw, -half, kPostHeight * 0.5f, 0.0f, 0.0f, 7.0f, kPostHeight, 7.0f);
-        DrawCrate(play, w.pos, w.yaw, half, kPostHeight * 0.5f, 0.0f, 0.0f, 7.0f, kPostHeight, 7.0f);
+        ZombiesDraw_Crate(play, w.pos, w.yaw, -half, kPostHeight * 0.5f, 0.0f, 0.0f, 7.0f, kPostHeight, 7.0f);
+        ZombiesDraw_Crate(play, w.pos, w.yaw, half, kPostHeight * 0.5f, 0.0f, 0.0f, 7.0f, kPostHeight, 7.0f);
 
         for (int b = 0; b < kBoardsPerWindow; b++) {
             float y = 16.0f + b * 11.0f;
             float roll = (b % 2 == 0) ? 0.12f : -0.1f;
             if (b < w.boards) {
-                DrawCrate(play, w.pos, w.yaw, 0.0f, y, -4.0f, roll, kWindowWidth + 6.0f, 8.0f, 3.0f);
+                ZombiesDraw_Crate(play, w.pos, w.yaw, 0.0f, y, -4.0f, roll, kWindowWidth + 6.0f, 8.0f, 3.0f);
             } else if (b == w.boards && w.fallingBoard > 0) {
                 // The board just torn off tumbles outward.
                 float t = 1.0f - static_cast<float>(w.fallingBoard) / kFallFrames;
-                DrawCrate(play, w.pos, w.yaw, 0.0f, y - t * y, -4.0f - t * 30.0f, roll + t * 1.4f, kWindowWidth + 6.0f,
-                          8.0f, 3.0f);
+                ZombiesDraw_Crate(play, w.pos, w.yaw, 0.0f, y - t * y, -4.0f - t * 30.0f, roll + t * 1.4f,
+                                  kWindowWidth + 6.0f, 8.0f, 3.0f);
             }
         }
 
@@ -278,10 +332,11 @@ extern "C" void ZombiesBarricades_Draw(PlayState* play) {
 namespace Zombies {
 
 void Barricades_Draw() {
-    if (gPlayState == nullptr || !IsRunActive() || GetRun().windows.empty()) {
+    if (gPlayState == nullptr || !IsRunActive()) {
         return;
     }
     ZombiesBarricades_Draw(gPlayState);
+    Arena_DrawDebris(gPlayState);
 }
 
 } // namespace Zombies
