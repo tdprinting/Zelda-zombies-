@@ -175,6 +175,7 @@ bool Barricades_HoldEnemy(TrackedEnemy& enemy, float speed) {
     if (w.boards == 0) {
         // The way in is open.
         enemy.window = -1;
+        enemy.stuckFrames = 0;
         return false;
     }
 

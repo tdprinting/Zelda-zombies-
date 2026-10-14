@@ -224,8 +224,7 @@ static void WriteFileState(int fileNum) {
     fclose(file);
 }
 
-// Returns true if a state was put back into gSaveContext (the file needs saving).
-static bool ApplyFileState(int fileNum) {
+static bool ReadFileState(int fileNum, FileState* out) {
     if (fileNum < 0 || fileNum >= 3) {
         return false;
     }
@@ -238,14 +237,27 @@ static bool ApplyFileState(int fileNum) {
     bool ok = fread(header, sizeof(header), 1, file) == 1 && header[0] == kSnapshotMagic &&
               header[1] == sizeof(FileState) && fread(&state, sizeof(FileState), 1, file) == 1;
     fclose(file);
-    if (!ok) {
+    if (ok) {
+        *out = state;
+    }
+    return ok;
+}
+
+// Returns true if a state was put back into gSaveContext (the file needs saving).
+static bool ApplyFileState(int fileNum) {
+    FileState state;
+    if (!ReadFileState(fileNum, &state)) {
         return false;
     }
     gSaveContext.linkAge = state.linkAge;
     gSaveContext.equips = state.equips;
     gSaveContext.childEquips = state.childEquips;
     gSaveContext.adultEquips = state.adultEquips;
-    gSaveContext.inventory.equipment = state.equipment;
+    // Only the Master Sword the adult maps hand out is taken back; anything else Link
+    // owns now, he earned.
+    u16 masterSword = static_cast<u16>(OWNED_EQUIP_FLAG(EQUIP_TYPE_SWORD, EQUIP_INV_SWORD_MASTER));
+    gSaveContext.inventory.equipment =
+        static_cast<u16>((gSaveContext.inventory.equipment & ~masterSword) | (state.equipment & masterSword));
     return true;
 }
 
@@ -1161,6 +1173,12 @@ static void RegisterZombies() {
     }
     if (!ZombiesOnly()) {
         Lobby_Close(gPlayState);
+        // Switched off before any map changed Link's age: nothing to put back later.
+        FileState state;
+        if (gPlayState != nullptr && ReadFileState(gSaveContext.fileNum, &state) &&
+            state.linkAge == gSaveContext.linkAge) {
+            DeleteFileState(gSaveContext.fileNum);
+        }
     } else if (gPlayState != nullptr && gSaveContext.fileNum >= 0 && gSaveContext.fileNum < 3 &&
                !std::filesystem::exists(FileStatePath(gSaveContext.fileNum))) {
         // Switched on with a file already loaded: note Link's age before the menu changes it.
