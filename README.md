@@ -34,17 +34,33 @@ reference for how its mechanics behave.
 2. Copy the mode into SoH: `./scripts/apply.sh`
 3. Build SoH as its [build guide](Shipwright/docs/BUILDING.md) describes, from
    the `Shipwright/` folder.
-4. Run SoH, give it your ROM when asked, load a save, and turn on
-   **Enhancements > Zombies of Time > Enable Zombies of Time**.
+4. Run SoH, give it your ROM when asked, and load a save. **Zombies Only** is
+   on by default, so the file goes straight to the Zombies of Time main menu.
+
+Every pull request also builds a Windows version and an Android APK in CI
+(the `zombies-of-time-windows` and `zombies-of-time-android` artifacts). Like
+SoH, both ask for your own ROM the first time they run.
 
 Run the formula tests with `./scripts/test.sh`.
 
 ## Playing
 
-Stand somewhere with open ground (Kakariko Graveyard at night is the classic)
-and press **L** to start. Torches appear in a ring around you; each is a
-station. Walk up to one and press **L** to buy. Perk and Pack-a-Punch torches
-stay dark until you throw the power switch or play the Sun's Song.
+Load a file and the main menu opens over a map at night. Pick the map
+(Kakariko Graveyard, Market Ruins, Lon Lon Ranch or Hyrule Field), Link's age
+and the starting round, then **Play**. The menu works with the D-pad or stick
+and A, or by tapping on Android.
 
-By default your inventory goes back to how it was when the run ends, so a run
-won't change a normal playthrough. Use a spare save file anyway.
+Each map has a start zone and two more zones behind debris. Torches are
+stations: walk up to one and press **L** to buy. Hold **L** at a broken
+window to board it up. Perk and Pack-a-Punch torches stay dark until you throw
+the power switch or play the Sun's Song. **START** opens the run menu
+(resume, items, controls, end run); the **Controls** page in either menu
+lists everything.
+
+After a run, a results screen shows the rounds survived, kills and points.
+Your real inventory always comes back when the run ends, even after a crash
+or a reset, so the mode never changes a normal playthrough.
+
+To play the mode inside the normal game instead, turn **Zombies Only** off
+and **Enable Zombies of Time** on under **Enhancements > Zombies of Time**,
+then press **L** anywhere with open ground to start a run there.

@@ -82,10 +82,15 @@ Ocarina of Time rather than Black Ops:
 
 ## Controls
 
-With the mode on, press **L** anywhere to start a run there. Each station
+In the zombies-only game, runs start from the main menu. With Zombies Only off
+and the mode enabled, press **L** anywhere to start a run there. Each station
 is a torch; walk up to one and the HUD shows `L: MYSTERY CHEST [950]`.
-Press **L** to buy. L normally toggles the minimap, which is harmless here.
-The button can be switched to D-pad Down in the settings.
+Press **L** to buy, and hold it at a broken window to repair it. During a run
+the mode takes the L press, so buying no longer toggles the minimap. The
+button can be switched to D-pad Down in the settings.
+
+**START** during a run opens the run menu and freezes the game: Resume,
+Items (the Zelda pause screen, for equipping), Controls and End Run.
 
 Torch colours tell stations apart: the golden torch is the Mystery Chest,
 wooden torches are the Armory, the Fairy Fountain and the power switch, and
@@ -109,13 +114,18 @@ The mode runs in any scene. At the start it samples the floor around Link with
 the game's collision raycasts to find spawn points and station spots, so it
 needs no per-scene data. Recommended arenas, all reachable in a normal file:
 
-- **Kakariko Graveyard** (child or adult): the classic, and the one scene with
-  a hand-made map (below).
-- **Market ruins** (adult): Redeads already live here. Our Kino der Toten.
-- **Lon Lon Ranch field** (either age): wide open, good for training hordes.
-- **Hyrule Field** (either age): huge; turn Max Alive up.
+- **Kakariko Graveyard** (child or adult): the classic (below).
+- **Market Ruins** (adult only): the walled square. South Gate, then The
+  Square, then The Castle Road with the power and Pack-a-Punch.
+- **Lon Lon Ranch** (either age): Front Gate, The Paddock, then The Barn.
+- **Hyrule Field** (either age): The Bridge, then The West Field and The East
+  Field. Huge; turn Max Undead Alive up.
 
-Leaving the scene ends the run.
+All four have hand-made layouts. The spots for the Market, Ranch and Field
+were picked from floor scans of each scene and walked with the playtest
+harness. Any other scene still works with the automatic placement. During a
+run the scene's exits are walled off, so a knockback can't throw Link out;
+leaving the scene any other way ends the run.
 
 ### Kakariko Graveyard
 
@@ -147,27 +157,31 @@ Link can walk around them.
 
 ## Your save file
 
-Purchases put real items into the loaded file. By default the mode snapshots
-the inventory, equipment, upgrades, health and magic when a run starts and
-restores them when the run ends (death, leaving the scene or turning the mode
-off), so a run does not change a normal playthrough. Turn **Keep Items After
-Run** on to keep what you bought.
+Purchases put real items into the loaded file. The mode snapshots the
+inventory, equipment, upgrades, health and magic when a run starts, keeps a
+copy in `Save/zombies_snapshot_<slot>.bin`, and restores and saves them when
+the run ends (death, quitting, leaving the scene or turning the mode off). If
+the game is reset or closed mid-run, the copy is put back the next time that
+file loads, over anything an autosave wrote. Saving from the pause screen is
+blocked during a run. **Keep Items After Run** keeps purchases, outside the
+zombies-only game only.
 
 ## Settings
 
-All under Enhancements > Extra Modes > Zombies of Time, stored as
+All under Enhancements > Zombies of Time, stored as
 `gEnhancements.Zombies.*` CVars:
 
 | Setting | Default |
 | --- | --- |
-| Enabled | off |
+| Zombies Only | on |
+| Enabled (the mode inside the normal game) | off |
 | Max Undead Alive | 8 |
 | Health Scaling | 100% |
 | Starting Points | 500 |
 | Starting Round | 1 |
 | Wolfos Rounds | on |
 | Barricades | on |
-| Authored Arenas (the graveyard map) | on |
+| Authored Arenas (the hand-made map layouts) | on |
 | Show Coordinates | off |
 | Horde Pull (undead always walk toward Link) | on |
 | Force Night | on |
@@ -181,8 +195,9 @@ All under Enhancements > Extra Modes > Zombies of Time, stored as
 "Zombies Only" (on by default) turns the whole game into the mode:
 
 - Loading any file skips the intro and drops Link into the chosen map at night.
-- The main menu opens over the map. Like Black Ops', it has a list on the left: Play, Map, Link's age, Starting round, Co-op (coming soon) and Quit. The map's intel and your best round are on the right. It is drawn in Zelda's colours, with a gold Triforce and a red title. Use the D-pad or stick with A, or tap or click an entry, so it works on Android touch controls.
-- Leaving a zombie map warps Link back, and the menu returns after every game over.
+- The main menu opens over the map. Like Black Ops', it has a list on the left: Play, Map, Link's age (locked to adult for the Market Ruins), Starting round, Controls and Quit to title. The map's intel, your best round and a tip are on the right. The menu's choices are saved with SoH's settings. It is drawn in Zelda's colours, with a gold Triforce and a red title. Use the D-pad or stick with A, or tap or click an entry, so it works on Android touch controls.
+- Leaving a zombie map warps Link back. After a run, a results screen shows the rounds survived, kills, points and best round, then the menu returns. A death skips the Save/Continue screens.
+- START during a run opens the run menu (Resume, Items, Controls, End Run).
 - Every run starts with the same kit:
   - the age's sword and shield
   - a slingshot or a bow

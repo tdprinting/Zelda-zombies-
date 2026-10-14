@@ -50,7 +50,8 @@ static void RegisterZombiesWidgets() {
         .CVar(CVAR_ZOMBIES("KeepItems"))
         .Options(CheckboxOptions().Tooltip(
             "Off: your inventory, health and magic go back to how they were when the run started.\n"
-            "On: everything bought during the run stays on this save file."));
+            "On: everything bought during the run stays on this save file.\n"
+            "Zombies Only always puts the inventory back, since every run starts from the same kit."));
     SohGui::mSohMenu->AddWidget(path, "Best Round", WIDGET_TEXT).PreFunc([](WidgetInfo& info) {
         static std::string label;
         label = "Best run: " + std::to_string(CVarGetInteger(CVAR_ZOMBIES("BestRound"), 0)) + " rounds";
