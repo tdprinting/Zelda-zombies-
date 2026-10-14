@@ -148,6 +148,8 @@ struct Run {
     DropTracker dropTracker;
     Vec3f lastKillPos = {};
 
+    bool zombiesOnly = false; // Zombies Only when the run started; decides what happens to the items
+
     PlayerState players[kMaxPlayers];
     int playerCount = 1;
 

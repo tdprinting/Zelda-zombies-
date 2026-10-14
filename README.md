@@ -58,8 +58,9 @@ the power switch or play the Sun's Song. **START** opens the run menu
 lists everything.
 
 After a run, a results screen shows the rounds survived, kills and points.
-In Zombies Only, your real inventory, age and equipment come back when the
-run ends, and on the next load after a crash or a reset, so the mode never
+In Zombies Only, your real inventory comes back when the run ends (or on the
+next load after a crash or a reset), and Link's real age and equipment come
+back the next time the file loads with Zombies Only off, so the mode never
 changes a normal playthrough. (In the normal game, **Keep Items** lets you
 keep what you bought.)
 

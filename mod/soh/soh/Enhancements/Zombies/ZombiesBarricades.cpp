@@ -206,6 +206,13 @@ bool Barricades_HoldEnemy(TrackedEnemy& enemy, float speed) {
     if (len < kTearReach) {
         w.beingTorn = true;
     }
+    // Waiting in line behind another at the boards is fine; caught on a wall or a fence on
+    // the way is not, and the caller replaces it once this runs out.
+    if (len < kTearReach * 2.0f) {
+        enemy.stuckFrames = 0;
+    } else if (actor->freezeTimer == 0) {
+        enemy.stuckFrames++;
+    }
     return true;
 }
 

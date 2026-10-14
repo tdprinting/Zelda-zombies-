@@ -36,7 +36,7 @@ player's own ROM.
 | Zombie health +100 per round, then ×1.1 | Health multiplier on each enemy's own HP: `1 + 0.15 × (round − 1)` to round 10, then ×1.08 per round | Capped at 255 (OoT stores HP in one byte). Slider scales it |
 | Points: 10 per hit, 60 kill, 100 headshot, 130 knife | 10 per hit, 60 kill, 100 kill with an arrow, seed or hookshot, 130 kill with a sword | |
 | Start with 500 points | 500 | |
-| Wall buys | **Armory** station: an item for Link's age, or a refill at half price if he has it | Child: Deku Sticks, Slingshot, Boomerang, Bombs. Adult: Bow, Bombs, Hookshot, Megaton Hammer |
+| Wall buys | **Armory** station: the next item for Link's age he doesn't have, then an ammo refill (500) once he has them all | Child: Slingshot, Boomerang, Bombs. Adult: Bow, Bombs, Hookshot, Megaton Hammer |
 | Mystery Box (950) | **Mystery Chest** (950): random weapon | Pool: Bombchus (Monkey Bomb), Fire/Ice Arrows, Din's Fire (Thundergun), Light Arrows (Ray Gun, rare), Biggoron Sword (rare), Longshot, Hammer. Child pool swaps in Slingshot, Boomerang, Bombs. After four uses, each roll has a 1 in 6 chance of Skull Kid laughing (the teddy bear): the points come back and the chest moves |
 | Juggernog | **Juggernog Milk** (2500): Double Defense | |
 | Quick Revive | **Fairy Revive** (500 solo): a bottled fairy | A fairy in a bottle is OoT's own self-revive. Fills an empty bottle, else adds a bottle, else replaces the first bottle's contents. Can be bought again once the fairy is used |
@@ -73,9 +73,9 @@ Ocarina of Time rather than Black Ops:
 - **Navi is Samantha.** Navi greets each run; round, power-up and power
   callouts use OoT's own sounds (Redead scream, Wolfos howl, puzzle chime).
   Phase 3 gives Navi the full announcer role with text bubbles.
-- **Gold Skulltula easter egg (phase 3).** Shooting three hidden Gold
-  Skulltulas during a run plays a song and unlocks a hidden station, the way
-  Black Ops maps hide their music easter eggs.
+- **Gold Skulltula easter egg.** Shooting three hidden Gold Skulltulas
+  during a run plays a song, the way Black Ops maps hide their music easter
+  eggs.
 - **Rupees still matter.** Kills drop rupees as normal; rupees are spent at
   a Fairy Fountain station to top up hearts between rounds, so OoT's
   currency and Zombies points both have a job.
@@ -163,7 +163,8 @@ inventory, equipment, upgrades, health and magic when a run starts, keeps a
 copy in `Save/zombies_snapshot_<slot>.bin`, and restores and saves them when
 the run ends (death, quitting, leaving the scene or turning the mode off). If
 the game is reset or closed mid-run, the copy is put back the next time that
-file loads, over anything an autosave wrote. Saving from the pause screen is
+file loads, over anything an autosave wrote (with Autosave on, the real items
+are also saved again when a run ends, after any autosave already queued). Saving from the pause screen is
 blocked during a run. **Keep Items After Run** keeps purchases, outside the
 zombies-only game only.
 

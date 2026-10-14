@@ -33,7 +33,7 @@ static constexpr int kFountainRupees = 50;
 static constexpr s16 kTorchFlag = 0x3E;
 static constexpr s16 kTorchGolden = 0x0000 | kTorchFlag;
 static constexpr s16 kTorchStone = 0x1000 | kTorchFlag;
-static constexpr s16 kTorchWooden = 0x2000;
+static constexpr s16 kTorchWooden = 0x2000 | kTorchFlag; // a Deku Stick lights it and sets the flag
 static constexpr s16 kTorchLit = 0x0400;
 
 struct Station {
@@ -576,7 +576,17 @@ static void GiveFairyBottle() {
         }
     }
     if (target < 0) {
-        target = SLOT_BOTTLE_1; // every bottle is full: the first one's contents make way
+        // Every bottle is full: one's contents make way, but never a quest item.
+        for (int slot : bottleSlots) {
+            u8 item = gSaveContext.inventory.items[slot];
+            if (item != ITEM_LETTER_RUTO && item != ITEM_BIG_POE) {
+                target = slot;
+                break;
+            }
+        }
+    }
+    if (target < 0) {
+        return;
     }
     gSaveContext.inventory.items[target] = ITEM_FAIRY;
     for (int b = 1; b <= 3; b++) {

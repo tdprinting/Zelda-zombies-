@@ -46,6 +46,7 @@ static constexpr float kLostDist = 2500.0f;
 // away would otherwise hold the round open forever.
 static constexpr int kStuckFrames = 15 * 20;
 static constexpr float kStuckProgress = 50.0f;
+static constexpr float kFallOutDepth = 1500.0f; // below the start point: fell out of the map
 static constexpr float kStuckMinDist = 110.0f;
 
 static Run sRun;
@@ -166,6 +167,11 @@ static bool ReadSnapshotFile(int fileNum) {
     return ok;
 }
 
+// Saves run on SoH's save thread; these are set from its OnSaveFile hook.
+static std::atomic<bool> sSavedDuringRun = false;  // an autosave wrote the run's loadout
+static std::atomic<bool> sDeleteAfterSave = false; // the snapshot copy goes once the next save lands
+static std::atomic<bool> sLoadoutHeld = false;     // the save context holds a run's loadout
+
 static void TakeSnapshot() {
     sSnapshot.valid = true;
     sSnapshot.equips = gSaveContext.equips;
@@ -182,11 +188,8 @@ static void TakeSnapshot() {
     sSnapshot.rupees = gSaveContext.rupees;
     sSnapshot.dayTime = gSaveContext.dayTime;
     WriteSnapshotFile();
+    sLoadoutHeld = true;
 }
-
-// Saves run on SoH's save thread; these are set from its OnSaveFile hook.
-static std::atomic<bool> sSavedDuringRun = false;  // an autosave wrote the run's loadout
-static std::atomic<bool> sDeleteAfterSave = false; // the snapshot copy goes once the next save lands
 
 // ---------------------------------------------------------------------------
 // Link's age and equipment as the file had them before Zombies Only changed his age
@@ -254,6 +257,7 @@ static void DeleteFileState(int fileNum) {
 // Drops the snapshot without restoring it (Keep Items): the run's items stay.
 static void DiscardSnapshot() {
     sSnapshot.valid = false;
+    sLoadoutHeld = false;
     DeleteSnapshotFile(gSaveContext.fileNum);
 }
 
@@ -264,6 +268,7 @@ static void RestoreSnapshot(bool linkIsDead, bool refresh) {
         return;
     }
     sSnapshot.valid = false;
+    sLoadoutHeld = false;
 
     gSaveContext.equips = sSnapshot.equips;
     gSaveContext.inventory = sSnapshot.inventory;
@@ -284,8 +289,11 @@ static void RestoreSnapshot(bool linkIsDead, bool refresh) {
 
     // If the file was saved mid-run (an autosave), it holds the run's loadout: write the
     // real items back over it, and drop the copy on disk once that save has landed.
-    // Otherwise the file on disk was never touched and the copy can go now.
-    if (sSavedDuringRun.exchange(false) && gSaveContext.fileNum >= 0 && gSaveContext.fileNum < 3) {
+    // With Autosave on, a save of the loadout may still be queued (it saves on exit too),
+    // so save after it. Otherwise the file on disk was never touched and the copy can go now.
+    bool savedDuringRun = sSavedDuringRun.exchange(false);
+    if ((savedDuringRun || CVarGetInteger(CVAR_ENHANCEMENT("Autosave"), 0) != 0) && gSaveContext.fileNum >= 0 &&
+        gSaveContext.fileNum < 3) {
         sDeleteAfterSave = true;
         Save_SaveFile();
     } else {
@@ -429,8 +437,20 @@ static KillType CurrentKillType(Player* player) {
 
 static void SpawnPowerUp(PlayState* play, const Vec3f& pos, PowerUp type);
 
+// Keep home under the enemy so it never walks back or despawns for straying from home.
+// A Stalchild burrows away when its home is over 800 from Link, which a far window or a
+// big map always is: its home goes on Link instead, and it walks to him anyway.
+static void KeepHome(TrackedEnemy& enemy, Player* player) {
+    if (enemy.kind == EnemyKind::Stalchild || enemy.kind == EnemyKind::BigStalchild) {
+        enemy.actor->home.pos = player->actor.world.pos;
+    } else {
+        enemy.actor->home.pos = enemy.actor->world.pos;
+    }
+}
+
 static void OnEnemyKilled(PlayState* play, Player* player, TrackedEnemy& enemy) {
     enemy.killCounted = true;
+    enemy.stuckFrames = 0; // now counts the death animation
     PlayerState& ps = sRun.players[0];
     ps.kills++;
     AwardPoints(0, PointsForKill(CurrentKillType(player)));
@@ -452,6 +472,17 @@ static void UpdateEnemies(PlayState* play, Player* player) {
 
         if (actor->update == nullptr) {
             // Actor_Kill ran: either a finished death animation or a despawn (Stalchild burrowing).
+            ForgetEnemy(i, !enemy.killCounted);
+            continue;
+        }
+
+        // Knocked through the floor, or a death animation that never finishes (it fell
+        // while dying): it would hold the round open forever.
+        if (enemy.killCounted && actor->colChkInfo.health == 0) {
+            enemy.stuckFrames++;
+        }
+        if (actor->world.pos.y < sRun.origin.y - kFallOutDepth || enemy.stuckFrames > kStuckFrames * 2) {
+            Actor_Kill(actor);
             ForgetEnemy(i, !enemy.killCounted);
             continue;
         }
@@ -487,13 +518,13 @@ static void UpdateEnemies(PlayState* play, Player* player) {
             // Undead outside a barricade stay there, tearing boards, until the window is open.
             if (enemy.window >= 0 && Barricades_HoldEnemy(enemy, PullSpeed(enemy.tier) * slow)) {
                 enemy.closestDist = dist;
-                enemy.stuckFrames = 0;
-                if (dist > kLostDist) {
+                // Counted by the hold: frames spent short of the boards, caught on something.
+                if (dist > kLostDist || enemy.stuckFrames > kStuckFrames) {
                     Actor_Kill(actor);
                     ForgetEnemy(i, true);
                     continue;
                 }
-                actor->home.pos = actor->world.pos;
+                KeepHome(enemy, player);
                 enemy.lastPos = actor->world.pos;
                 i++;
                 continue;
@@ -528,8 +559,7 @@ static void UpdateEnemies(PlayState* play, Player* player) {
                 actor->shape.rot.y = yaw;
             }
 
-            // Keep home under the enemy so it never walks back or despawns for straying from home.
-            actor->home.pos = actor->world.pos;
+            KeepHome(enemy, player);
         }
 
         enemy.lastPos = actor->world.pos;
@@ -754,6 +784,7 @@ static void ForceNight() {
 static void StartRun(PlayState* play, Player* player) {
     sRun = Run();
     sRun.phase = Phase::Intro;
+    sRun.zombiesOnly = ZombiesOnly();
     sRun.phaseTimer = 4 * kFps;
     sRun.sceneNum = play->sceneNum;
     sRun.origin = player->actor.world.pos;
@@ -805,7 +836,7 @@ static void EndRun(const std::string& reason, bool linkIsDead) {
     Extras_OnRunEnd(gPlayState, linkIsDead);
 
     // Zombies Only hands out a fresh loadout every run, so it always puts the file back.
-    if (ZombiesOnly() || !CVarOn(CVAR_ZOMBIES("KeepItems"), 0)) {
+    if (sRun.zombiesOnly || !CVarOn(CVAR_ZOMBIES("KeepItems"), 0)) {
         RestoreSnapshot(linkIsDead, true);
     } else {
         DiscardSnapshot();
@@ -1103,7 +1134,7 @@ static void OnLoadGame(int32_t fileNum) {
 
 static void OnSaveFile(int32_t fileNum, int32_t sectionID) {
     (void)sectionID;
-    if (IsRunActive()) {
+    if (sLoadoutHeld) {
         sSavedDuringRun = true;
     } else if (sDeleteAfterSave.exchange(false)) {
         DeleteSnapshotFile(fileNum);
@@ -1130,6 +1161,10 @@ static void RegisterZombies() {
     }
     if (!ZombiesOnly()) {
         Lobby_Close(gPlayState);
+    } else if (gPlayState != nullptr && gSaveContext.fileNum >= 0 && gSaveContext.fileNum < 3 &&
+               !std::filesystem::exists(FileStatePath(gSaveContext.fileNum))) {
+        // Switched on with a file already loaded: note Link's age before the menu changes it.
+        WriteFileState(gSaveContext.fileNum);
     }
     if (!enabled) {
         sRun.prompt.clear();
