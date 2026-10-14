@@ -72,6 +72,10 @@ static void RegisterZombiesWidgets() {
         .Options(CheckboxOptions().DefaultValue(true).Tooltip(
             "Every few rounds a pack of White Wolfos replaces the undead, like Black Ops hellhound rounds. "
             "The last one always drops Max Ammo."));
+    SohGui::mSohMenu->AddWidget(path, "Round Music", WIDGET_CVAR_CHECKBOX)
+        .CVar(CVAR_ZOMBIES("Music"))
+        .Options(CheckboxOptions().DefaultValue(true).Tooltip(
+            "Plays the Shadow Temple theme during rounds and the mini-boss theme during Wolfos rounds."));
     SohGui::mSohMenu->AddWidget(path, "Barricades", WIDGET_CVAR_CHECKBOX)
         .CVar(CVAR_ZOMBIES("Barricades"))
         .Options(CheckboxOptions().DefaultValue(true).Tooltip(

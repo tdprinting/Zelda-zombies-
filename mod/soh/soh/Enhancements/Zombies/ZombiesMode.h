@@ -199,6 +199,16 @@ void Barricades_RepairAll();
 bool Barricades_AnyBroken();
 void Barricades_Draw();
 
+// Music, Navi and the Gold Skulltula easter egg (ZombiesExtras.cpp)
+void Navi(const std::string& text, u16 voice);
+void Extras_OnRunStart(PlayState* play);
+void Extras_OnRunEnd(PlayState* play, bool linkIsDead);
+void Extras_OnRoundStart(bool dogRound);
+void Extras_OnRoundEnd();
+void Extras_OnSceneReload();
+void Extras_OnActorDestroy(Actor* actor);
+void Extras_Update(PlayState* play, Player* player);
+
 // Arenas (ZombiesArena.cpp)
 const ArenaLayout* Arena_ForScene(s16 sceneNum);
 // Floor under an authored spot, near refY. Authored spots can be on slightly different

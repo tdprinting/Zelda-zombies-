@@ -550,6 +550,8 @@ static void StartRound(int round) {
     // Zelda twist: hearts come back at the start of each round instead of regenerating.
     gSaveContext.health = gSaveContext.healthCapacity;
 
+    Extras_OnRoundStart(sRun.dogRound);
+
     sRun.spawnTimer = 2 * kFps;
     sRun.phase = Phase::Active;
 }
@@ -560,6 +562,7 @@ static void EndRound(PlayState* play) {
         SpawnPowerUp(play, sRun.lastKillPos, PowerUp::MaxAmmo);
     }
     Announce("ROUND " + std::to_string(sRun.round) + " SURVIVED", 3);
+    Extras_OnRoundEnd();
     Sfx_PlaySfxCentered(NA_SE_SY_CORRECT_CHIME);
     sRun.phase = Phase::Intermission;
     sRun.phaseTimer = 10 * kFps;
@@ -611,6 +614,7 @@ static void StartRun(PlayState* play, Player* player) {
     Arena_Start(play);
     Stations_Place(play);
     Barricades_Place(play);
+    Extras_OnRunStart(play);
 
     Announce(sRun.layout != nullptr ? sRun.layout->name : "ZOMBIES OF TIME", 4);
     Sfx_PlaySfxCentered(NA_SE_VO_NAVY_HELLO);
@@ -635,6 +639,7 @@ static void EndRun(const std::string& reason, bool linkIsDead) {
     sRun.enemies.clear();
     sRun.drops.clear();
     Stations_Clear();
+    Extras_OnRunEnd(gPlayState, linkIsDead);
 
     if (!CVarOn(CVAR_ZOMBIES("KeepItems"), 0)) {
         RestoreSnapshot(linkIsDead);
@@ -730,6 +735,7 @@ static void OnPlayerUpdate() {
     Stations_Update(play, player);
     Arena_Update(play, player);
     Barricades_Update(play, player);
+    Extras_Update(play, player);
 
     switch (sRun.phase) {
         case Phase::Intro:
@@ -754,6 +760,7 @@ static void OnPlayerUpdate() {
 static void OnActorDestroy(void* refActor) {
     Actor* actor = static_cast<Actor*>(refActor);
     Stations_OnActorDestroy(actor);
+    Extras_OnActorDestroy(actor);
     for (size_t i = 0; i < sRun.enemies.size(); i++) {
         if (sRun.enemies[i].actor == actor) {
             ForgetEnemy(i, !sRun.enemies[i].killCounted);
@@ -782,6 +789,7 @@ static void OnSceneInit(int16_t sceneNum) {
     // Same scene reloaded (a void out or a room reset): every actor was unloaded.
     sRun.enemies.clear();
     sRun.drops.clear();
+    Extras_OnSceneReload();
     sStationsNeedPlacing = true;
 }
 
