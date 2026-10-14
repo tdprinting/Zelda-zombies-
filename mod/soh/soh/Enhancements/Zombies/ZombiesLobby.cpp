@@ -30,26 +30,28 @@ extern "C" {
 #include "macros.h"
 #include "variables.h"
 extern PlayState* gPlayState;
+extern s16 gGameOverTimer;
 }
 
 namespace Zombies {
 
 struct LobbyMap {
     const char* name;
+    const char* shortName; // fits the menu list
     s16 sceneNum;
     s16 entrance;
     const char* intel;
 };
 
 static const LobbyMap kMaps[] = {
-    { "KAKARIKO GRAVEYARD", SCENE_GRAVEYARD, ENTR_GRAVEYARD_ENTRANCE,
+    { "KAKARIKO GRAVEYARD", "GRAVEYARD", SCENE_GRAVEYARD, ENTR_GRAVEYARD_ENTRANCE,
       "Graves, a gate and the Royal Tomb. Start at the gate, clear the debris into the graves, then fight your way "
       "to the tomb for the power and Pack-a-Punch." },
-    { "MARKET RUINS", SCENE_MARKET_RUINS, ENTR_MARKET_RUINS_0_2,
+    { "MARKET RUINS", "MARKET", SCENE_MARKET_RUINS, ENTR_MARKET_RUINS_0_2,
       "Castle Town after Ganondorf. Tight streets and Redeads that have been waiting seven years." },
-    { "LON LON RANCH", SCENE_LON_LON_RANCH, ENTR_LON_LON_RANCH_ENTRANCE,
+    { "LON LON RANCH", "RANCH", SCENE_LON_LON_RANCH, ENTR_LON_LON_RANCH_ENTRANCE,
       "Wide open paddock. Room to run a train of undead in circles." },
-    { "HYRULE FIELD", SCENE_HYRULE_FIELD, ENTR_HYRULE_FIELD_PAST_BRIDGE_SPAWN,
+    { "HYRULE FIELD", "FIELD", SCENE_HYRULE_FIELD, ENTR_HYRULE_FIELD_PAST_BRIDGE_SPAWN,
       "Huge and dark. Turn Max Undead Alive up in the settings for a real horde." },
 };
 static constexpr int kMapCount = sizeof(kMaps) / sizeof(kMaps[0]);
@@ -114,6 +116,7 @@ static void Close(PlayState* play) {
     sOpen = false;
     if (play != nullptr) {
         GET_PLAYER(play)->stateFlags1 &= ~PLAYER_STATE1_INPUT_DISABLED;
+        Interface_ChangeHudVisibilityMode(HUD_VISIBILITY_ALL);
     }
 }
 
@@ -125,6 +128,7 @@ static void WarpToMap(PlayState* play, const LobbyMap& map) {
     play->transitionType = TRANS_TYPE_FADE_BLACK;
     gSaveContext.dayTime = 0;
     gSaveContext.nightFlag = 1;
+    gSaveContext.showTitleCard = false; // the menu names the map
 }
 
 static void Play(PlayState* play) {
@@ -213,8 +217,11 @@ void Lobby_Update(PlayState* play, Player* player) {
         Sfx_PlaySfxCentered(NA_SE_SY_FSEL_DECIDE_S);
     }
 
-    // Link waits while the menu is up.
+    // Link waits while the menu is up, and the game's HUD stays out of the way.
     player->stateFlags1 |= PLAYER_STATE1_INPUT_DISABLED;
+    if (gSaveContext.hudVisibilityMode != HUD_VISIBILITY_NOTHING) {
+        Interface_ChangeHudVisibilityMode(HUD_VISIBILITY_NOTHING);
+    }
 
     Input& input = play->state.input[0];
     u16 press = input.press.button;
@@ -274,6 +281,27 @@ void Lobby_OnSceneInit(s16 sceneNum) {
     }
 }
 
+// Zombies only: no "Save? Continue?" screens after a death. Link lies there for a moment
+// under the game over banner, then the map reloads and the main menu comes back.
+void Lobby_OnFrame(PlayState* play) {
+    static int sDeadFrames = 0;
+    if (!ZombiesOnly() || play == nullptr || play->gameOverCtx.state != GAMEOVER_DEATH_DELAY_MENU) {
+        sDeadFrames = 0;
+        return;
+    }
+    if (++sDeadFrames < 3 * 20) {
+        gGameOverTimer = 2; // hold off the vanilla menu
+        return;
+    }
+    sDeadFrames = 0;
+    play->gameOverCtx.state = GAMEOVER_INACTIVE;
+    gSaveContext.health = gSaveContext.healthCapacity;
+    gSaveContext.healthAccumulator = 0;
+    sPendingStart = false;
+    sOpen = false;
+    WarpToMap(play, kMaps[MapIndex()]);
+}
+
 // After the file select: skip the story and go straight to the chosen map at night.
 void Lobby_OnLoadGame() {
     if (!ZombiesOnly()) {
@@ -285,6 +313,7 @@ void Lobby_OnLoadGame() {
     gSaveContext.nextCutsceneIndex = 0xFFEF;
     gSaveContext.dayTime = 0;
     gSaveContext.nightFlag = 1;
+    gSaveContext.showTitleCard = false; // the menu names the map
     sPendingStart = false;
     sOpen = false;
 }
@@ -303,7 +332,7 @@ class LobbyWindow final : public Ship::GuiWindow {
         ImGuiViewport* viewport = ImGui::GetMainViewport();
         ImGui::SetNextWindowPos(viewport->Pos);
         ImGui::SetNextWindowSize(viewport->Size);
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.02f, 0.02f, 0.03f, 0.72f));
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.02f, 0.02f, 0.03f, 0.82f));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
         ImGui::Begin("Zombies of Time##Lobby", nullptr,
                      ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
@@ -353,7 +382,7 @@ class LobbyWindow final : public Ship::GuiWindow {
         const LobbyMap& map = kMaps[MapIndex()];
         std::string labels[ITEM_COUNT] = {
             "PLAY",
-            std::string("MAP      < ") + map.name + " >",
+            std::string("MAP      < ") + map.shortName + " >",
             std::string("LINK     < ") + (ChosenAge() == LINK_AGE_CHILD ? "CHILD" : "ADULT") + " >",
             "ROUND    < " + std::to_string(CVarGetInteger(CVAR_ZOMBIES("StartingRound"), 1)) + " >",
             "CO-OP    (COMING SOON)",

@@ -242,6 +242,11 @@ bool Stations_PapSword(); // Pack-a-Punched blade: melee hits land twice
 // HUD (ZombiesHud.cpp)
 void Hud_Draw();
 
+// Keeps Link off the scene exits during a run (ZombiesBounds.cpp)
+void Bounds_Scan(PlayState* play);
+void Bounds_Update(PlayState* play, Player* player);
+bool Bounds_NearExit(const Vec3f& pos);
+
 // Inventory helpers (ZombiesStations.cpp)
 void RefillAmmo();
 void GiveLoadout(PlayState* play);
@@ -252,6 +257,7 @@ bool Lobby_IsOpen();
 void Lobby_Update(PlayState* play, Player* player);
 void Lobby_OnSceneInit(s16 sceneNum);
 void Lobby_OnLoadGame();
+void Lobby_OnFrame(PlayState* play); // every frame, menus and game over included
 // Starts a run where Link stands (ZombiesMode.cpp).
 void Lobby_StartRunHere(PlayState* play);
 

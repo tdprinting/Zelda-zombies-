@@ -29,16 +29,19 @@ static constexpr int kWindowCount = 4;
 static constexpr float kWindowDists[] = { 520.0f, 460.0f, 600.0f, 400.0f };
 static constexpr float kSpawnBehind = 130.0f; // how far outside the boards undead appear
 static constexpr float kHoldDist = 35.0f;     // where undead stand while tearing
-static constexpr float kTearReach = 30.0f;    // close enough to the hold point to tear
-static constexpr int kTearFrames = 30;        // one board every 1.5 seconds
-static constexpr int kRepairFrames = 12;      // holding the button puts a board back every 0.6 seconds
+// Close enough to the hold point to tear. Generous: two undead at one window shove each
+// other apart, and a fence or wall can keep them short of the exact spot.
+static constexpr float kTearReach = 80.0f;
+static constexpr int kTearFrames = 30;   // one board every 1.5 seconds
+static constexpr int kRepairFrames = 12; // holding the button puts a board back every 0.6 seconds
 static constexpr float kRepairRange = 100.0f;
 static constexpr int kFallFrames = 10;
 
-// Boards are the small wooden crate's model squashed into planks. The crate is about
-// 30 units across at the default actor scale of 0.01.
+// Boards are the small wooden crate's model squashed into planks. The crate actor
+// (ObjKibako) draws it at scale 0.1, where it is about 30 units across (its collider is
+// 12 wide, 27 tall). Checked in-game: at 0.01 the planks were too small to see.
 static constexpr float kCrateSize = 30.0f;
-static constexpr float kCrateScale = 0.01f;
+static constexpr float kCrateScale = 0.1f;
 static constexpr float kWindowWidth = 80.0f;
 static constexpr float kPostHeight = 85.0f;
 
@@ -309,19 +312,19 @@ extern "C" void ZombiesBarricades_Draw(PlayState* play) {
 
         // Posts either side, so an empty window still reads as a way in.
         float half = kWindowWidth * 0.5f + 4.0f;
-        ZombiesDraw_Crate(play, w.pos, w.yaw, -half, kPostHeight * 0.5f, 0.0f, 0.0f, 7.0f, kPostHeight, 7.0f);
-        ZombiesDraw_Crate(play, w.pos, w.yaw, half, kPostHeight * 0.5f, 0.0f, 0.0f, 7.0f, kPostHeight, 7.0f);
+        ZombiesDraw_Crate(play, w.pos, w.yaw, -half, kPostHeight * 0.5f, 0.0f, 0.0f, 10.0f, kPostHeight, 10.0f);
+        ZombiesDraw_Crate(play, w.pos, w.yaw, half, kPostHeight * 0.5f, 0.0f, 0.0f, 10.0f, kPostHeight, 10.0f);
 
         for (int b = 0; b < kBoardsPerWindow; b++) {
-            float y = 16.0f + b * 11.0f;
+            float y = 14.0f + b * 12.0f;
             float roll = (b % 2 == 0) ? 0.12f : -0.1f;
             if (b < w.boards) {
-                ZombiesDraw_Crate(play, w.pos, w.yaw, 0.0f, y, -4.0f, roll, kWindowWidth + 6.0f, 8.0f, 3.0f);
+                ZombiesDraw_Crate(play, w.pos, w.yaw, 0.0f, y, -4.0f, roll, kWindowWidth + 6.0f, 10.0f, 6.0f);
             } else if (b == w.boards && w.fallingBoard > 0) {
                 // The board just torn off tumbles outward.
                 float t = 1.0f - static_cast<float>(w.fallingBoard) / kFallFrames;
                 ZombiesDraw_Crate(play, w.pos, w.yaw, 0.0f, y - t * y, -4.0f - t * 30.0f, roll + t * 1.4f,
-                                  kWindowWidth + 6.0f, 8.0f, 3.0f);
+                                  kWindowWidth + 6.0f, 10.0f, 6.0f);
             }
         }
 

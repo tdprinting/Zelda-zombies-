@@ -618,6 +618,7 @@ static void StartRun(PlayState* play, Player* player) {
         GiveLoadout(play);
     }
     ForceNight();
+    Bounds_Scan(play);
     Arena_Start(play);
     Stations_Place(play);
     Barricades_Place(play);
@@ -631,7 +632,8 @@ static void EndRun(const std::string& reason, bool linkIsDead) {
     if (!IsRunActive()) {
         return;
     }
-    int survived = std::max(sRun.round - (sRun.phase == Phase::Intermission ? 0 : 1), 0);
+    // Black Ops counts the round you reached: dying in round 1 survived 1 round.
+    int survived = sRun.round;
     if (survived > CVarGetInteger(CVAR_ZOMBIES("BestRound"), 0)) {
         CVarSetInteger(CVAR_ZOMBIES("BestRound"), survived);
         Ship::Context::GetRawInstance()->GetWindow()->GetGui()->SaveConsoleVariablesNextFrame();
@@ -654,7 +656,7 @@ static void EndRun(const std::string& reason, bool linkIsDead) {
 
     sRun.phase = Phase::GameOver;
     sRun.phaseTimer = 8 * kFps;
-    Announce(reason + ": " + std::to_string(survived) + (survived == 1 ? " ROUND" : " ROUNDS"), 8);
+    Announce(reason + ": YOU SURVIVED " + std::to_string(survived) + (survived == 1 ? " ROUND" : " ROUNDS"), 8);
 }
 
 static bool LinkIsDying(PlayState* play) {
@@ -734,8 +736,10 @@ static void OnPlayerUpdate() {
 
     if (sStationsNeedPlacing) {
         sStationsNeedPlacing = false;
+        Bounds_Scan(play);
         Stations_Place(play);
     }
+    Bounds_Update(play, player);
 
     if (sRun.stormFrames > 0) {
         sRun.stormFrames--;
@@ -839,6 +843,7 @@ static void OnGameFrameUpdate() {
     if (gPlayState == nullptr) {
         return;
     }
+    Lobby_OnFrame(gPlayState);
     if (IsRunActive() || !sRun.prompt.empty() || sRun.announcement.framesLeft > 0 ||
         CVarOn(CVAR_ZOMBIES("ShowCoordinates"), 0)) {
         Hud_Draw();

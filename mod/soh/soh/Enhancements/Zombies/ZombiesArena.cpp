@@ -129,6 +129,17 @@ void Arena_Start(PlayState* play) {
         return;
     }
 
+    // Everyone starts in the first zone, like Black Ops' spawn room, wherever the map
+    // loaded Link (often right on the scene exit he came in by).
+    Vec3f start;
+    if (!run.layout->zones.empty() && Arena_Resolve(play, run.layout->zones[0].centre, run.origin.y, &start)) {
+        Player* player = GET_PLAYER(play);
+        player->actor.world.pos = start;
+        player->actor.prevPos = start;
+        player->actor.shape.rot.y = player->actor.world.rot.y = player->yaw = run.originYaw;
+        run.origin = start;
+    }
+
     for (size_t z = 1; z < run.layout->zones.size() && z < 32; z++) {
         const LayoutZone& zone = run.layout->zones[z];
         Vec3f pos;
