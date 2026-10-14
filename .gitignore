@@ -1,2 +1,9 @@
 build-tests/
 build-bomap/
+
+# Game data (never commit: Nintendo assets)
+*.o2r
+*.otr
+*.z64
+*.n64
+*.v64
