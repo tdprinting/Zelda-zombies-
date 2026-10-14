@@ -15,6 +15,31 @@ void GfxPrint_SetPos(GfxPrint* printer, s32 x, s32 y);
 s32 GfxPrint_Printf(GfxPrint* printer, const char* fmt, ...);
 }
 
+// OPEN_DISPS forward-declares C functions, so the display list work needs C linkage
+// and has to sit outside the Zombies namespace.
+extern "C" void ZombiesHud_DrawPrinter(PlayState* play, void (*drawContents)(GfxPrint*)) {
+    OPEN_DISPS(play->state.gfxCtx);
+
+    Gfx* polyOpa = POLY_OPA_DISP;
+    Gfx* gfx = Graph_GfxPlusOne(polyOpa);
+    gSPDisplayList(OVERLAY_DISP++, gfx);
+
+    GfxPrint printer;
+    GfxPrint_Init(&printer);
+    GfxPrint_Open(&printer, gfx);
+
+    drawContents(&printer);
+
+    gfx = GfxPrint_Close(&printer);
+    GfxPrint_Destroy(&printer);
+
+    gSPEndDisplayList(gfx++);
+    Graph_BranchDlist(polyOpa, gfx);
+    POLY_OPA_DISP = gfx;
+
+    CLOSE_DISPS(play->state.gfxCtx);
+}
+
 namespace Zombies {
 
 static constexpr int kCols = 40;
@@ -123,27 +148,7 @@ void Hud_Draw() {
     if (play == nullptr || play->pauseCtx.state != 0) {
         return;
     }
-
-    OPEN_DISPS(play->state.gfxCtx);
-
-    Gfx* polyOpa = POLY_OPA_DISP;
-    Gfx* gfx = Graph_GfxPlusOne(polyOpa);
-    gSPDisplayList(OVERLAY_DISP++, gfx);
-
-    GfxPrint printer;
-    GfxPrint_Init(&printer);
-    GfxPrint_Open(&printer, gfx);
-
-    DrawContents(&printer);
-
-    gfx = GfxPrint_Close(&printer);
-    GfxPrint_Destroy(&printer);
-
-    gSPEndDisplayList(gfx++);
-    Graph_BranchDlist(polyOpa, gfx);
-    POLY_OPA_DISP = gfx;
-
-    CLOSE_DISPS(play->state.gfxCtx);
+    ZombiesHud_DrawPrinter(play, DrawContents);
 }
 
 } // namespace Zombies
