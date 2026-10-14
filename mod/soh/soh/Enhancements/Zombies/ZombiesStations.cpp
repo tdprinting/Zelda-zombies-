@@ -701,7 +701,7 @@ void Stations_Update(PlayState* play, Player* player) {
     }
 
     Offer offer = GetOffer(*nearest);
-    std::string button = CVarGetInteger(CVAR_ZOMBIES("BuyButton"), 0) == 1 ? "DPAD DOWN" : "L";
+    std::string button = BuyButtonName();
     if (!offer.available) {
         run.prompt = offer.label + " - " + offer.unavailableReason;
     } else if (offer.rupeeCost > 0) {

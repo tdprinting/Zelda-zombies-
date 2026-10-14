@@ -187,35 +187,51 @@ static EnemySpec GetEnemySpec(EnemyKind kind) {
     }
 }
 
+bool FloorAt(PlayState* play, float x, float z, float refY, float* outY) {
+    Vec3f probe = { x, refY + 200.0f, z };
+    CollisionPoly* poly;
+    s32 bgId;
+    f32 floorY = BgCheck_EntityRaycastFloor3(&play->colCtx, &poly, &bgId, &probe);
+    if (floorY <= BGCHECK_Y_MIN + 1.0f || fabsf(floorY - refY) > kSpawnMaxHeightDiff) {
+        return false;
+    }
+    WaterBox* waterBox;
+    f32 waterY;
+    if (WaterBox_GetSurface1(play, &play->colCtx, x, z, &waterY, &waterBox) && waterY > floorY + 10.0f) {
+        return false;
+    }
+    *outY = floorY;
+    return true;
+}
+
 static bool FindFloorNear(PlayState* play, const Vec3f& center, float minDist, float maxDist, float refY, Vec3f* out) {
     for (int attempt = 0; attempt < 16; attempt++) {
         s16 angle = static_cast<s16>(Rand_ZeroOne() * 0x10000);
         float dist = minDist + Rand_ZeroOne() * (maxDist - minDist);
-        Vec3f probe = { center.x + Math_SinS(angle) * dist, refY + 200.0f, center.z + Math_CosS(angle) * dist };
-        CollisionPoly* poly;
-        s32 bgId;
-        f32 floorY = BgCheck_EntityRaycastFloor3(&play->colCtx, &poly, &bgId, &probe);
-        if (floorY <= BGCHECK_Y_MIN + 1.0f) {
-            continue;
+        float x = center.x + Math_SinS(angle) * dist;
+        float z = center.z + Math_CosS(angle) * dist;
+        float y;
+        if (FloorAt(play, x, z, refY, &y)) {
+            *out = { x, y, z };
+            return true;
         }
-        if (fabsf(floorY - refY) > kSpawnMaxHeightDiff) {
-            continue;
-        }
-        WaterBox* waterBox;
-        f32 waterY;
-        if (WaterBox_GetSurface1(play, &play->colCtx, probe.x, probe.z, &waterY, &waterBox) &&
-            waterY > floorY + 10.0f) {
-            continue;
-        }
-        *out = { probe.x, floorY, probe.z };
-        return true;
     }
     return false;
 }
 
 static bool SpawnEnemy(PlayState* play, Player* player, EnemyKind kind) {
     Vec3f pos;
-    if (!FindFloorNear(play, player->actor.world.pos, kSpawnMinDist, kSpawnMaxDist, player->actor.world.pos.y, &pos)) {
+    // Undead come in through the barricades; Wolfos, like hellhounds, appear anywhere.
+    int window = kind == EnemyKind::WhiteWolfos ? -1 : Barricades_PickWindow();
+    if (window >= 0) {
+        const Window& w = sRun.windows[window];
+        float side = (Rand_ZeroOne() - 0.5f) * 80.0f;
+        pos = { w.spawnPos.x + Math_CosS(w.yaw) * side, w.spawnPos.y, w.spawnPos.z - Math_SinS(w.yaw) * side };
+        if (!FloorAt(play, pos.x, pos.z, w.spawnPos.y, &pos.y)) {
+            pos = w.spawnPos;
+        }
+    } else if (!FindFloorNear(play, player->actor.world.pos, kSpawnMinDist, kSpawnMaxDist, player->actor.world.pos.y,
+                              &pos)) {
         return false;
     }
 
@@ -237,7 +253,7 @@ static bool SpawnEnemy(PlayState* play, Player* player, EnemyKind kind) {
     // Wolfos are already fast; undead get a Black Ops move tier for the round.
     MoveTier tier = kind == EnemyKind::WhiteWolfos ? MoveTier::Walk : PickMoveTier(sRun.round, Rand_ZeroOne());
     sRun.enemies.push_back({ actor, kind, tier, static_cast<s16>(hp), actor->world.pos, false,
-                             Math_Vec3f_DistXZ(&pos, &player->actor.world.pos), 0 });
+                             Math_Vec3f_DistXZ(&pos, &player->actor.world.pos), 0, window });
     // Dust where the undead claws out of the ground.
     Actor_SpawnFloorDustRing(play, actor, &pos, 30.0f, 7, 4.0f, 60, 6, 0);
     return true;
@@ -279,7 +295,7 @@ static void OnEnemyKilled(PlayState* play, Player* player, TrackedEnemy& enemy) 
     sRun.lastKillPos = enemy.actor->world.pos;
 
     if (sRun.dropTracker.OnKill(ps.totalEarned, Rand_ZeroOne())) {
-        SpawnPowerUp(play, enemy.actor->world.pos, PickPowerUp(Rand_ZeroOne(), true));
+        SpawnPowerUp(play, enemy.actor->world.pos, PickPowerUp(Rand_ZeroOne(), true, Barricades_AnyBroken()));
     }
 }
 
@@ -324,6 +340,22 @@ static void UpdateEnemies(PlayState* play, Player* player) {
 
         if (!enemy.killCounted) {
             float dist = actor->xzDistToPlayer;
+
+            // Undead outside a barricade stay there, tearing boards, until the window is open.
+            if (enemy.window >= 0 && Barricades_HoldEnemy(enemy, PullSpeed(enemy.tier) * slow)) {
+                enemy.closestDist = dist;
+                enemy.stuckFrames = 0;
+                if (dist > kLostDist) {
+                    Actor_Kill(actor);
+                    ForgetEnemy(i, true);
+                    continue;
+                }
+                actor->home.pos = actor->world.pos;
+                enemy.lastPos = actor->world.pos;
+                i++;
+                continue;
+            }
+
             if (dist < enemy.closestDist - kStuckProgress || dist < kStuckMinDist) {
                 enemy.closestDist = std::min(enemy.closestDist, dist);
                 enemy.stuckFrames = 0;
@@ -393,6 +425,8 @@ static s16 PowerUpDropParams(PowerUp type) {
             return ITEM00_RUPEE_ORANGE;
         case PowerUp::Nuke:
             return ITEM00_BOMBS_A;
+        case PowerUp::Carpenter:
+            return ITEM00_STICK; // a plank of wood
         case PowerUp::FireSale:
         default:
             return ITEM00_RUPEE_PURPLE;
@@ -447,6 +481,11 @@ static void ActivatePowerUp(PlayState* play, PowerUp type) {
             Sfx_PlaySfxCentered(NA_SE_IT_BOMB_EXPLOSION);
             AwardPoints(0, kPointsNuke);
             break;
+        case PowerUp::Carpenter:
+            Barricades_RepairAll();
+            Sfx_PlaySfxCentered(NA_SE_EV_WOOD_HIT);
+            AwardPoints(0, kPointsCarpenter);
+            break;
         default:
             sRun.powerUpFrames[static_cast<int>(type)] = kPowerUpSeconds * kFps;
             break;
@@ -494,6 +533,7 @@ static void StartRound(int round) {
     sRun.round = round;
     sRun.dogRound = CVarOn(CVAR_ZOMBIES("WolfosRounds"), 1) && round == sRun.nextDogRound;
     sRun.dropTracker.NewRound();
+    sRun.repairPointsThisRound = 0;
 
     if (sRun.dogRound) {
         sRun.dogRoundIndex++;
@@ -569,6 +609,7 @@ static void StartRun(PlayState* play, Player* player) {
     TakeSnapshot();
     ForceNight();
     Stations_Place(play);
+    Barricades_Place(play);
 
     Announce("ZOMBIES OF TIME", 4);
     Sfx_PlaySfxCentered(NA_SE_VO_NAVY_HELLO);
@@ -613,9 +654,20 @@ static bool CanStartRun(PlayState* play, Player* player) {
            (player->actor.bgCheckFlags & 1);
 }
 
+static u16 BuyButton() {
+    return CVarGetInteger(CVAR_ZOMBIES("BuyButton"), 0) == 1 ? BTN_DDOWN : BTN_L;
+}
+
+const char* BuyButtonName() {
+    return CVarGetInteger(CVAR_ZOMBIES("BuyButton"), 0) == 1 ? "DPAD DOWN" : "L";
+}
+
 static bool BuyPressed(PlayState* play) {
-    u16 button = CVarGetInteger(CVAR_ZOMBIES("BuyButton"), 0) == 1 ? BTN_DDOWN : BTN_L;
-    return CHECK_BTN_ALL(play->state.input[0].press.button, button);
+    return CHECK_BTN_ALL(play->state.input[0].press.button, BuyButton());
+}
+
+bool BuyHeld(PlayState* play) {
+    return CHECK_BTN_ALL(play->state.input[0].cur.button, BuyButton());
 }
 
 static bool sStationsNeedPlacing = false;
@@ -642,8 +694,7 @@ static void OnPlayerUpdate() {
         case Phase::Inactive:
             sRun.prompt.clear();
             if (CanStartRun(play, player)) {
-                sRun.prompt = std::string(CVarGetInteger(CVAR_ZOMBIES("BuyButton"), 0) == 1 ? "DPAD DOWN" : "L") +
-                              ": START ZOMBIES OF TIME";
+                sRun.prompt = std::string(BuyButtonName()) + ": START ZOMBIES OF TIME";
                 if (BuyPressed(play)) {
                     StartRun(play, player);
                 }
@@ -676,6 +727,7 @@ static void OnPlayerUpdate() {
     UpdateEnemies(play, player);
     UpdateDrops(play, player);
     Stations_Update(play, player);
+    Barricades_Update(play, player);
 
     switch (sRun.phase) {
         case Phase::Intro:
@@ -787,6 +839,7 @@ static void RegisterZombies() {
     COND_HOOK(OnSceneInit, enabled, OnSceneInit);
     COND_HOOK(OnOcarinaSongAction, enabled, OnOcarinaSong);
     COND_HOOK(OnGameFrameUpdate, enabled, OnGameFrameUpdate);
+    COND_HOOK(OnPlayDrawEnd, enabled, Barricades_Draw);
 
     // Stamin-Up: Link runs 25% faster.
     COND_VB_SHOULD(VB_PLAYER_MODIFY_RUN_SPEED, enabled, {

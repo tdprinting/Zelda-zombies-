@@ -72,6 +72,12 @@ static void RegisterZombiesWidgets() {
         .Options(CheckboxOptions().DefaultValue(true).Tooltip(
             "Every few rounds a pack of White Wolfos replaces the undead, like Black Ops hellhound rounds. "
             "The last one always drops Max Ammo."));
+    SohGui::mSohMenu->AddWidget(path, "Barricades", WIDGET_CVAR_CHECKBOX)
+        .CVar(CVAR_ZOMBIES("Barricades"))
+        .Options(CheckboxOptions().DefaultValue(true).Tooltip(
+            "Undead come in through four boarded windows around the start point and tear the boards off "
+            "before they can reach Link. Hold the buy button at a window to put boards back for 10 points each. "
+            "Takes effect on the next run."));
     SohGui::mSohMenu->AddWidget(path, "Horde Pull", WIDGET_CVAR_CHECKBOX)
         .CVar(CVAR_ZOMBIES("HordePull"))
         .Options(CheckboxOptions().DefaultValue(true).Tooltip(

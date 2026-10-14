@@ -13,8 +13,9 @@ player's own ROM.
    [Arenas](#arenas)) and turns the mode on from the SoH menu
    (Enhancements > Extra Modes > Zombies of Time).
 2. Night falls, a Redead scream plays and round 1 begins.
-3. Undead crawl in from the edges of the area and walk toward Link. Every hit
-   and kill earns points.
+3. Undead claw out of the ground behind four boarded windows around Link,
+   tear the boards off and come for him. Every hit and kill earns points, and
+   so does nailing boards back up.
 4. Points buy weapons, perks and upgrades at stations placed around the
    starting point.
 5. When the last undead of a round falls, a short break begins, then the next
@@ -45,11 +46,13 @@ player's own ROM.
 | Pack-a-Punch (5000) | **Pack-a-Punch** (5000): upgrades one item | Checks the C buttons first. Bow: bigger quiver, then Light Arrows. Slingshot: bigger seed bag. Bombs: bigger bag. Hookshot: Longshot. Then the sword: Biggoron Sword (adult), then a Punched Blade whose hits land twice. Then the Mirror Shield (adult) |
 | Power-ups (2% plus point-based drops, 4 per round max) | Same drop logic; each power-up is a floating drop | Max Ammo = big magic jar, Insta-Kill = red rupee, Double Points = gold rupee, Nuke = bomb drop, Fire Sale = purple rupee |
 | Max Ammo | Refills sticks, nuts, seeds, arrows, bombs, bombchus and magic | |
+| Carpenter | Deku Stick drop: every window gets all six boards back, +200 points | Only drops while a window is missing boards |
 | Insta-Kill (30s) | Every undead dies in one hit | |
 | Double Points (30s) | All points ×2 | |
 | Nuke | Every undead on the map explodes, +400 points | |
 | Fire Sale (30s) | Mystery Chest costs 10 | |
-| Carpenter, barricades, doors | Phase 2 | They need an authored arena, see below |
+| Barricades: 6 boards per window, zombies tear them off, players repair for 10 points each | **Barricades**: four windows (two posts and six planks) around the start point. Undead spawn outside one and are held there, tearing a board every 1.5 seconds, until it is open. Hold the buy button at a window to put a board back every 0.6 seconds for 10 points, up to 500 points of repairs per round | Wolfos rounds ignore the windows, like hellhounds. The planks are the small wooden crate's model squashed flat. The windows are not solid: Link can walk around them, the undead can't |
+| Doors and debris | Phase 2 | They need an authored arena, see below |
 | Round chime, Samantha's voice | OoT sound effects | Round start: Redead scream. Round end: puzzle-solved chime. Power-up: item get jingle |
 
 ## Zelda twists
@@ -98,7 +101,7 @@ SoH resolution:
 - Bottom right: points, with `+10` / `+60` stacking above them.
 - Upper middle: round announcements and power-up names.
 - Top: active power-up and storm timers.
-- Lower middle: the prompt for the nearest station.
+- Lower middle: the prompt for the nearest station or damaged window.
 
 ## Arenas
 
@@ -135,6 +138,7 @@ All under Enhancements > Extra Modes > Zombies of Time, stored as
 | Starting Points | 500 |
 | Starting Round | 1 |
 | Wolfos Rounds | on |
+| Barricades | on |
 | Horde Pull (undead always walk toward Link) | on |
 | Force Night | on |
 | Redead Scream (Redeads and Gibdos freeze Link) | on |
@@ -156,6 +160,7 @@ so it needs no edits to SoH or to OoT's actor code:
 | `OnPlayerUpdate` | Once per frame: round state machine, spawning, hit and kill tracking, stations, power-ups |
 | `OnActorDestroy` | Forget undead and drops that were unloaded |
 | `OnGameFrameUpdate` | HUD drawing with `GfxPrint` |
+| `OnPlayDrawEnd` | Drawing the barricade planks in the world |
 | `OnSceneInit` | End the run when Link leaves the arena |
 | `OnOcarinaSongAction` | Sun's Song, Song of Storms and Zelda's Lullaby |
 | `VB_PLAYER_MODIFY_RUN_SPEED` | Stamin-Up |
@@ -173,6 +178,7 @@ Code layout:
 | `ZombiesRules.h/.cpp` | Pure round, health, spawn delay, points and drop formulas. No game state, unit tested |
 | `ZombiesMode.h/.cpp` | Run state, round state machine, spawning, tracking, power-ups, save snapshot |
 | `ZombiesStations.cpp` | Station placement, prompts and purchases |
+| `ZombiesBarricades.cpp` | Windows: placement, holding undead outside, tearing, repairs, drawing |
 | `ZombiesHud.cpp` | HUD drawing |
 | `ZombiesMenu.cpp` | Menu widgets |
 
@@ -181,10 +187,11 @@ Code layout:
 1. **Core loop (this PR):** rounds, undead mix and scaling, Wolfos rounds,
    points, stations (Armory, Mystery Chest, four perks, power, Pack-a-Punch,
    Fairy Fountain), five power-ups, song abilities, HUD, save snapshot, menu.
-2. **Authored arena:** a hand-placed layout for Kakariko Graveyard with
-   barricades (wooden planks Link repairs for 10 points each, Carpenter
-   power-up), paid gates between areas, and fixed station spots marked with
-   in-world props.
+2. **Authored arena:** a hand-placed layout for Kakariko Graveyard modelled on
+   the flow of Nacht der Untoten (a start area with windows and wall buys,
+   debris Link pays to clear to open more of the map, the Mystery Chest in a
+   far corner), with fixed window and station spots. Barricades themselves
+   are already in phase 1.
 3. **Polish:** a zombies music track built from OoT sequences, perk jingles,
    crawlers (undead that lose their legs to bombs), and a boss round (Dead
    Hand or Iron Knuckle).
@@ -204,3 +211,25 @@ Code layout:
    The core loop is already shaped for this: points, perks and kill credit
    live in a per-player array (index 0 today), and the round formula takes
    the player count.
+
+5. **Bring your own Black Ops (asset loader).** Asked for by Tee: the real
+   Black Ops zombie models and sounds. They can't ship with this repository,
+   so this phase adds an optional loader that reads them from the player's
+   own copy of Black Ops at runtime, the same way SoH reads Ocarina of Time
+   from the player's own ROM:
+   - A menu setting points at the player's Black Ops install folder.
+   - On first run the loader converts the zombie character model, its
+     animations and the round, power-up and perk sounds into a local SoH
+     resource archive on the player's machine. Nothing converted is uploaded
+     or bundled.
+   - A custom zombie actor draws that model with the converted animations,
+     and uses the same AI as the OoT undead (Horde Pull, move tiers,
+     barricades), so gameplay is identical with or without the loader.
+   - Without the loader, everything falls back to the OoT undead and sounds.
+
+   This needs its own design note first: the Black Ops file formats, which
+   files to read, and how converted models map onto OoT's skeleton system.
+   The zombie AI behaviour (round sizes, move tiers, respawning stuck
+   zombies, barricades) is already ported in phase 1 from the
+   decompiled scripts, as a reference only.
+

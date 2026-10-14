@@ -120,9 +120,23 @@ static void TestDrops() {
 }
 
 static void TestPowerUpPick() {
-    EXPECT_TRUE(PickPowerUp(0.0f, true) == PowerUp::MaxAmmo);
-    EXPECT_TRUE(PickPowerUp(0.999f, true) == PowerUp::FireSale);
-    EXPECT_TRUE(PickPowerUp(0.999f, false) == PowerUp::Nuke);
+    EXPECT_TRUE(PickPowerUp(0.0f, true, true) == PowerUp::MaxAmmo);
+    EXPECT_TRUE(PickPowerUp(0.999f, true, true) == PowerUp::FireSale);
+    EXPECT_TRUE(PickPowerUp(0.999f, false, true) == PowerUp::Carpenter);
+    EXPECT_TRUE(PickPowerUp(0.999f, false, false) == PowerUp::Nuke);
+    EXPECT_TRUE(PickPowerUp(0.999f, true, false) == PowerUp::FireSale);
+    for (int i = 0; i < 100; i++) {
+        EXPECT_TRUE(PickPowerUp(i / 100.0f, false, false) != PowerUp::Carpenter);
+        EXPECT_TRUE(PickPowerUp(i / 100.0f, false, false) != PowerUp::FireSale);
+    }
+}
+
+static void TestRepairPoints() {
+    EXPECT_EQ(RepairPoints(0), 10);
+    EXPECT_EQ(RepairPoints(490), 10);
+    EXPECT_EQ(RepairPoints(495), 5);
+    EXPECT_EQ(RepairPoints(500), 0);
+    EXPECT_EQ(RepairPoints(800), 0);
 }
 
 int main() {
@@ -135,6 +149,7 @@ int main() {
     TestPoints();
     TestDrops();
     TestPowerUpPick();
+    TestRepairPoints();
     if (sFailures == 0) {
         std::printf("All rules tests passed\n");
         return EXIT_SUCCESS;

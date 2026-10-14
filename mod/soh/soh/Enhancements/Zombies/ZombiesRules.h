@@ -17,6 +17,13 @@ constexpr int kPointsKill = 60;
 constexpr int kPointsRangedKill = 100; // stands in for a headshot
 constexpr int kPointsMeleeKill = 130;  // stands in for a knife kill
 constexpr int kPointsNuke = 400;
+constexpr int kPointsCarpenter = 200;
+
+// Barricades: Black Ops windows hold six boards. Each board Link puts back is worth
+// 10 points, up to a per-round cap so repairs can't be farmed forever.
+constexpr int kBoardsPerWindow = 6;
+constexpr int kPointsPerBoard = 10;
+constexpr int kRepairPointsCapPerRound = 500;
 
 constexpr int kPowerUpSeconds = 30;
 constexpr int kMaxDropsPerRound = 4;
@@ -43,6 +50,7 @@ enum class PowerUp {
     InstaKill,
     DoublePoints,
     Nuke,
+    Carpenter,
     FireSale,
     Count,
 };
@@ -93,7 +101,11 @@ struct DropTracker {
     bool OnKill(int totalPointsEarned, float roll);
 };
 
-PowerUp PickPowerUp(float roll, bool boxAvailable);
+// Fire Sale only drops when there is a Mystery Chest, Carpenter only when there are barricades.
+PowerUp PickPowerUp(float roll, bool boxAvailable, bool barricadesAvailable);
+
+// Points for putting one board back, given what repairs already paid this round.
+int RepairPoints(int repairPointsThisRound);
 
 const char* PowerUpName(PowerUp p);
 

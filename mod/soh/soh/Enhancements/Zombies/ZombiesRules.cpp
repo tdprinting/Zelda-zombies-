@@ -152,10 +152,22 @@ bool DropTracker::OnKill(int totalPointsEarned, float roll) {
     return drop;
 }
 
-PowerUp PickPowerUp(float roll, bool boxAvailable) {
-    int count = static_cast<int>(PowerUp::Count) - (boxAvailable ? 0 : 1);
+PowerUp PickPowerUp(float roll, bool boxAvailable, bool barricadesAvailable) {
+    PowerUp pool[static_cast<int>(PowerUp::Count)];
+    int count = 0;
+    for (int i = 0; i < static_cast<int>(PowerUp::Count); i++) {
+        PowerUp p = static_cast<PowerUp>(i);
+        if ((p == PowerUp::FireSale && !boxAvailable) || (p == PowerUp::Carpenter && !barricadesAvailable)) {
+            continue;
+        }
+        pool[count++] = p;
+    }
     int index = std::min(static_cast<int>(roll * count), count - 1);
-    return static_cast<PowerUp>(index);
+    return pool[index];
+}
+
+int RepairPoints(int repairPointsThisRound) {
+    return std::clamp(kRepairPointsCapPerRound - repairPointsThisRound, 0, kPointsPerBoard);
 }
 
 const char* PowerUpName(PowerUp p) {
@@ -168,6 +180,8 @@ const char* PowerUpName(PowerUp p) {
             return "DOUBLE POINTS";
         case PowerUp::Nuke:
             return "KABOOM";
+        case PowerUp::Carpenter:
+            return "CARPENTER";
         case PowerUp::FireSale:
             return "FIRE SALE";
         default:
