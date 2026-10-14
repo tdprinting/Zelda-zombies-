@@ -51,6 +51,30 @@ player's own ROM.
 | Carpenter, barricades, doors | Phase 2 | They need an authored arena, see below |
 | Round chime, Samantha's voice | OoT sound effects | Round start: Redead scream. Round end: puzzle-solved chime. Power-up: item get jingle |
 
+## Zelda twists
+
+The mode should feel like both games at once, so some systems come from
+Ocarina of Time rather than Black Ops:
+
+- **Songs are abilities.** The Sun's Song turns the power on from anywhere
+  (and, as in the base game, freezes nearby Redeads, a panic button with a
+  cost: it also ends any active power-up). The Song of Storms brings rain
+  that slows the horde for one round, once per round. Zelda's Lullaby opens
+  the Pack-a-Punch, which otherwise needs the power on and 5000 points.
+- **Hearts, not regen.** Black Ops heals on its own; here Link heals the
+  Zelda way. Undead drop recovery hearts at the normal OoT rate, and a full
+  heart refill arrives with each new round.
+- **Magic is a resource.** Din's Fire, Nayru's Love and magic arrows draw on
+  the magic meter, which only Max Ammo and magic jars refill.
+- **Navi is Samantha.** Navi's chime and text bubble announce rounds,
+  power-ups and the power turning on.
+- **Gold Skulltula easter egg.** Phase 3: shooting three hidden Gold
+  Skulltulas during a run plays a song and unlocks a hidden station, the way
+  Black Ops maps hide their music easter eggs.
+- **Rupees still matter.** Kills drop rupees as normal; rupees are spent at
+  a Fairy Fountain station to top up hearts between rounds, so OoT's
+  currency and Zombies points both have a job.
+
 ## Controls
 
 Stations work on proximity: walk up to one and the HUD shows
