@@ -35,13 +35,13 @@ player's own ROM.
 | Points: 10 per hit, 60 kill, 100 headshot, 130 knife | 10 per hit, 60 kill, 100 kill with an arrow, seed or hookshot, 130 kill with a sword | |
 | Start with 500 points | 500 | |
 | Wall buys | **Armory** station: an item for Link's age, or a refill at half price if he has it | Child: Deku Sticks, Slingshot, Boomerang, Bombs. Adult: Bow, Bombs, Hookshot, Megaton Hammer |
-| Mystery Box (950) | **Mystery Chest** (950): random weapon | Pool: Bombchus (Monkey Bomb), Fire/Ice Arrows, Din's Fire (Thundergun), Light Arrows (Ray Gun, rare), Biggoron Sword (rare), Longshot, Hammer. Child pool swaps in Slingshot, Boomerang, Bombs. A Keaton laugh (the teddy bear) moves the chest after a few uses |
+| Mystery Box (950) | **Mystery Chest** (950): random weapon | Pool: Bombchus (Monkey Bomb), Fire/Ice Arrows, Din's Fire (Thundergun), Light Arrows (Ray Gun, rare), Biggoron Sword (rare), Longshot, Hammer. Child pool swaps in Slingshot, Boomerang, Bombs. After four uses, each roll has a 1 in 6 chance of Skull Kid laughing (the teddy bear): the points come back and the chest moves |
 | Juggernog | **Juggernog Milk** (2500): Double Defense | |
-| Quick Revive | **Fairy Revive** (500 solo): a bottled fairy | A fairy in a bottle is OoT's own self-revive. Needs an empty bottle slot or gives a bottle |
+| Quick Revive | **Fairy Revive** (500 solo): a bottled fairy | A fairy in a bottle is OoT's own self-revive. Fills an empty bottle, else adds a bottle, else replaces the first bottle's contents. Can be bought again once the fairy is used |
 | Double Tap | **Double Tap** (2000): undead lose twice the HP per hit | |
 | Stamin-Up | **Stamin-Up** (2000): Link runs 25% faster | |
-| Power switch | **Power** station: free, turns perks and Pack-a-Punch on | Playing the Sun's Song anywhere also turns the power on |
-| Pack-a-Punch (5000) | **Pack-a-Punch** (5000): upgrades one item | Bow: bigger quiver and Light Arrows. Slingshot: bigger seed bag. Bombs: bigger bag. Hookshot to Longshot. Sword: Master Sword (child: Razor-style double damage), then Biggoron. Shield: Mirror Shield (adult) |
+| Power switch | **Power** station: free, lights the perk and Pack-a-Punch torches | Playing the Sun's Song anywhere also turns the power on |
+| Pack-a-Punch (5000) | **Pack-a-Punch** (5000): upgrades one item | Checks the C buttons first. Bow: bigger quiver, then Light Arrows. Slingshot: bigger seed bag. Bombs: bigger bag. Hookshot: Longshot. Then the sword: Biggoron Sword (adult), then a Punched Blade whose hits land twice. Then the Mirror Shield (adult) |
 | Power-ups (2% plus point-based drops, 4 per round max) | Same drop logic; each power-up is a floating drop | Max Ammo = big magic jar, Insta-Kill = red rupee, Double Points = gold rupee, Nuke = bomb drop, Fire Sale = purple rupee |
 | Max Ammo | Refills sticks, nuts, seeds, arrows, bombs, bombchus and magic | |
 | Insta-Kill (30s) | Every undead dies in one hit | |
@@ -57,18 +57,19 @@ The mode should feel like both games at once, so some systems come from
 Ocarina of Time rather than Black Ops:
 
 - **Songs are abilities.** The Sun's Song turns the power on from anywhere
-  (and, as in the base game, freezes nearby Redeads, a panic button with a
-  cost: it also ends any active power-up). The Song of Storms brings rain
-  that slows the horde for one round, once per round. Zelda's Lullaby opens
-  the Pack-a-Punch, which otherwise needs the power on and 5000 points.
+  (and, as in the base game, freezes nearby Redeads, so it doubles as a panic
+  button). The Song of Storms brings the game's own rainstorm, and the horde
+  moves at half speed for 20 seconds. Zelda's Lullaby unseals Pack-a-Punch;
+  a file that hasn't learned the Lullaby yet only needs the power on.
 - **Hearts, not regen.** Black Ops heals on its own; here Link heals the
-  Zelda way. Undead drop recovery hearts at the normal OoT rate, and a full
-  heart refill arrives with each new round.
+  Zelda way: whatever the undead drop, the Fairy Fountain, and a full heart
+  refill at the start of each round.
 - **Magic is a resource.** Din's Fire, Nayru's Love and magic arrows draw on
   the magic meter, which only Max Ammo and magic jars refill.
-- **Navi is Samantha.** Navi's chime and text bubble announce rounds,
-  power-ups and the power turning on.
-- **Gold Skulltula easter egg.** Phase 3: shooting three hidden Gold
+- **Navi is Samantha.** Navi greets each run; round, power-up and power
+  callouts use OoT's own sounds (Redead scream, Wolfos howl, puzzle chime).
+  Phase 3 gives Navi the full announcer role with text bubbles.
+- **Gold Skulltula easter egg (phase 3).** Shooting three hidden Gold
   Skulltulas during a run plays a song and unlocks a hidden station, the way
   Black Ops maps hide their music easter eggs.
 - **Rupees still matter.** Kills drop rupees as normal; rupees are spent at
@@ -77,9 +78,14 @@ Ocarina of Time rather than Black Ops:
 
 ## Controls
 
-Stations work on proximity: walk up to one and the HUD shows
-`L: MYSTERY CHEST [950]`. Press **L** to buy. L normally toggles the
-minimap, which is harmless here. The button is a setting.
+With the mode on, press **L** anywhere to start a run there. Each station
+is a torch; walk up to one and the HUD shows `L: MYSTERY CHEST [950]`.
+Press **L** to buy. L normally toggles the minimap, which is harmless here.
+The button can be switched to D-pad Down in the settings.
+
+Torch colours tell stations apart: the golden torch is the Mystery Chest,
+wooden torches are the Armory, the Fairy Fountain and the power switch, and
+stone torches are the perks and Pack-a-Punch, dark until the power is on.
 
 ## HUD
 
@@ -87,10 +93,11 @@ Drawn with the game's own debug font in the N64 frame, so it scales with every
 SoH resolution:
 
 - Bottom left, above the rupees: the round number in red, as tally marks for
-  rounds 1 to 5 and as a number after that.
-- Bottom right: points, with `+10` / `+60` popping beside them.
-- Centre: station prompts, round announcements and power-up names.
-- Under the prompt: active power-up timers.
+  rounds 1 to 5 and as a number after that, with owned perks above it.
+- Bottom right: points, with `+10` / `+60` stacking above them.
+- Upper middle: round announcements and power-up names.
+- Top: active power-up and storm timers.
+- Lower middle: the prompt for the nearest station.
 
 ## Arenas
 
@@ -129,6 +136,7 @@ All under Enhancements > Extra Modes > Zombies of Time, stored as
 | Wolfos Rounds | on |
 | Horde Pull (undead always walk toward Link) | on |
 | Force Night | on |
+| Redead Scream (Redeads and Gibdos freeze Link) | on |
 | Buy Button (L / D-pad Down) | L |
 | Keep Items After Run | off |
 | Best Round (read only) | |
@@ -148,7 +156,8 @@ so it needs no edits to SoH or to OoT's actor code:
 | `OnActorDestroy` | Forget undead and drops that were unloaded |
 | `OnGameFrameUpdate` | HUD drawing with `GfxPrint` |
 | `OnSceneInit` | End the run when Link leaves the arena |
-| `OnOcarinaSongAction` | Sun's Song turns the power on |
+| `OnOcarinaSongAction` | Sun's Song, Song of Storms and Zelda's Lullaby |
+| `VB_PLAYER_MODIFY_RUN_SPEED` | Stamin-Up |
 
 Spawning uses `Actor_Spawn`; SoH loads actor assets by path, so Redeads and
 Wolfos can appear in scenes that never had them. Hits and kills are read from
@@ -169,8 +178,8 @@ Code layout:
 ## Phases
 
 1. **Core loop (this PR):** rounds, undead mix and scaling, Wolfos rounds,
-   points, stations (Armory, Mystery Chest, four perks, power, Pack-a-Punch),
-   five power-ups, HUD, save snapshot, menu.
+   points, stations (Armory, Mystery Chest, four perks, power, Pack-a-Punch,
+   Fairy Fountain), five power-ups, song abilities, HUD, save snapshot, menu.
 2. **Authored arena:** a hand-placed layout for Kakariko Graveyard with
    barricades (wooden planks Link repairs for 10 points each, Carpenter
    power-up), paid gates between areas, and fixed station spots marked with
