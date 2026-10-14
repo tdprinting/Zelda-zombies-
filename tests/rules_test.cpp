@@ -83,6 +83,19 @@ static void TestEnemyMix() {
     EXPECT_TRUE(PickEnemy(12, 0.9f, true) == EnemyKind::Gibdo);
 }
 
+static void TestMoveTiers() {
+    // Round 1: 8 +/- 15 is always a walk. Round 4 (32) can roll into a run.
+    EXPECT_TRUE(PickMoveTier(1, 0.0f) == MoveTier::Walk);
+    EXPECT_TRUE(PickMoveTier(1, 0.99f) == MoveTier::Walk);
+    EXPECT_TRUE(PickMoveTier(4, 0.0f) == MoveTier::Walk);
+    EXPECT_TRUE(PickMoveTier(4, 0.99f) == MoveTier::Run);
+    EXPECT_TRUE(PickMoveTier(8, 0.5f) == MoveTier::Run);
+    EXPECT_TRUE(PickMoveTier(8, 0.99f) == MoveTier::Sprint);
+    EXPECT_TRUE(PickMoveTier(11, 0.0f) == MoveTier::Sprint);
+    EXPECT_TRUE(PullSpeed(MoveTier::Sprint) > PullSpeed(MoveTier::Run));
+    EXPECT_TRUE(PullSpeed(MoveTier::Run) > PullSpeed(MoveTier::Walk));
+}
+
 static void TestPoints() {
     EXPECT_EQ(PointsForKill(KillType::Melee), 130);
     EXPECT_EQ(PointsForKill(KillType::Ranged), 100);
@@ -118,6 +131,7 @@ int main() {
     TestHealth();
     TestDogRounds();
     TestEnemyMix();
+    TestMoveTiers();
     TestPoints();
     TestDrops();
     TestPowerUpPick();

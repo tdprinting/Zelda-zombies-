@@ -31,6 +31,7 @@ player's own ROM.
 | Round count | `ceil(24 + 3 × m) × early-round factor`, solo formula | `m = max(1, round/5)`, and from round 10 `m ×= round × 0.15`. Rounds 1 to 5 use 25%, 30%, 50%, 70%, 90% |
 | Max zombies alive (24) | Slider, default 8 | OoT's actor budget and arena sizes are smaller |
 | Spawn delay `2.0s × 0.95^round` | Same curve, floor 0.25s | |
+| Zombie move speed (`round × 8` plus spread; walk ≤ 35, run ≤ 70, sprint above) | Same roll per undead, applied through Horde Pull at 2 / 4 / 6 units per frame | Round 1 is all walkers; by round 11 every undead sprints |
 | Zombie health +100 per round, then ×1.1 | Health multiplier on each enemy's own HP: `1 + 0.15 × (round − 1)` to round 10, then ×1.08 per round | Capped at 255 (OoT stores HP in one byte). Slider scales it |
 | Points: 10 per hit, 60 kill, 100 headshot, 130 knife | 10 per hit, 60 kill, 100 kill with an arrow, seed or hookshot, 130 kill with a sword | |
 | Start with 500 points | 500 | |
@@ -185,8 +186,8 @@ Code layout:
    power-up), paid gates between areas, and fixed station spots marked with
    in-world props.
 3. **Polish:** a zombies music track built from OoT sequences, perk jingles,
-   speed tiers (walkers, joggers, sprinters) via per-actor speed tuning, and a
-   boss round (Dead Hand or Iron Knuckle).
+   crawlers (undead that lose their legs to bombs), and a boss round (Dead
+   Hand or Iron Knuckle).
 4. **Local co-op, then split screen.** Asked for by Tee. Ocarina of Time
    assumes exactly one Link and one camera everywhere in its code, so this
    comes in two steps after the single-player loop works:

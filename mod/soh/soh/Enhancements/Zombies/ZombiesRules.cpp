@@ -84,6 +84,28 @@ int DogsForRound(int dogRoundIndex, int players) {
     return perPlayer * players;
 }
 
+MoveTier PickMoveTier(int round, float roll) {
+    int speed = std::max(round, 1) * 8 + static_cast<int>((roll - 0.5f) * 30.0f);
+    if (speed <= 35) {
+        return MoveTier::Walk;
+    }
+    if (speed <= 70) {
+        return MoveTier::Run;
+    }
+    return MoveTier::Sprint;
+}
+
+float PullSpeed(MoveTier tier) {
+    switch (tier) {
+        case MoveTier::Sprint:
+            return 6.0f;
+        case MoveTier::Run:
+            return 4.0f;
+        default:
+            return 2.0f;
+    }
+}
+
 EnemyKind PickEnemy(int round, float roll, bool isDay) {
     // Stalchildren burrow away in daylight, so day runs use Redeads in their place.
     EnemyKind small = isDay ? EnemyKind::Redead : EnemyKind::Stalchild;

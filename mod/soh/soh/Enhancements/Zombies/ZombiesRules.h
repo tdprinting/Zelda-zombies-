@@ -31,6 +31,13 @@ enum class EnemyKind {
     WhiteWolfos,
 };
 
+// Black Ops move speeds: zombies walk early, then a growing share run and sprint.
+enum class MoveTier {
+    Walk,
+    Run,
+    Sprint,
+};
+
 enum class PowerUp {
     MaxAmmo,
     InstaKill,
@@ -59,6 +66,13 @@ int PointsForKill(KillType type);
 int FirstDogRound(float roll);
 int NextDogRound(int currentDogRound, float roll);
 int DogsForRound(int dogRoundIndex, int players);
+
+// Move tier for one zombie. Black Ops rolls round * 8 plus some random spread
+// against walk (<= 35) and run (<= 70) cut-offs. roll is any value in [0, 1).
+MoveTier PickMoveTier(int round, float roll);
+
+// How far Horde Pull moves an undead per frame for its tier, in OoT units.
+float PullSpeed(MoveTier tier);
 
 // Which undead to spawn this round. roll is any value in [0, 1).
 EnemyKind PickEnemy(int round, float roll, bool isDay);

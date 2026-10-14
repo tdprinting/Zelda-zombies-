@@ -31,8 +31,9 @@ static constexpr int kFps = 20; // OoT game logic runs at 20 updates per second
 static constexpr float kSpawnMinDist = 380.0f;
 static constexpr float kSpawnMaxDist = 750.0f;
 static constexpr float kSpawnMaxHeightDiff = 120.0f;
-static constexpr float kPullStartDist = 140.0f;
-static constexpr float kPullSpeed = 2.5f;
+// Horde Pull stops this close to Link so each enemy's own attack takes over.
+static constexpr float kPullStopDistWalk = 140.0f;
+static constexpr float kPullStopDistFast = 80.0f;
 static constexpr float kLostDist = 2500.0f;
 
 static Run sRun;
@@ -228,7 +229,9 @@ static bool SpawnEnemy(PlayState* play, Player* player, EnemyKind kind) {
     u8 hp = ScaleHealth(spec.baseHp, sRun.round, CVarGetInteger(CVAR_ZOMBIES("HealthScaling"), 100));
     actor->colChkInfo.health = hp;
 
-    sRun.enemies.push_back({ actor, kind, static_cast<s16>(hp), actor->world.pos, false });
+    // Wolfos are already fast; undead get a Black Ops move tier for the round.
+    MoveTier tier = kind == EnemyKind::WhiteWolfos ? MoveTier::Walk : PickMoveTier(sRun.round, Rand_ZeroOne());
+    sRun.enemies.push_back({ actor, kind, tier, static_cast<s16>(hp), actor->world.pos, false });
     // Dust where the undead claws out of the ground.
     Actor_SpawnFloorDustRing(play, actor, &pos, 30.0f, 7, 4.0f, 60, 6, 0);
     return true;
@@ -327,11 +330,15 @@ static void UpdateEnemies(PlayState* play, Player* player) {
                 actor->world.pos.z = enemy.lastPos.z + (actor->world.pos.z - enemy.lastPos.z) * slow;
             }
 
-            // Horde Pull: OoT enemies idle until Link is close. Zombies always know where he is.
-            if (hordePull && dist > kPullStartDist && actor->freezeTimer == 0) {
+            // Horde Pull: OoT enemies idle until Link is close. Zombies always know where he is,
+            // and walk, run or sprint at him depending on the round.
+            float stopDist = enemy.tier == MoveTier::Walk ? kPullStopDistWalk : kPullStopDistFast;
+            if (hordePull && dist > stopDist && actor->freezeTimer == 0) {
                 s16 yaw = actor->yawTowardsPlayer;
-                actor->world.pos.x += Math_SinS(yaw) * kPullSpeed * slow;
-                actor->world.pos.z += Math_CosS(yaw) * kPullSpeed * slow;
+                float speed = PullSpeed(enemy.tier) * slow;
+                actor->world.pos.x += Math_SinS(yaw) * speed;
+                actor->world.pos.z += Math_CosS(yaw) * speed;
+                actor->shape.rot.y = yaw;
             }
 
             // Keep home under the enemy so it never walks back or despawns for straying from home.

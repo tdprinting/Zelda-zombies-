@@ -40,6 +40,7 @@ struct PlayerState {
 struct TrackedEnemy {
     Actor* actor;
     EnemyKind kind;
+    MoveTier tier;
     s16 lastHealth;
     Vec3f lastPos;
     bool killCounted;
