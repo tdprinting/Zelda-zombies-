@@ -52,7 +52,7 @@ static const LobbyMap kMaps[] = {
     { "KAKARIKO GRAVEYARD", "GRAVEYARD", SCENE_GRAVEYARD, ENTR_GRAVEYARD_ENTRANCE, -1,
       "Graves, a gate and the Royal Tomb. Start at the gate, clear the debris into the graves, then fight your way "
       "to the tomb for the power and Pack-a-Punch." },
-    { "MARKET RUINS", "MARKET", SCENE_MARKET_RUINS, ENTR_MARKET_RUINS_0_2, LINK_AGE_ADULT,
+    { "MARKET RUINS", "MARKET", SCENE_MARKET_RUINS, ENTR_MARKET_SOUTH_EXIT, LINK_AGE_ADULT, // adult at night: the ruins
       "Castle Town after Ganondorf. Tight streets and Redeads that have been waiting seven years. Adult Link only." },
     { "LON LON RANCH", "RANCH", SCENE_LON_LON_RANCH, ENTR_LON_LON_RANCH_ENTRANCE, -1,
       "Wide open paddock. Room to run a train of undead in circles around the fence." },
@@ -387,7 +387,8 @@ void Lobby_Update(PlayState* play, Player* player) {
     }
     bool ready = play->transitionTrigger == TRANS_TRIGGER_OFF && play->transitionMode == TRANS_MODE_OFF &&
                  play->msgCtx.msgMode == MSGMODE_NONE && (player->actor.bgCheckFlags & 1) &&
-                 play->gameOverCtx.state == GAMEOVER_INACTIVE && play->pauseCtx.state == 0;
+                 play->gameOverCtx.state == GAMEOVER_INACTIVE && play->pauseCtx.state == 0 &&
+                 !Player_InCsMode(play); // e.g. walking in through the ranch gate
     if (!ready) {
         return;
     }
@@ -407,6 +408,10 @@ void Lobby_Update(PlayState* play, Player* player) {
         sTipIndex = static_cast<int>(Rand_ZeroOne() * kTipCount) % kTipCount;
         Sfx_PlaySfxCentered(NA_SE_SY_FSEL_DECIDE_S);
     }
+
+    // The menu sits over the map at midnight, whatever the clock does in the field.
+    gSaveContext.dayTime = 0;
+    gSaveContext.nightFlag = 1;
 
     // Link waits while the menu is up, and the game's HUD stays out of the way.
     player->stateFlags1 |= PLAYER_STATE1_INPUT_DISABLED;

@@ -844,6 +844,9 @@ static void OnPlayerUpdate() {
         return;
     }
 
+    // Time keeps running in the field and the ranch; the run stays at midnight.
+    ForceNight();
+
     if (sStationsNeedPlacing) {
         sStationsNeedPlacing = false;
         Bounds_Scan(play);
@@ -867,6 +870,15 @@ static void OnPlayerUpdate() {
 
     switch (sRun.phase) {
         case Phase::Intro:
+            // Some entrances (the ranch gate) finish walking Link in after the run has
+            // moved him to the start; put him back until he stays.
+            if (sRun.layout != nullptr && Math_Vec3f_DistXZ(&player->actor.world.pos, &sRun.origin) > 150.0f) {
+                player->actor.world.pos = sRun.origin;
+                player->actor.prevPos = sRun.origin;
+                player->unk_450.x = sRun.origin.x;
+                player->unk_450.z = sRun.origin.z;
+                player->actor.home.pos = sRun.origin;
+            }
             if (--sRun.phaseTimer <= 0) {
                 StartRound(std::max(CVarGetInteger(CVAR_ZOMBIES("StartingRound"), 1), 1));
             }

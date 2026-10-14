@@ -80,11 +80,167 @@ static const ArenaLayout sGraveyard = {
     },
 };
 
+// The other maps are open ground with no walls between zones, so their debris is a
+// toll rather than a door: clearing it opens that area's stations and windows. Spots
+// were picked from floor scans of each scene (every spot is on open, level floor
+// well clear of the scene exits) and walked with the playtest harness.
+
+// Market Ruins (adult, night): the walled square. Start at the south gate, then the
+// middle of the square, then the castle road at the north end.
+static const ArenaLayout sMarketRuins = {
+    SCENE_MARKET_RUINS,
+    "MARKET RUINS",
+    {
+        {
+            "THE SOUTH GATE",
+            0,
+            { 0.0f, 0.0f },
+            { 0.0f, 550.0f },
+            { { -650.0f, 700.0f }, { 650.0f, 700.0f }, { -650.0f, 250.0f } },
+            {
+                { StationType::Armory, { -500.0f, 600.0f } },
+                { StationType::FairyFountain, { 500.0f, 600.0f } },
+                { StationType::MysteryChest, { 300.0f, 350.0f } },
+            },
+            { { 300.0f, 350.0f } },
+        },
+        {
+            "THE SQUARE",
+            1000,
+            { 0.0f, 150.0f },
+            { 0.0f, -100.0f },
+            { { -650.0f, -200.0f }, { 650.0f, 0.0f } },
+            {
+                { StationType::Juggernog, { -500.0f, -100.0f } },
+                { StationType::DoubleTap, { 400.0f, -100.0f } },
+            },
+            { { -300.0f, -250.0f } },
+        },
+        {
+            "THE CASTLE ROAD",
+            1250,
+            { 0.0f, -450.0f },
+            { -100.0f, -750.0f },
+            { { -650.0f, -850.0f }, { 600.0f, -850.0f } },
+            {
+                { StationType::Power, { -600.0f, -800.0f } },
+                { StationType::PackAPunch, { -300.0f, -850.0f } },
+                { StationType::StaminUp, { 300.0f, -750.0f } },
+                { StationType::FairyRevive, { -700.0f, -600.0f } },
+            },
+            { { 400.0f, -800.0f } },
+        },
+    },
+};
+
+// Lon Lon Ranch: in at the front gate, out across the paddock, and the far end by
+// the barn for the power and Pack-a-Punch.
+static const ArenaLayout sLonLonRanch = {
+    SCENE_LON_LON_RANCH,
+    "LON LON RANCH",
+    {
+        {
+            "THE FRONT GATE",
+            0,
+            { 0.0f, 0.0f },
+            { 600.0f, -1800.0f },
+            { { -200.0f, -2200.0f }, { 1500.0f, -2100.0f }, { 1600.0f, -1400.0f } },
+            {
+                { StationType::Armory, { 300.0f, -2000.0f } },
+                { StationType::FairyFountain, { 900.0f, -2000.0f } },
+                { StationType::MysteryChest, { 600.0f, -1500.0f } },
+            },
+            { { 600.0f, -1500.0f } },
+        },
+        {
+            "THE PADDOCK",
+            1000,
+            { 300.0f, -1200.0f },
+            { 0.0f, -300.0f },
+            { { -1800.0f, -900.0f }, { 1600.0f, -300.0f }, { -1800.0f, 400.0f } },
+            {
+                { StationType::Juggernog, { -600.0f, -500.0f } },
+                { StationType::DoubleTap, { 800.0f, -200.0f } },
+            },
+            { { -300.0f, 300.0f } },
+        },
+        {
+            "THE BARN",
+            1250,
+            { 0.0f, 700.0f },
+            { 0.0f, 1500.0f },
+            { { -1800.0f, 1700.0f }, { 1700.0f, 1400.0f }, { 500.0f, 1900.0f } },
+            {
+                { StationType::Power, { -1000.0f, 1500.0f } },
+                { StationType::PackAPunch, { -400.0f, 1700.0f } },
+                { StationType::StaminUp, { 700.0f, 1300.0f } },
+                { StationType::FairyRevive, { 1100.0f, 1700.0f } },
+            },
+            { { 300.0f, 1500.0f } },
+        },
+    },
+};
+
+// Hyrule Field: the open ground south of the castle bridge, split west and east.
+static const ArenaLayout sHyruleField = {
+    SCENE_HYRULE_FIELD,
+    "HYRULE FIELD",
+    {
+        {
+            "THE BRIDGE",
+            0,
+            { 0.0f, 0.0f },
+            { 300.0f, 1700.0f },
+            { { -700.0f, 1400.0f }, { 1300.0f, 1500.0f }, { 300.0f, 2300.0f } },
+            {
+                { StationType::Armory, { 0.0f, 1900.0f } },
+                { StationType::FairyFountain, { 600.0f, 1950.0f } },
+                { StationType::MysteryChest, { 300.0f, 1350.0f } },
+            },
+            { { 300.0f, 1350.0f } },
+        },
+        {
+            "THE WEST FIELD",
+            1000,
+            { -500.0f, 1800.0f },
+            { -1000.0f, 2000.0f },
+            { { -1300.0f, 1500.0f }, { -1100.0f, 2500.0f } },
+            {
+                { StationType::Juggernog, { -900.0f, 1700.0f } },
+                { StationType::DoubleTap, { -700.0f, 2200.0f } },
+            },
+            { { -1000.0f, 2200.0f } },
+        },
+        {
+            "THE EAST FIELD",
+            1250,
+            { 1100.0f, 1900.0f },
+            { 1600.0f, 2100.0f },
+            { { 1900.0f, 1700.0f }, { 1700.0f, 2500.0f } },
+            {
+                { StationType::Power, { 1500.0f, 1800.0f } },
+                { StationType::PackAPunch, { 1800.0f, 2200.0f } },
+                { StationType::StaminUp, { 1300.0f, 2300.0f } },
+                { StationType::FairyRevive, { 1700.0f, 2000.0f } },
+            },
+            { { 1500.0f, 2400.0f } },
+        },
+    },
+};
+
 const ArenaLayout* Arena_ForScene(s16 sceneNum) {
-    if (sceneNum == SCENE_GRAVEYARD) {
-        return &sGraveyard;
+    switch (sceneNum) {
+        case SCENE_GRAVEYARD:
+            return &sGraveyard;
+        case SCENE_MARKET_RUINS:
+            return &sMarketRuins;
+        case SCENE_LON_LON_RANCH:
+            return &sLonLonRanch;
+        case SCENE_HYRULE_FIELD:
+            return &sHyruleField;
+        default:
+            return nullptr;
     }
-    return nullptr;
 }
 
 bool Arena_Resolve(PlayState* play, LayoutSpot spot, float refY, Vec3f* out) {
@@ -136,6 +292,11 @@ void Arena_Start(PlayState* play) {
         Player* player = GET_PLAYER(play);
         player->actor.world.pos = start;
         player->actor.prevPos = start;
+        // Entrances that walk Link in (the ranch gate) aim him at a point ahead of the
+        // spawn; aim that walk at the start instead, or it drags him back.
+        player->unk_450.x = start.x;
+        player->unk_450.z = start.z;
+        player->actor.home.pos = start;
         player->actor.shape.rot.y = player->actor.world.rot.y = player->yaw = run.originYaw;
         run.origin = start;
     }
