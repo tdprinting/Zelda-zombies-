@@ -145,7 +145,7 @@ pause menu or by dying.
 
 ## Stages
 
-Each stage is its own PR and is usable before the next starts.
+Each stage is usable before the next starts.
 
 1. **Fastfile reader and asset list.** A command-line tool,
    `tools/bomap`, that opens a `.ff` file and prints its assets. Tee runs it
