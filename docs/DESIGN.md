@@ -257,8 +257,11 @@ Code layout:
      barricades), so gameplay is identical with or without the loader.
    - Without the loader, everything falls back to the OoT undead and sounds.
 
-   This needs its own design note first: the Black Ops file formats, which
-   files to read, and how converted models map onto OoT's skeleton system.
+   Maps come first: [BLACK_OPS_MAPS.md](BLACK_OPS_MAPS.md) covers converting
+   Nacht der Untoten and the other maps from the player's install, with their
+   windows, wall buys and doors placed from the map's own entities. Zombie
+   models follow, with their own note on how converted models map onto OoT's
+   skeleton system.
    The zombie AI behaviour (round sizes, move tiers, respawning stuck
    zombies, barricades) is already ported in phase 1 from the
    decompiled scripts, as a reference only.
