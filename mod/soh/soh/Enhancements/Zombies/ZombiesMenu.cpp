@@ -86,14 +86,16 @@ static void RegisterZombiesWidgets() {
     SohGui::mSohMenu->AddWidget(path, "Barricades", WIDGET_CVAR_CHECKBOX)
         .CVar(CVAR_ZOMBIES("Barricades"))
         .Options(CheckboxOptions().DefaultValue(true).Tooltip(
-            "Undead come in through four boarded windows around the start point and tear the boards off "
+            "Undead come in through boarded windows (two or three per zone on the hand-made maps, four around "
+            "the start point anywhere else) and tear the boards off "
             "before they can reach Link. Hold the buy button at a window to put boards back for 10 points each. "
             "Takes effect on the next run."));
     SohGui::mSohMenu->AddWidget(path, "Authored Arenas", WIDGET_CVAR_CHECKBOX)
         .CVar(CVAR_ZOMBIES("Arenas"))
         .Options(CheckboxOptions().DefaultValue(true).Tooltip(
-            "In Kakariko Graveyard, runs use a hand-made map: Link starts at the gate and pays to clear debris "
-            "into the graves and then the Royal Tomb, where the power and Pack-a-Punch are. "
+            "In Kakariko Graveyard, Market Ruins, Lon Lon Ranch and Hyrule Field, runs use a hand-made map: Link "
+            "starts in a small zone and pays to clear debris into two more, the last holding the power and "
+            "Pack-a-Punch. "
             "Off: stations and windows go around wherever Link starts, as in every other scene."));
     SohGui::mSohMenu->AddWidget(path, "Show Coordinates", WIDGET_CVAR_CHECKBOX)
         .CVar(CVAR_ZOMBIES("ShowCoordinates"))

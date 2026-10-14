@@ -11,7 +11,7 @@ player's own ROM.
 
 1. Link stands somewhere with open ground (any scene works; see
    [Arenas](#arenas)) and turns the mode on from the SoH menu
-   (Enhancements > Extra Modes > Zombies of Time).
+   (Enhancements > Zombies of Time).
 2. Night falls, a Redead scream plays and round 1 begins.
 3. Undead claw out of the ground behind four boarded windows around Link,
    tear the boards off and come for him. Every hit and kill earns points, and
@@ -51,8 +51,8 @@ player's own ROM.
 | Double Points (30s) | All points ×2 | |
 | Nuke | Every undead on the map explodes, +400 points | |
 | Fire Sale (30s) | Mystery Chest costs 10 | |
-| Barricades: 6 boards per window, zombies tear them off, players repair for 10 points each | **Barricades**: four windows (two posts and six planks) around the start point. Undead spawn outside one and are held there, tearing a board every 1.5 seconds, until it is open. Hold the buy button at a window to put a board back every 0.6 seconds for 10 points, up to 500 points of repairs per round | Wolfos rounds ignore the windows, like hellhounds. The planks are the small wooden crate's model squashed flat. The windows are not solid: Link can walk around them, the undead can't |
-| Doors and debris | **Debris** piles (1000 points each) between the zones of an authored arena | Clearing one opens that zone's stations and windows. See [Kakariko Graveyard](#kakariko-graveyard) |
+| Barricades: 6 boards per window, zombies tear them off, players repair for 10 points each | **Barricades**: boarded windows (two posts and six planks), two or three per zone on the hand-made maps and four around the start point anywhere else. Undead spawn outside one and are held there, tearing a board every 1.5 seconds, until it is open. Hold the buy button at a window to put a board back every 0.6 seconds for 10 points, up to 500 points of repairs per round | Wolfos rounds ignore the windows, like hellhounds. The planks are the small wooden crate's model squashed flat. The windows are not solid: Link can walk around them, the undead can't |
+| Doors and debris | **Debris** piles between the zones of an authored arena (1000 points into the second zone; 1000 or 1250 into the third) | Clearing one opens that zone's stations and windows. See [Kakariko Graveyard](#kakariko-graveyard) |
 | Round chime, Samantha's voice | OoT sound effects | Round start: Redead scream. Round end: puzzle-solved chime. Power-up: item get jingle |
 
 ## Zelda twists
@@ -144,9 +144,10 @@ opening each zone gives Link more to buy and the horde more ways in, and the
 chest moves between its spots in the open zones. Perks and Pack-a-Punch sit
 at the far end, so getting to them is the mid-game goal.
 
-The spots are written in `ZombiesArena.cpp` as (x, z) positions, estimated
-from the positions of the graveyard's signs, graves and grass in SoH's
-randomizer tables; heights come from the floor at run time. Every spot is
+The spots are written in `ZombiesArena.cpp` as (x, z) positions, picked
+from a floor scan of the graveyard (it climbs in terraces from the gate to the
+far end) and walked with the playtest harness; heights come from the floor at
+run time. Every spot is
 checked against the scene's collision when the run starts: a station that
 doesn't land on floor is placed around Link instead, a window without room
 behind it for undead is left out, and debris with no floor opens its zone
@@ -241,7 +242,10 @@ Code layout:
 | `ZombiesMode.h/.cpp` | Run state, round state machine, spawning, tracking, power-ups, save snapshot |
 | `ZombiesStations.cpp` | Station placement, prompts and purchases |
 | `ZombiesBarricades.cpp` | Windows: placement, holding undead outside, tearing, repairs, drawing |
-| `ZombiesArena.cpp` | Authored layouts (the graveyard), zones and debris |
+| `ZombiesArena.cpp` | Authored layouts (graveyard, Market Ruins, Lon Lon Ranch, Hyrule Field), zones and debris |
+| `ZombiesLobby.cpp` | Main menu, run (pause) menu, results screen, map warps |
+| `ZombiesExtras.cpp` | Navi callouts, low-health warning and other touches |
+| `ZombiesBounds.cpp` | Keeps Link off the scene's exits during a run |
 | `ZombiesHud.cpp` | HUD drawing |
 | `ZombiesMenu.cpp` | Menu widgets |
 
@@ -249,11 +253,10 @@ Code layout:
 
 1. **Core loop (this PR):** rounds, undead mix and scaling, Wolfos rounds,
    points, stations (Armory, Mystery Chest, four perks, power, Pack-a-Punch,
-   Fairy Fountain), five power-ups, song abilities, HUD, save snapshot, menu.
-2. **Authored arena:** the Kakariko Graveyard map is in this PR with
-   estimated spots. What's left is a walk-through with Show Coordinates on to
-   tune them, solid debris (collision, so Link can't walk around it), and a
-   second map (Market ruins).
+   Fairy Fountain), six power-ups, song abilities, HUD, save snapshot, menu.
+2. **Authored arenas (this PR):** Kakariko Graveyard, Market Ruins, Lon Lon
+   Ranch and Hyrule Field, each with three zones. What's left is solid debris
+   (collision, so Link can't walk around it).
 3. **Polish:** a zombies music track built from OoT sequences, perk jingles,
    crawlers (undead that lose their legs to bombs), and a boss round (Dead
    Hand or Iron Knuckle).

@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <vector>
 
 #include "soh/ShipInit.hpp"
@@ -99,8 +100,10 @@ static int sSelected = 0;
 static int sStickCooldown = 0;
 static bool sPendingStart = false; // warped to a map from the menu; start the run on arrival
 static bool sOpenItemsNextFrame = false;
-static bool sWarpPending = false;  // Link wandered off the zombie maps; send him back
-static bool sSwallowInput = false; // a menu closed this frame: its button press stays with it
+static bool sWarpPending = false; // Link wandered off the zombie maps; send him back
+static bool sSwallowInput = false;
+static bool sLobbyReady = false; // the game can take a menu choice now (taps check this) // a menu closed this frame:
+                                 // its button press stays with it
 static int sTipIndex = 0;
 static Results sResults;
 
@@ -159,6 +162,12 @@ void Lobby_SetResults(const std::string& reason, int rounds, int kills, int poin
     sResults = { true, reason, rounds, kills, points, newBest };
 }
 
+// Taps arrive from the draw, outside the game's update: take them only when the game
+// could take the same choice from the controller.
+static bool TapAllowed() {
+    return Pause_IsOpen() || sLobbyReady;
+}
+
 static void Open(Screen screen) {
     sScreen = screen;
     sSelected = 0;
@@ -166,6 +175,7 @@ static void Open(Screen screen) {
 
 static void CloseMenus(PlayState* play) {
     sScreen = Screen::None;
+    sLobbyReady = false;
     sSwallowInput = true;
     if (play != nullptr) {
         GET_PLAYER(play)->stateFlags1 &= ~PLAYER_STATE1_INPUT_DISABLED;
@@ -389,6 +399,7 @@ void Lobby_Update(PlayState* play, Player* player) {
                  play->msgCtx.msgMode == MSGMODE_NONE && (player->actor.bgCheckFlags & 1) &&
                  play->gameOverCtx.state == GAMEOVER_INACTIVE && play->pauseCtx.state == 0 &&
                  !Player_InCsMode(play); // e.g. walking in through the ranch gate
+    sLobbyReady = ready;
     if (!ready) {
         return;
     }
@@ -428,6 +439,9 @@ void Pause_OnMainStart(PlayState* play) {
         return;
     }
     Input& input = play->state.input[0];
+    if (Lobby_IsOpen()) {
+        input.press.button &= static_cast<u16>(~BTN_START); // no Zelda pause screen behind the menu
+    }
     if (sSwallowInput) {
         sSwallowInput = false;
         input.press.button = 0;
@@ -636,7 +650,9 @@ class LobbyWindow final : public Ship::GuiWindow {
             if (ImGui::Selectable(text.c_str(), selected, 0, ImVec2(size.x * 0.48f, 0))) {
                 // Tapping a value row steps it; tapping anything else does it.
                 sSelected = i;
-                Activate(gPlayState, i);
+                if (TapAllowed()) {
+                    Activate(gPlayState, i);
+                }
             }
             ImGui::PopStyleColor(4);
             y += 52.0f * scale;
@@ -708,7 +724,9 @@ class LobbyWindow final : public Ship::GuiWindow {
         ImGui::PushStyleColor(ImGuiCol_Text, kGold);
         ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.55f, 0.05f, 0.05f, 0.55f));
         if (ImGui::Selectable("> CONTINUE##zresults", true, 0, ImVec2(size.x * 0.4f, 0))) {
-            Activate(gPlayState, 0);
+            if (TapAllowed()) {
+                Activate(gPlayState, 0);
+            }
         }
         ImGui::PopStyleColor(2);
         DrawFooter(nullptr, "A: CONTINUE");
@@ -741,7 +759,7 @@ class LobbyWindow final : public Ship::GuiWindow {
             { "C BUTTONS", "Items: slingshot or bow, bombs, the ocarina and what you buy." },
             { "A", "Roll, climb, pick up." },
             { "Z", "Target the nearest undead." },
-            { "BUY BUTTON (L)", "Buy at a torch, clear debris, hold at a window to repair it." },
+            { "BUY BUTTON", "Buy at a torch, clear debris, hold at a window to repair it." },
             { "START", "Run menu: resume, items, controls, end run." },
             { "SUN'S SONG", "Turns the power on from anywhere." },
             { "ZELDA'S LULLABY", "Unseals Pack-a-Punch (power needed)." },
@@ -753,7 +771,11 @@ class LobbyWindow final : public Ship::GuiWindow {
         float y = 170.0f * scale;
         for (const auto& line : kLines) {
             ImGui::SetCursorPos(ImVec2(60.0f * scale, y));
-            ImGui::TextColored(kGold, "%s", line[0]);
+            if (strcmp(line[0], "BUY BUTTON") == 0) {
+                ImGui::TextColored(kGold, "BUY BUTTON (%s)", BuyButtonName());
+            } else {
+                ImGui::TextColored(kGold, "%s", line[0]);
+            }
             ImGui::SetCursorPos(ImVec2(300.0f * scale, y));
             ImGui::TextColored(kWhite, "%s", line[1]);
             y += 34.0f * scale;
@@ -763,7 +785,9 @@ class LobbyWindow final : public Ship::GuiWindow {
         ImGui::PushStyleColor(ImGuiCol_Text, kGold);
         ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.55f, 0.05f, 0.05f, 0.55f));
         if (ImGui::Selectable("> BACK##zcontrols", true, 0, ImVec2(size.x * 0.3f, 0))) {
-            Activate(gPlayState, 0);
+            if (TapAllowed()) {
+                Activate(gPlayState, 0);
+            }
         }
         ImGui::PopStyleColor(2);
         DrawFooter(nullptr, "A / B: BACK");

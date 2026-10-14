@@ -12,6 +12,7 @@
 #include <ship/window/Window.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -183,6 +184,73 @@ static void TakeSnapshot() {
     WriteSnapshotFile();
 }
 
+// Saves run on SoH's save thread; these are set from its OnSaveFile hook.
+static std::atomic<bool> sSavedDuringRun = false;  // an autosave wrote the run's loadout
+static std::atomic<bool> sDeleteAfterSave = false; // the snapshot copy goes once the next save lands
+
+// ---------------------------------------------------------------------------
+// Link's age and equipment as the file had them before Zombies Only changed his age
+// for a map. Kept on disk while Zombies Only is on and put back the next time the file
+// loads without it, so the save is never left as the other age.
+
+struct FileState {
+    u8 linkAge;
+    ItemEquips equips;
+    ItemEquips childEquips;
+    ItemEquips adultEquips;
+    u16 equipment;
+};
+
+static std::string FileStatePath(int fileNum) {
+    return Ship::Context::GetPathRelativeToAppDirectory("Save") + "/zombies_file_" + std::to_string(fileNum) + ".bin";
+}
+
+static void WriteFileState(int fileNum) {
+    if (fileNum < 0 || fileNum >= 3) {
+        return;
+    }
+    FileState state = { static_cast<u8>(gSaveContext.linkAge), gSaveContext.equips, gSaveContext.childEquips,
+                        gSaveContext.adultEquips, gSaveContext.inventory.equipment };
+    FILE* file = fopen(FileStatePath(fileNum).c_str(), "wb");
+    if (file == nullptr) {
+        return;
+    }
+    u32 header[2] = { kSnapshotMagic, static_cast<u32>(sizeof(FileState)) };
+    fwrite(header, sizeof(header), 1, file);
+    fwrite(&state, sizeof(FileState), 1, file);
+    fclose(file);
+}
+
+// Returns true if a state was put back into gSaveContext (the file needs saving).
+static bool ApplyFileState(int fileNum) {
+    if (fileNum < 0 || fileNum >= 3) {
+        return false;
+    }
+    FILE* file = fopen(FileStatePath(fileNum).c_str(), "rb");
+    if (file == nullptr) {
+        return false;
+    }
+    u32 header[2] = {};
+    FileState state;
+    bool ok = fread(header, sizeof(header), 1, file) == 1 && header[0] == kSnapshotMagic &&
+              header[1] == sizeof(FileState) && fread(&state, sizeof(FileState), 1, file) == 1;
+    fclose(file);
+    if (!ok) {
+        return false;
+    }
+    gSaveContext.linkAge = state.linkAge;
+    gSaveContext.equips = state.equips;
+    gSaveContext.childEquips = state.childEquips;
+    gSaveContext.adultEquips = state.adultEquips;
+    gSaveContext.inventory.equipment = state.equipment;
+    return true;
+}
+
+static void DeleteFileState(int fileNum) {
+    std::error_code error;
+    std::filesystem::remove(FileStatePath(fileNum), error);
+}
+
 // Drops the snapshot without restoring it (Keep Items): the run's items stay.
 static void DiscardSnapshot() {
     sSnapshot.valid = false;
@@ -214,12 +282,15 @@ static void RestoreSnapshot(bool linkIsDead, bool refresh) {
     gSaveContext.rupees = sSnapshot.rupees;
     gSaveContext.dayTime = sSnapshot.dayTime;
 
-    // Write the real items back to the file at once, over anything an autosave wrote
-    // mid-run; only then is the copy on disk no longer needed.
-    if (gSaveContext.fileNum >= 0 && gSaveContext.fileNum < 3) {
+    // If the file was saved mid-run (an autosave), it holds the run's loadout: write the
+    // real items back over it, and drop the copy on disk once that save has landed.
+    // Otherwise the file on disk was never touched and the copy can go now.
+    if (sSavedDuringRun.exchange(false) && gSaveContext.fileNum >= 0 && gSaveContext.fileNum < 3) {
+        sDeleteAfterSave = true;
         Save_SaveFile();
+    } else {
+        DeleteSnapshotFile(gSaveContext.fileNum);
     }
-    DeleteSnapshotFile(gSaveContext.fileNum);
 
     if (refresh && gPlayState != nullptr) {
         for (u16 button = 0; button < 4; button++) {
@@ -715,7 +786,9 @@ static void EndRun(const std::string& reason, bool linkIsDead) {
     // Black Ops counts the round you reached: dying in round 1 survived 1 round.
     int survived = sRun.round;
     int previousBest = CVarGetInteger(CVAR_ZOMBIES("BestRound"), 0);
-    if (survived > CVarGetInteger(CVAR_ZOMBIES("BestRound"), 0)) {
+    // A run that skipped ahead with Starting Round doesn't count for the best.
+    bool counts = CVarGetInteger(CVAR_ZOMBIES("StartingRound"), 1) <= 1;
+    if (counts && survived > previousBest) {
         CVarSetInteger(CVAR_ZOMBIES("BestRound"), survived);
         Ship::Context::GetRawInstance()->GetWindow()->GetGui()->SaveConsoleVariablesNextFrame();
     }
@@ -738,7 +811,8 @@ static void EndRun(const std::string& reason, bool linkIsDead) {
         DiscardSnapshot();
     }
 
-    Lobby_SetResults(reason, survived, sRun.players[0].kills, sRun.players[0].totalEarned, survived > previousBest);
+    Lobby_SetResults(reason, survived, sRun.players[0].kills, sRun.players[0].totalEarned,
+                     counts && survived > previousBest);
     sRun.phase = Phase::GameOver;
     sRun.phaseTimer = (ZombiesOnly() ? 4 : 8) * kFps;
     Announce(reason + ": YOU SURVIVED " + std::to_string(survived) + (survived == 1 ? " ROUND" : " ROUNDS"), 8);
@@ -1004,13 +1078,48 @@ static void AbandonRun() {
     sLeftArena = false;
 }
 
+// Registered whatever the settings, so a file left mid-run or by Zombies Only is put
+// right even after the mode is turned off.
 static void OnLoadGame(int32_t fileNum) {
     AbandonRun();
+    sSavedDuringRun = false;
     if (ReadSnapshotFile(fileNum)) {
+        sSavedDuringRun = true; // a crash or reset mid-run: the file may hold the loadout
         RestoreSnapshot(false, false);
     }
-    Lobby_OnLoadGame();
+    // After the items: the snapshot's equips are the ones Link had at the run's age.
+    if (ApplyFileState(fileNum) && !ZombiesOnly()) {
+        Save_SaveFile();
+    }
+    if (ZombiesOnly()) {
+        WriteFileState(fileNum); // before the menu changes Link's age
+    } else {
+        DeleteFileState(fileNum);
+    }
+    if (CVarOn(CVAR_ZOMBIES("Enabled"), 0) || ZombiesOnly()) {
+        Lobby_OnLoadGame();
+    }
 }
+
+static void OnSaveFile(int32_t fileNum, int32_t sectionID) {
+    (void)sectionID;
+    if (IsRunActive()) {
+        sSavedDuringRun = true;
+    } else if (sDeleteAfterSave.exchange(false)) {
+        DeleteSnapshotFile(fileNum);
+    }
+}
+
+static void RegisterSaveHooks() {
+    GameInteractor::Instance->RegisterGameHook<GameInteractor::OnLoadGame>(OnLoadGame);
+    GameInteractor::Instance->RegisterGameHook<GameInteractor::OnSaveFile>(OnSaveFile);
+    GameInteractor::Instance->RegisterGameHook<GameInteractor::OnDeleteFile>([](int32_t fileNum) {
+        DeleteSnapshotFile(fileNum);
+        DeleteFileState(fileNum);
+    });
+}
+
+static RegisterShipInitFunc saveHooksInit(RegisterSaveHooks, {});
 
 static void RegisterZombies() {
     bool enabled = CVarOn(CVAR_ZOMBIES("Enabled"), 0) || ZombiesOnly();
@@ -1033,10 +1142,8 @@ static void RegisterZombies() {
     COND_HOOK(OnOcarinaSongAction, enabled, OnOcarinaSong);
     COND_HOOK(OnGameFrameUpdate, enabled, OnGameFrameUpdate);
     COND_HOOK(OnPlayDrawEnd, enabled, Barricades_Draw);
-    COND_HOOK(OnLoadGame, enabled, OnLoadGame);
     COND_HOOK(OnExitGame, enabled, [](int32_t) { AbandonRun(); });
     COND_HOOK(OnGameStateMainStart, enabled, OnGameStateMainStart);
-    COND_HOOK(OnDeleteFile, enabled, [](int32_t fileNum) { DeleteSnapshotFile(fileNum); });
 
     // Power-up drops wear item models but give only the power-up.
     COND_VB_SHOULD(VB_GIVE_ITEM_FROM_ITEM_00, enabled, {
@@ -1056,8 +1163,9 @@ static void RegisterZombies() {
     });
 
     // The pause screen can't save mid-run: the file would keep the run's loadout.
+    // Zombies Only: never from its menus either.
     COND_VB_SHOULD(VB_BE_ABLE_TO_SAVE, enabled, {
-        if (IsRunActive()) {
+        if (IsRunActive() || ZombiesOnly()) {
             *should = false;
         }
     });

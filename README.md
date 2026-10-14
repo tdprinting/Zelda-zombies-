@@ -51,15 +51,17 @@ and the starting round, then **Play**. The menu works with the D-pad or stick
 and A, or by tapping on Android.
 
 Each map has a start zone and two more zones behind debris. Torches are
-stations: walk up to one and press **L** to buy. Hold **L** at a broken
-window to board it up. Perk and Pack-a-Punch torches stay dark until you throw
+stations: walk up to one and press **L** to buy (the buy button can be moved
+to **D-pad Down** in the settings). Hold it at a broken window to board it up. Perk and Pack-a-Punch torches stay dark until you throw
 the power switch or play the Sun's Song. **START** opens the run menu
 (resume, items, controls, end run); the **Controls** page in either menu
 lists everything.
 
 After a run, a results screen shows the rounds survived, kills and points.
-Your real inventory always comes back when the run ends, even after a crash
-or a reset, so the mode never changes a normal playthrough.
+In Zombies Only, your real inventory, age and equipment come back when the
+run ends, and on the next load after a crash or a reset, so the mode never
+changes a normal playthrough. (In the normal game, **Keep Items** lets you
+keep what you bought.)
 
 To play the mode inside the normal game instead, turn **Zombies Only** off
 and **Enable Zombies of Time** on under **Enhancements > Zombies of Time**,

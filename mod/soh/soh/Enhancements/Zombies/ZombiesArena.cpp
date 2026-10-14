@@ -32,8 +32,9 @@ static constexpr float kDebrisReach = 110.0f;
 // Kakariko Graveyard, after the flow of Black Ops' first map: a small start area
 // with windows and a wall buy, debris into a bigger middle room with the Mystery
 // Chest's second spot, and more debris to the far end, where the power and
-// Pack-a-Punch are. Spots are rough, from the positions of the graveyard's signs,
-// graves and grass in SoH's randomizer tables; they need a walk-through in game.
+// Pack-a-Punch are. The graveyard climbs in terraces from the gate (x < -550) to the
+// far end (x > 350); every spot was checked against a floor scan of the scene and
+// walked with the playtest harness.
 static const ArenaLayout sGraveyard = {
     SCENE_GRAVEYARD,
     "KAKARIKO GRAVEYARD",
@@ -68,7 +69,7 @@ static const ArenaLayout sGraveyard = {
             1000,
             { 330.0f, 100.0f },
             { 600.0f, 80.0f },
-            { { 850.0f, -250.0f }, { 850.0f, 420.0f } },
+            { { 620.0f, -180.0f }, { 620.0f, 330.0f } },
             {
                 { StationType::Power, { 520.0f, -60.0f } },
                 { StationType::PackAPunch, { 560.0f, 220.0f } },
