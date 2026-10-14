@@ -44,6 +44,8 @@ struct TrackedEnemy {
     s16 lastHealth;
     Vec3f lastPos;
     bool killCounted;
+    float closestDist; // nearest it has come to Link since its last progress
+    int stuckFrames;   // frames without getting closer
 };
 
 struct ActiveDrop {

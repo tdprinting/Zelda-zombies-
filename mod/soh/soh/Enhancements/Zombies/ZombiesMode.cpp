@@ -35,6 +35,11 @@ static constexpr float kSpawnMaxHeightDiff = 120.0f;
 static constexpr float kPullStopDistWalk = 140.0f;
 static constexpr float kPullStopDistFast = 80.0f;
 static constexpr float kLostDist = 2500.0f;
+// Black Ops respawns a zombie that can't reach the player. Ours gets 15 seconds to
+// close 50 units of distance before it goes back into the round's pool.
+static constexpr int kStuckFrames = 15 * 20;
+static constexpr float kStuckProgress = 50.0f;
+static constexpr float kStuckMinDist = 250.0f;
 
 static Run sRun;
 
@@ -231,7 +236,8 @@ static bool SpawnEnemy(PlayState* play, Player* player, EnemyKind kind) {
 
     // Wolfos are already fast; undead get a Black Ops move tier for the round.
     MoveTier tier = kind == EnemyKind::WhiteWolfos ? MoveTier::Walk : PickMoveTier(sRun.round, Rand_ZeroOne());
-    sRun.enemies.push_back({ actor, kind, tier, static_cast<s16>(hp), actor->world.pos, false });
+    sRun.enemies.push_back({ actor, kind, tier, static_cast<s16>(hp), actor->world.pos, false,
+                             Math_Vec3f_DistXZ(&pos, &player->actor.world.pos), 0 });
     // Dust where the undead claws out of the ground.
     Actor_SpawnFloorDustRing(play, actor, &pos, 30.0f, 7, 4.0f, 60, 6, 0);
     return true;
@@ -318,7 +324,13 @@ static void UpdateEnemies(PlayState* play, Player* player) {
 
         if (!enemy.killCounted) {
             float dist = actor->xzDistToPlayer;
-            if (dist > kLostDist) {
+            if (dist < enemy.closestDist - kStuckProgress || dist < kStuckMinDist) {
+                enemy.closestDist = std::min(enemy.closestDist, dist);
+                enemy.stuckFrames = 0;
+            } else if (actor->freezeTimer == 0) {
+                enemy.stuckFrames++;
+            }
+            if (dist > kLostDist || enemy.stuckFrames > kStuckFrames) {
                 Actor_Kill(actor);
                 ForgetEnemy(i, true);
                 continue;
