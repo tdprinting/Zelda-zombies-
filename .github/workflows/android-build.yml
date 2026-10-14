@@ -1,0 +1,62 @@
+# An Android build of Ship of Harkinian with Zombies of Time.
+#
+# Official SoH has no Android version, so this builds on linkzenic's Android port
+# of SoH 9.3.0 (pinned below), adds the mode, and produces a debug APK. It installs
+# next to a normal SoH app as "com.linkzenic.soh.localtest" and asks for your own
+# Ocarina of Time ROM like any SoH build. No game data is included.
+name: Android build
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SOH_ANDROID_REPO: linkzenic/Shipwright-Android
+  SOH_ANDROID_REF: v9.3.0-android.1
+
+jobs:
+  build-android:
+    runs-on: ubuntu-24.04
+    container:
+      # The port's own CI image: Android SDK 31, NDK 26 and JDK 17.
+      image: djvdw7f2ro/android-builder-soh:v1.0.4
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out the SoH Android port
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SOH_ANDROID_REPO }}
+          ref: ${{ env.SOH_ANDROID_REF }}
+          submodules: recursive
+          path: soh-android
+      - name: Add Zombies of Time
+        run: cp -R mod/soh/. soh-android/soh/
+      - name: Install host build dependencies
+        run: |
+          apt-get update
+          apt-get install -y $(cat soh-android/.github/workflows/apt-deps.txt)
+      - name: Generate soh.o2r
+        working-directory: soh-android
+        run: |
+          cmake -S . -B build-linux -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-linux --target GenerateSohOtr --parallel
+          cp soh/soh.o2r Android/app/src/main/assets/soh.o2r
+      - name: Build APK
+        working-directory: soh-android/Android
+        run: |
+          echo "sdk.dir=${ANDROID_SDK_ROOT}" > local.properties
+          echo "ndk.dir=${ANDROID_NDK_HOME}" >> local.properties
+          ./gradlew assembleDebug
+      - name: Collect APK
+        run: |
+          APK=$(find soh-android/Android/app/build/outputs/apk/debug -name '*.apk' | head -1)
+          cp "$APK" zombies-of-time-android.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zombies-of-time-android
+          path: zombies-of-time-android.apk
+          if-no-files-found: error
