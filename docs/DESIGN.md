@@ -178,5 +178,19 @@ Code layout:
 3. **Polish:** a zombies music track built from OoT sequences, perk jingles,
    speed tiers (walkers, joggers, sprinters) via per-actor speed tuning, and a
    boss round (Dead Hand or Iron Knuckle).
-4. **Co-op:** SoH's Anchor networking for 2 to 4 Links, with revives and the
-   multi-player round formula.
+4. **Local co-op, then split screen.** Asked for by Tee. Ocarina of Time
+   assumes exactly one Link and one camera everywhere in its code, so this
+   comes in two steps after the single-player loop works:
+   - **4a, shared screen:** player 2 joins on a second controller, building on
+     SoH's existing Ivan co-op (a second player who flies as a fairy and can
+     use C-button items). Player 2 gets their own points, perks and revives;
+     when Link goes down, player 2 has a few seconds to revive him, Black Ops
+     style.
+   - **4b, split screen:** a second Link actor with its own camera, with the
+     frame drawn twice into two viewports. This touches the player actor,
+     camera and renderer, so it is a fork-level change to SoH and gets its own
+     design note before any code.
+
+   The core loop is already shaped for this: points, perks and kill credit
+   live in a per-player array (index 0 today), and the round formula takes
+   the player count.
