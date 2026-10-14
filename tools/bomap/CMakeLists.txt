@@ -8,7 +8,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(ZLIB QUIET)
 if(NOT ZLIB_FOUND)
     include(FetchContent)
-    FetchContent_Declare(zlib URL https://zlib.net/fossils/zlib-1.3.1.tar.gz)
+    # GitHub's release copy: zlib.net can answer CI runners with a web page instead of the archive.
+    FetchContent_Declare(zlib
+        URL https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz
+        URL_HASH SHA256=9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23)
     set(ZLIB_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(zlib)
     add_library(ZLIB::ZLIB ALIAS zlibstatic)

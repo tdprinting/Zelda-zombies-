@@ -44,7 +44,11 @@ jobs:
         run: |
           cmake -S . -B build-linux -G Ninja -DCMAKE_BUILD_TYPE=Release
           cmake --build build-linux --target GenerateSohOtr --parallel
-          cp soh/soh.o2r Android/app/src/main/assets/soh.o2r
+          # The port writes it into the build directory, not next to the sources.
+          O2R=$(ls build-linux/soh/soh.o2r soh/soh.o2r 2>/dev/null | head -1)
+          test -n "$O2R"
+          mkdir -p Android/app/src/main/assets
+          cp "$O2R" Android/app/src/main/assets/soh.o2r
       - name: Build APK
         working-directory: soh-android/Android
         run: |
