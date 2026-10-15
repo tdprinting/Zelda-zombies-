@@ -87,6 +87,27 @@ Gfx* Model_PosedDl(const ZModel* model, const ModelPose& pose, ModelDrawBuffers*
 // Where a bone (e.g. "tag_flash") is in the posed model, in model units. False when absent.
 bool Model_BonePos(const ZModel* model, const ModelPose& pose, const char* bone, Vec3f* out);
 
+// Skeleton access, for driving another skeleton from an animation (Link from Black Ops'
+// player animations, ZombiesPlayerAnim.cpp).
+struct BoneXf {
+    float qx = 0, qy = 0, qz = 0, qw = 1; // rotation, model space
+    Vec3f pos = {};
+};
+struct PoseLayer {
+    const ZAnim* anim = nullptr;
+    float time = 0.0f;   // seconds
+    float weight = 1.0f; // blended over the layers before it, on the bones this animation has
+};
+int Model_BoneCount(const ZModel* model);
+int Model_BoneIndex(const ZModel* model, const char* name); // -1 when absent
+int Model_BoneParent(const ZModel* model, int bone);
+BoneXf Model_BoneBind(const ZModel* model, int bone); // bind pose, model space
+// Model-space bone transforms from the bind pose with each layer laid over the last.
+void Model_PoseWorld(const ZModel* model, const PoseLayer* layers, int count, std::vector<BoneXf>* world);
+// How far an animation carries the character over its length (model axes, model units);
+// zero when the file doesn't say.
+Vec3f Anim_Travel(const ZAnim* anim);
+
 // zombies/models/manifest.txt, written by the importer: which model or animation plays
 // each part ("zombie_model", "anim_walk", "board_model", ...). Empty when not listed.
 std::vector<std::string> Model_Manifest(const std::string& key);

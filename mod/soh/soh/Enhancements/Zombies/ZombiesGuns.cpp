@@ -21,6 +21,7 @@
 #include "ZombiesFx.h"
 #include "ZombiesMode.h"
 #include "ZombiesModel.h"
+#include "ZombiesPlayerAnim.h"
 #include "ZombiesSound.h"
 
 #include <libultraship/bridge/consolevariablebridge.h>
@@ -1084,6 +1085,47 @@ static void UpdatePlayerGun(PlayState* play, Player* player, int who, const GunI
     }
 }
 
+static bool GunRaised(PlayState* play, Player* player, int who);
+
+static PlayerAnimKind AnimKind(GunClass c) {
+    switch (c) {
+        case GunClass::Pistol:
+        case GunClass::Launcher:
+            return PlayerAnimKind::Pistol;
+        case GunClass::Smg:
+            return PlayerAnimKind::Smg;
+        case GunClass::Shotgun:
+            return PlayerAnimKind::Shotgun;
+        case GunClass::Lmg:
+            return PlayerAnimKind::Lmg;
+        default:
+            return PlayerAnimKind::Rifle;
+    }
+}
+
+// Steps Black Ops' player animations for this player's gun (ZombiesPlayerAnim), when
+// they're imported and the gun is up.
+static void AnimatePlayer(PlayState* play, Player* player, int who) {
+    const GunState& st = sState[who];
+    const GunSlot& slot = sGuns[who].Current();
+    if (slot.id == GunId::None || (st.raise <= 0.0f && !GunRaised(play, player, who))) {
+        PlayerAnim_Reset(who);
+        return;
+    }
+    PlayerAnimGun gun;
+    gun.kind = AnimKind(GunInfo(slot.id).gunClass);
+    gun.aiming = player->focusActor != nullptr || (player->stateFlags1 & PLAYER_STATE1_PARALLEL);
+    gun.fired = st.recoil >= 1.0f;
+    gun.sprint = player->actor.speedXZ > 6.0f && st.sinceShot > 10 && !gun.aiming;
+    if (st.reloadFrames > 0 && st.reloadTotal > 0) {
+        gun.reload = 1.0f - static_cast<float>(st.reloadFrames) / static_cast<float>(st.reloadTotal);
+    }
+    if (st.swapFrames > 0) {
+        gun.swap = 1.0f - static_cast<float>(st.swapFrames) / static_cast<float>(kSwapFrames);
+    }
+    PlayerAnim_Update(who, player, gun);
+}
+
 void Guns_Update(PlayState* play, Player* player) {
     sFrame++;
     if (!RunLive()) {
@@ -1106,6 +1148,7 @@ void Guns_Update(PlayState* play, Player* player) {
     link.promptEmpty = GetRun().prompt.empty();
     link.blocked = GunBlocked(play, player);
     UpdatePlayerGun(play, player, 0, link);
+    AnimatePlayer(play, player, 0);
 
     // Player 2, on their own controller.
     Player* partner = PlayerOf(play, 1);
@@ -1115,6 +1158,7 @@ void Guns_Update(PlayState* play, Player* player) {
         sGunPressed[1] = in.pressed;
         sGunHeld[1] = in.held;
         UpdatePlayerGun(play, partner, 1, in);
+        AnimatePlayer(play, partner, 1);
     } else {
         sGunPressed[1] = false;
         sGunHeld[1] = false;
@@ -1604,6 +1648,7 @@ struct SavedPose {
     u8 rightHandType = 0;
     u8 leftHandType = 0;
     bool posed = false;
+    bool boPose = false; // posed by Black Ops' player animations (ZombiesPlayerAnim), not the table
 };
 static SavedPose sSaved[kMaxPlayers];
 
@@ -1671,7 +1716,8 @@ static void PosePlayer(PlayState* play, int who) {
     float w = Smooth(st.raise);
 
     saved.player = player;
-    for (int j = 0; j < POSE_JOINTS; j++) {
+    saved.boPose = PlayerAnim_Pose(who, player, w);
+    for (int j = 0; j < POSE_JOINTS && !saved.boPose; j++) {
         Vec3s& joint = player->jointTable[kPoseLimbs[j]];
         saved.joints[j] = joint;
         bool leftArm = j == POSE_L_SHOULDER || j == POSE_L_FOREARM || j == POSE_L_HAND;
@@ -1740,9 +1786,14 @@ static void UnposePlayers() {
         }
         saved.posed = false;
         Player* player = saved.player;
-        for (int j = 0; j < POSE_JOINTS; j++) {
-            player->jointTable[kPoseLimbs[j]] = saved.joints[j];
+        if (saved.boPose) {
+            PlayerAnim_Unpose(who, player);
+        } else {
+            for (int j = 0; j < POSE_JOINTS; j++) {
+                player->jointTable[kPoseLimbs[j]] = saved.joints[j];
+            }
         }
+        saved.boPose = false;
         player->rightHandDLists = saved.rightHandDLists;
         player->leftHandDLists = saved.leftHandDLists;
         player->rightHandType = saved.rightHandType;
@@ -1882,6 +1933,24 @@ extern "C" Gfx* ZombiesGuns_FistWithGun(PlayState* play, Gfx* hand, Gfx* gun, co
     return dl;
 }
 
+// The same with the gun's place given as a matrix in the hand's limb space.
+extern "C" Gfx* ZombiesGuns_FistWithGunMtx(PlayState* play, Gfx* hand, Gfx* gun, const MtxF* place) {
+    Gfx* dl = static_cast<Gfx*>(Graph_Alloc(play->state.gfxCtx, 8 * sizeof(Gfx)));
+    Mtx* mtx = static_cast<Mtx*>(Graph_Alloc(play->state.gfxCtx, sizeof(Mtx)));
+    Matrix_Push();
+    Matrix_Put(const_cast<MtxF*>(place));
+    Matrix_ToMtx(mtx, const_cast<char*>(__FILE__), __LINE__);
+    Matrix_Pop();
+    Gfx* p = dl;
+    p = Gfx_SetupDL(p, SETUPDL_25);
+    gSPMatrix(p++, mtx, G_MTX_PUSH | G_MTX_MUL | G_MTX_MODELVIEW);
+    gSPDisplayList(p++, gun);
+    gSPPopMatrix(p++, G_MTX_MODELVIEW);
+    gSPDisplayList(p++, hand);
+    gSPEndDisplayList(p++);
+    return dl;
+}
+
 namespace Zombies {
 
 // Where each imported world gun's grip is, from its own tag_weapon (in inches, Black
@@ -1915,6 +1984,9 @@ struct HandFit {
     float scale;
     Vec3f offset;
 };
+// With Black Ops' player animations the gun keeps Black Ops' proportion to the arm that
+// holds it, a little larger so it reads at Link's size. [adult, child]
+static constexpr float kBoGunScale[2] = { 1.35f, 1.45f };
 static constexpr HandFit kHandFit[2] = {
     { 1.1f, { 0.0f, 80.0f, -110.0f } },
     { 0.8f, { 0.0f, 0.0f, 0.0f } },
@@ -1933,8 +2005,14 @@ static void HoldGun(s32 limbIndex, Gfx** dList, Player* player, PlayState* play)
     if (gun == nullptr) {
         return;
     }
-    Vec3f grip = GripOf(GunInfo(sGuns[who].Current().id).boName);
     const HandFit& fit = kHandFit[LINK_IS_ADULT ? 0 : 1];
+    Vec3f grip = GripOf(GunInfo(sGuns[who].Current().id).boName);
+    MtxF place;
+    if (sSaved[who].boPose && PlayerAnim_GunInHand(who, kBoGunScale[LINK_IS_ADULT ? 0 : 1], grip, &place)) {
+        // Where Black Ops' own animation holds it, at the hand's tag_weapon_right.
+        *dList = ZombiesGuns_FistWithGunMtx(play, *dList, gun, &place);
+        return;
+    }
     // Black Ops inches to OoT units, times the limb's hundred.
     float scale = (64.0f / 72.0f) * 100.0f * fit.scale;
     // The fist's +Y runs along the barrel (as the hookshot's does) and its -Z is the top.

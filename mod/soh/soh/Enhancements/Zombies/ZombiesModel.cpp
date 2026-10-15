@@ -144,6 +144,9 @@ class Reader {
         s.resize(strnlen(s.c_str(), len));
         return s;
     }
+    size_t Remaining() const {
+        return mOk && mPos < mData.size() ? mData.size() - mPos : 0;
+    }
     u32 Count(size_t elemSize) {
         u32 n = Get<u32>();
         if (n > (mData.size() - std::min(mPos, mData.size())) / std::max<size_t>(elemSize, 1)) {
@@ -227,6 +230,7 @@ struct ZAnim {
     std::vector<AnimBone> bones;
     std::vector<std::pair<u32, std::string>> notes;
     std::vector<AnimBinding> bindings; // a few models at most
+    Vec3f travel = {};                 // root movement over the animation, when the file has it
 };
 
 static std::string ModelDir() {
@@ -373,6 +377,13 @@ static std::unique_ptr<ZAnim> LoadAnim(const std::string& path) {
     for (u32 i = 0; i < nn; i++) {
         u32 frame = r.Get<u32>();
         anim->notes.emplace_back(frame, r.Name(32));
+    }
+    if (r.Ok() && r.Remaining() >= 16) {
+        char tag[4];
+        r.Bytes(tag, 4);
+        if (std::memcmp(tag, "ROOT", 4) == 0) {
+            anim->travel = { r.Get<float>(), r.Get<float>(), r.Get<float>() };
+        }
     }
     return r.Ok() ? std::move(anim) : nullptr;
 }
@@ -760,6 +771,79 @@ Gfx* Model_PosedDl(const ZModel* model, const ModelPose& pose, ModelDrawBuffers*
     buffers->flip ^= 1;
     BuildDl(model, pose, alpha, verts, dl, style);
     return dl.data();
+}
+
+int Model_BoneCount(const ZModel* model) {
+    return model != nullptr ? static_cast<int>(model->bones.size()) : 0;
+}
+
+int Model_BoneIndex(const ZModel* model, const char* name) {
+    if (model != nullptr) {
+        for (size_t i = 0; i < model->bones.size(); i++) {
+            if (model->bones[i].name == name) {
+                return static_cast<int>(i);
+            }
+        }
+    }
+    return -1;
+}
+
+int Model_BoneParent(const ZModel* model, int bone) {
+    return model != nullptr && bone >= 0 && bone < static_cast<int>(model->bones.size()) ? model->bones[bone].parent
+                                                                                         : -1;
+}
+
+static BoneXf ToBoneXf(const Xform& x) {
+    BoneXf out;
+    out.qx = x.rot.x;
+    out.qy = x.rot.y;
+    out.qz = x.rot.z;
+    out.qw = x.rot.w;
+    out.pos = x.pos;
+    return out;
+}
+
+BoneXf Model_BoneBind(const ZModel* model, int bone) {
+    if (model == nullptr || bone < 0 || bone >= static_cast<int>(model->bones.size())) {
+        return BoneXf();
+    }
+    return ToBoneXf(model->bones[bone].bindWorld);
+}
+
+void Model_PoseWorld(const ZModel* model, const PoseLayer* layers, int count, std::vector<BoneXf>* world) {
+    world->clear();
+    if (model == nullptr) {
+        return;
+    }
+    static std::vector<Xform> xf; // scratch: posing runs on the game thread only
+    xf.resize(model->bones.size());
+    world->resize(model->bones.size());
+    for (size_t i = 0; i < model->bones.size(); i++) {
+        const ModelBone& bone = model->bones[i];
+        Xform local = bone.bind;
+        for (int l = 0; l < count; l++) {
+            const PoseLayer& layer = layers[l];
+            if (layer.anim == nullptr || layer.weight <= 0.0f) {
+                continue;
+            }
+            int ab = BindingFor(layer.anim, model)[i];
+            if (ab < 0) {
+                continue;
+            }
+            Xform s;
+            SampleLocal(layer.anim, bone, ab, FrameAt(layer.anim, layer.time), &s);
+            float w = std::min(layer.weight, 1.0f);
+            local.rot = Nlerp(local.rot, s.rot, w);
+            local.pos = { local.pos.x + (s.pos.x - local.pos.x) * w, local.pos.y + (s.pos.y - local.pos.y) * w,
+                          local.pos.z + (s.pos.z - local.pos.z) * w };
+        }
+        xf[i] = bone.parent >= 0 ? Compose(xf[bone.parent], local) : local;
+        (*world)[i] = ToBoneXf(xf[i]);
+    }
+}
+
+Vec3f Anim_Travel(const ZAnim* anim) {
+    return anim != nullptr ? anim->travel : Vec3f{};
 }
 
 bool Model_BonePos(const ZModel* model, const ModelPose& pose, const char* bone, Vec3f* out) {
