@@ -1466,10 +1466,8 @@ static Gfx* sGunHandDLs[4];
 static Gfx* sGripHandDLs[4];
 static Gfx* sFistHandDLs[4]; // his right fist, round an imported gun's grip
 static GunModel* sHeldGun = nullptr;
-static GunClass sHeldClass = GunClass::Pistol;
 static constexpr float kViewmodelDepth = 2.0f;
 static constexpr float kSightHeight = -0.4f; // the sights just under the eye when aiming (inches)
-static float sHoldTune[6] = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 16384.0f }; // ZZTUNE
 
 static void InitHandDLs() {
     sGunHandDLs[0] = (Gfx*)gLinkAdultRightHandHoldingHookshotNearDL;
@@ -1495,12 +1493,6 @@ static bool GunRaised(PlayState* play, Player* player) {
 }
 
 static void PoseLink() {
-    { // ZZTUNE
-        const char* e = getenv("ZZ_HOLD");
-        if (e != nullptr) {
-            sscanf(e, "%f,%f,%f,%f,%f,%f", &sHoldTune[0], &sHoldTune[1], &sHoldTune[2], &sHoldTune[3], &sHoldTune[4], &sHoldTune[5]);
-        }
-    }
     sPosed = false;
     sHeldGun = nullptr;
     PlayState* play = gPlayState;
@@ -1551,7 +1543,6 @@ static void PoseLink() {
             player->rightHandDLists = &sFistHandDLs[gSaveContext.linkAge];
             player->rightHandType = PLAYER_MODELTYPE_RH_CLOSED;
             sHeldGun = gm;
-            sHeldClass = gun.gunClass;
         } else {
             player->rightHandDLists = &sGunHandDLs[gSaveContext.linkAge];
             player->rightHandType = LINK_IS_ADULT ? PLAYER_MODELTYPE_RH_HOOKSHOT : PLAYER_MODELTYPE_RH_BOW_SLINGSHOT;
@@ -1749,8 +1740,9 @@ static void HoldGun(s32 limbIndex, Gfx** dList, Player* player, PlayState* play)
     Vec3f grip = GripOf(GunInfo(sGuns[0].Current().id).boName);
     // Black Ops inches to OoT units, times the limb's hundred; Link the child is smaller.
     float scale = (64.0f / 72.0f) * 100.0f * (LINK_IS_ADULT ? 1.0f : 0.8f);
-    Vec3f offset = { sHoldTune[0], sHoldTune[1], sHoldTune[2] };
-    Vec3s rot = { static_cast<s16>(sHoldTune[3]), static_cast<s16>(sHoldTune[4]), static_cast<s16>(sHoldTune[5]) };
+    // The fist's +Y runs along the barrel (as the hookshot's does) and its -Z is the top.
+    Vec3f offset = { 0.0f, 0.0f, 0.0f };
+    Vec3s rot = { -0x4000, 0, 0x4000 };
     *dList = ZombiesGuns_FistWithGun(play, *dList, gun, &grip, scale, &offset, &rot);
 }
 
@@ -1798,7 +1790,7 @@ static void DrawImportedViewmodel(PlayState* play, Player* player, GunModel* gm,
     bool aiming = st.reloadFrames == 0 && st.swapFrames == 0;
     sAim = aiming ? std::min(1.0f, sAim + 0.25f) : std::max(0.0f, sAim - 0.25f);
     float aim = Smooth(sAim);
-    Vec3f sight = { muzzle.x, muzzle.y + 1.0f, muzzle.z };
+    Vec3f sight = { muzzle.x, muzzle.y + 0.5f, muzzle.z }; // no sight tag: the front sight over the muzzle
     for (const char* tag : { "tag_front_sight", "tag_iron_sight", "tag_iron_sights", "tag_rear_sight" }) {
         if (Model_BonePos(gm->view, sPose, tag, &sight)) {
             break;

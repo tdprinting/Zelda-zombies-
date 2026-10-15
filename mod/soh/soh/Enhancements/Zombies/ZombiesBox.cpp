@@ -126,10 +126,13 @@ static ModelStyle GunStyle() {
         for (const char* extra : { "scope", "reflex", "red_dot", "aimpoint", "suppressor", "silencer", "foregrip",
                                    "grip", "clan_tag", "player_icon", "rail", "mag_wrap", "acog", "elbit", "lens",
                                    "ir_", "flash_hider", "extclip", "dualclip", "magazines2", "grenade_launcher",
-                                   "_gl", "masterkey", "flamethrower" }) {
+                                   "_gl_", "masterkey", "flamethrower" }) {
             if (m.find(extra) != std::string::npos) {
                 return false;
             }
+        }
+        if (m.size() > 3 && m.compare(m.size() - 3, 3, "_gl") == 0) {
+            return false; // a grenade launcher ("_glove" is the arms)
         }
         if (!textured) {
             bool wood = m.find("wood") != std::string::npos || m.find("stock") != std::string::npos;
