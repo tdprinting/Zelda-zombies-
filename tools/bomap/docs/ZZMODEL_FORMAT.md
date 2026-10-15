@@ -61,4 +61,7 @@ struct {
 } bones
 u32   notetrackCount
 struct { u32 frame; char name[32]; } notetracks   // e.g. "footstep", "fire", "end"
+// optional, readers check for it:
+char  tag[4] = "ROOT"
+f32   travel[3]       the root's movement over the whole animation, in model axes
 ```

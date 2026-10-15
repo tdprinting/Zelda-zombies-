@@ -56,6 +56,32 @@ bomap fx        common_zombie.ff misc/fx_zombie_powerup_on                what a
 bomap gamefx    common_zombie.ff misc/fx_zombie_powerup_on powerup.zzfx --main <Black Ops>/main
 ```
 
+Link's third-person gun animations come from Black Ops' player animations:
+
+```
+bomap playeranims common_zombie.ff --out <models dir> --model zombie_cod5_prototype.ff c_usa_dempsey_body
+```
+
+It writes each animation found as `player_<role>.zzanim`, the player skeleton the
+animations were made for (`player_skeleton.zzmodel`, bones only) and merges their
+`player_` lines into the manifest (other lines are kept). Roles, with the Black Ops
+animations tried for each:
+
+| Role | Black Ops animation |
+| --- | --- |
+| `player_{pistol,rifle}_idle`, `_ads` | `pb_stand_alert[_pistol]`, `pb_stand_ads[_pistol]` |
+| `player_pistol_walk_{f,b,l,r}` | `pb_combatwalk_*_loop_pistol` |
+| `player_rifle_walk_{f,b,l,r}` | `pb_stand_shoot_walk_*` (or `pb_rifle_stand_shuffle_*`) |
+| `player_{pistol,rifle}_run_{f,b,l,r}` | `pb_combatrun_*_loop[_pistol]` (`pb_pistol_run_fast` forward) |
+| `player_{pistol,rifle}_sprint` | `pb_sprint[_pistol]` |
+| `player_{pistol,rifle,smg}_fire`, `_fire_ads`; `player_shotgun_fire` | `pt_stand_shoot[_ads][_pistol]`, `pt_stand_shoot_auto[_ads]`, `pt_stand_shoot_shotgun` |
+| `player_{pistol,rifle,smg,shotgun,lmg}_reload` | `pt_reload_stand_{pistol,rifle,auto}`, `pt_shot_stand_reload`, `pt_lmg_stand_reload` |
+| `player_{pistol,rifle}_raise`, `_putaway` | `pt_{pistol,rifle}_stand_raise`, `_putaway` |
+
+`pb_` animations are the whole body, `pt_` the torso played over it. Animations now
+end with an optional `ROOT` block, the root's travel over the animation (see
+`docs/ZZMODEL_FORMAT.md`), which the game uses to match loop speed to Link's.
+
 Particle effects are in `docs/ZZFX_FORMAT.md`. The game draws each effect role
 (`fx_box_beam`, `fx_muzzle_flash`, `fx_explosion`, ...) from the file the manifest
 names, and falls back to a look built in code when there is none. Effect sprites

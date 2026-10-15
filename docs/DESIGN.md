@@ -236,6 +236,38 @@ are untouched, and nothing changes when the gun is down (three seconds after its
 use, or as soon as he swings, uses an item, climbs, swims or shields). The poses are a
 table.
 
+**Black Ops' player animations.** Tee asked for Link to hold, fire and reload guns the
+way a Call of Duty player does. When the player has run `bomap playeranims` (see
+`tools/bomap/README.md`), Link's body is posed from Black Ops' own third-person player
+animations instead of the table above (`ZombiesPlayerAnim.cpp`). Nothing from those
+files is in this repository: they are read at run time from the player's own import,
+and the retargeting is our own code.
+
+- *Which animations.* Body loops per weapon family (pistol, which the Ray Gun uses too,
+  and rifle for every two-handed gun): standing alert, aiming (Z-targeting), walk and run
+  forward, back, left and right, and sprint, chosen by Link's speed and the angle between
+  where he moves and where he faces. Black Ops' torso animations play over the body:
+  a shot (hip or aimed; per kind for SMGs and shotguns), a reload (per kind: pistol,
+  rifle, SMG, shotgun, LMG; stretched to the gun's own reload time) and raise/put-away
+  for a swap. Changes crossfade over six frames; a shot restarts the fire overlay; a new
+  walk or run loop starts at the old one's phase, and loops play at the rate Link
+  actually moves (0.5x to 2x).
+- *Retargeting.* The Black Ops skeleton is posed (body layer, then torso layers bone by
+  bone over it). Each of Link's limbs is tied to a Black Ops bone (pelvis, upper spine,
+  head, shoulders, elbows, wrists, hips, knees, ankles). At start-up a reference frame is
+  built per limb from the Black Ops bind pose (the bone's direction to its child, left
+  as the second axis) and matched to Link's limb axes; each frame the limb's target
+  orientation is the bone's world rotation times that offset, turned into Link's actor
+  axes, then made local to Link's own parent limb and written back as OoT's Z-Y-X angles,
+  blended with his own animation by the gun's raise weight. Root height follows the
+  pelvis, scaled to Link's leg length (so the child stays his size). Rolling, jumping,
+  falling and being knocked back keep OoT's own legs.
+- *The gun.* It goes where Black Ops' `tag_weapon_right` is relative to the wrist, in
+  Link's right hand limb's space, sized to his arms (a little over: 1.35 adult, 1.45
+  child) about its grip, so the off hand lands near the foregrip as the animation has it.
+- Player 2 uses the same code with their own state; both ages work. Without the import,
+  or when a gun kind's animations are missing, the pose table above is used unchanged.
+
 **Imported guns.** `Guns_ImportedModel(boName)` loads each gun's parts from the
 importer's manifest (`gun_<boName>_world`, `_view`, `_anim_idle`, `_anim_fire`,
 `_anim_reload`, `_anim_draw`; Black Ops' usual names when a role is missing) and keeps
@@ -570,6 +602,7 @@ Code layout:
 | `ZombiesMenu.cpp` | Menu widgets |
 | `ZombiesBoMap.cpp` | Imported Black Ops map (`zombies/nacht.zzmap`): collision, display lists and the layout from its entities, played in the graveyard's slot |
 | `ZombiesModel.h/.cpp` | Imported models and animations (`zombies/models/*.zzmodel`, `*.zzanim`, `manifest.txt`): posing, skinning, drawing |
+| `ZombiesPlayerAnim.h/.cpp` | Black Ops' third-person player animations retargeted onto Link's skeleton while he holds a gun (both players) |
 | `ZombiesZombie.cpp` | The Black Ops zombie actor, drawn with the imported model and driven by the mode's AI |
 | `ZombiesBox.h/.cpp` | The imported Mystery Box: chest, lid, cycling guns and the bear |
 | `ZombiesFx.h/.cpp` | Particle effects from imported `.zzfx` files, with built-in OoT-coloured fallbacks |
