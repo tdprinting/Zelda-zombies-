@@ -57,7 +57,28 @@ the power switch or play the Sun's Song. **START** opens the run menu
 (resume, items, controls, end run); the **Controls** page in either menu
 lists everything.
 
-After a run, a results screen shows the rounds survived, kills and points.
+### Two players (split screen)
+
+Set **Players** to **2** in the main menu and plug in a second controller.
+The screen splits top and bottom like Black Ops: player 1 is Link on top,
+player 2 is a second Link in a red tunic below, with their own camera.
+
+Each player has their own points, perks and weapons. Player 2 starts with the
+Kokiri Sword and buys their own upgrades: the Master Sword and bombs from the
+Armory, swords and bombs from the Mystery Chest, Pack-a-Punch for a stronger
+blade, and every perk. Player 2's controls: stick to move, **B** sword,
+**R** throw a bomb, **A** buy, repair and revive, right stick (or C-left and
+C-right) to turn the camera, **Z** to put it behind you.
+
+Co-op follows Black Ops' rules. A player who runs out of hearts goes down
+and loses some points and their perks. The other has 30 seconds to hold the
+buy button next to them for 3 seconds to revive them; otherwise they bleed
+out and come back at the start of the next round. Fairy Revive lets player 2
+get up on their own. When nobody is left standing, the run is over. Rounds
+have more undead with two players, as in Black Ops.
+
+After a run, a results screen shows the rounds survived, kills and points
+(for each player in co-op).
 In Zombies Only, your real inventory comes back when the run ends (or on the
 next load after a crash or a reset), and Link's real age and equipment come
 back the next time the file loads with Zombies Only off, so the mode never

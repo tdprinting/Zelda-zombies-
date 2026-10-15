@@ -59,6 +59,11 @@ static void RegisterZombiesWidgets() {
     });
 
     path.column = SECTION_COLUMN_2;
+    SohGui::mSohMenu->AddWidget(path, "Players: %d", WIDGET_CVAR_SLIDER_INT)
+        .CVar(CVAR_ZOMBIES("Players"))
+        .Options(IntSliderOptions().Min(1).Max(2).DefaultValue(1).Format("%d").Tooltip(
+            "2: split-screen co-op. Player 2 uses the second controller and has their own points and items. "
+            "Takes effect at the next run."));
     SohGui::mSohMenu->AddWidget(path, "Difficulty", WIDGET_SEPARATOR_TEXT);
     SohGui::mSohMenu->AddWidget(path, "Max Undead Alive: %d", WIDGET_CVAR_SLIDER_INT)
         .CVar(CVAR_ZOMBIES("MaxAlive"))

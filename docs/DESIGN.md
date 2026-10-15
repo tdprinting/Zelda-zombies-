@@ -247,6 +247,7 @@ Code layout:
 | `ZombiesLobby.cpp` | Main menu, run (pause) menu, results screen, map warps |
 | `ZombiesExtras.cpp` | Navi callouts, low-health warning and other touches |
 | `ZombiesBounds.cpp` | Keeps Link off the scene's exits during a run |
+| `ZombiesCoop.cpp` | Split-screen co-op: player 2, second view, downs and revives |
 | `ZombiesHud.cpp` | HUD drawing |
 | `ZombiesMenu.cpp` | Menu widgets |
 
@@ -261,22 +262,27 @@ Code layout:
 3. **Polish:** a zombies music track built from OoT sequences, perk jingles,
    crawlers (undead that lose their legs to bombs), and a boss round (Dead
    Hand or Iron Knuckle).
-4. **Local co-op, then split screen.** Asked for by Tee. Ocarina of Time
-   assumes exactly one Link and one camera everywhere in its code, so this
-   comes in two steps after the single-player loop works:
-   - **4a, shared screen:** player 2 joins on a second controller, building on
-     SoH's existing Ivan co-op (a second player who flies as a fairy and can
-     use C-button items). Player 2 gets their own points, perks and revives;
-     when Link goes down, player 2 has a few seconds to revive him, Black Ops
-     style.
-   - **4b, split screen:** a second Link actor with its own camera, with the
-     frame drawn twice into two viewports. This touches the player actor,
-     camera and renderer, so it is a fork-level change to SoH and gets its own
-     design note before any code.
-
-   The core loop is already shaped for this: points, perks and kill credit
-   live in a per-player array (index 0 today), and the round formula takes
-   the player count.
+4. **Split-screen co-op (this PR).** Asked for by Tee. Ocarina of Time
+   assumes exactly one Link and one camera, so co-op is built around that
+   without patching the engine (`ZombiesCoop.cpp`):
+   - **Player 2** is an actor of our own, the size of the game's Player
+     struct, drawn with the game's own Link drawing code (red tunic), moved by
+     the second controller with its own chase camera. Its sword is its own
+     hitbox and its bombs are the game's bombs.
+   - **Split screen**: the game draws player 1's view into the top half of the
+     screen; after the world draw, the sky, scene, rooms and actors are drawn
+     again from player 2's camera into the bottom half.
+   - **Own points and items**: points, kills, perks and kill credit are per
+     player. Stations, windows and debris take a buyer (Link with L, player 2
+     with A); player 2's purchases go to their own sword level, bombs, health
+     and perks, never to the save file.
+   - **Downs**: a downed player loses 5% of their points and their perks,
+     bleeds out after 30 seconds and returns the next round; holding the buy
+     button for 3 seconds next to them revives them. When Link goes down his
+     game over is held off while player 2 is standing, and the rest of the
+     world keeps moving. Both down ends the run.
+   - The undead go for whichever standing player is nearest. The game's own
+     enemy AI only knows Link, so their swipes at player 2 are the mode's.
 
 5. **Bring your own Black Ops (asset loader).** Asked for by Tee: the real
    Black Ops zombie models and sounds. They can't ship with this repository,

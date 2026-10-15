@@ -3,6 +3,7 @@
 
 #include "ZombiesMode.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 
@@ -75,40 +76,105 @@ static std::string RoundLabel(int round) {
     return std::to_string(round);
 }
 
+static void DrawPerks(GfxPrint* printer, const PlayerState& ps, int row) {
+    static const char* perkTags[PERK_COUNT] = { "JUG", "REV", "DTP", "STM" };
+    std::string perks;
+    for (int i = 0; i < PERK_COUNT; i++) {
+        if (ps.perks[i]) {
+            perks += perkTags[i];
+            perks += " ";
+        }
+    }
+    if (!perks.empty()) {
+        GfxPrint_SetColor(printer, 120, 220, 120, 255);
+        PrintAt(printer, 2, row, perks);
+    }
+}
+
+// Points at the right edge, with recent changes stacked above.
+static void DrawPoints(GfxPrint* printer, int player, int row, int lowestPopupRow) {
+    const Run& run = GetRun();
+    GfxPrint_SetColor(printer, 255, 255, 255, 255);
+    PrintRight(printer, 38, row, std::to_string(run.players[player].points));
+    int popupRow = row - 1;
+    for (auto it = run.popups.rbegin(); it != run.popups.rend() && popupRow >= lowestPopupRow; ++it) {
+        if (it->player != player) {
+            continue;
+        }
+        if (it->amount >= 0) {
+            GfxPrint_SetColor(printer, 255, 220, 40, 255);
+            PrintRight(printer, 38, popupRow, "+" + std::to_string(it->amount));
+        } else {
+            GfxPrint_SetColor(printer, 230, 60, 60, 255);
+            PrintRight(printer, 38, popupRow, std::to_string(it->amount));
+        }
+        popupRow--;
+    }
+}
+
+static std::string Bar(int value, int max, int per) {
+    std::string bar;
+    for (int i = 0; i < max / per; i++) {
+        bar += value > i * per ? '#' : '-';
+    }
+    return bar;
+}
+
+// Player 2's half: health, sword and bombs at the bottom left, points at the bottom right.
+static void DrawPartner(GfxPrint* printer) {
+    const Run& run = GetRun();
+    const Partner& partner = run.partner;
+    static const char* swords[] = { "KOKIRI", "MASTER", "BIGGORON" };
+
+    GfxPrint_SetColor(printer, 230, 70, 60, 255);
+    PrintAt(printer, 2, 16, "P2 " + Bar(partner.health, partner.healthCapacity, 16));
+    GfxPrint_SetColor(printer, 200, 200, 200, 255);
+    std::string gear = std::string(swords[std::clamp(partner.sword, 0, 2)]) + (partner.papSword ? "+" : "");
+    if (partner.bombBag) {
+        gear += "  BOMBS " + std::to_string(partner.bombs);
+    }
+    PrintAt(printer, 2, 17, gear);
+    DrawPerks(printer, run.players[1], 26);
+    DrawPoints(printer, 1, 27, 24);
+
+    std::string status;
+    if (partner.bledOut) {
+        status = "BLED OUT: BACK NEXT ROUND";
+    } else if (partner.downed) {
+        status = partner.reviveFrames < 0 ? "FAIRY REVIVE..." : "DOWN! " + std::to_string(partner.downFrames / 20 + 1);
+    }
+    if (!status.empty()) {
+        GfxPrint_SetColor(printer, 230, 60, 60, 255);
+        PrintCentered(printer, 21, status);
+    } else if (!partner.prompt.empty()) {
+        GfxPrint_SetColor(printer, 255, 255, 255, 255);
+        PrintCentered(printer, 25, partner.prompt);
+    }
+}
+
 static void DrawContents(GfxPrint* printer) {
     Run& run = GetRun();
     bool inRun = run.phase == Phase::Active || run.phase == Phase::Intermission || run.phase == Phase::Intro;
+    // Split screen: player 1 in the top half (rows 0-14), player 2 in the bottom.
+    bool split = Coop_SplitView();
 
     if (inRun) {
-        // Round, bottom left above the rupee counter, blood red.
+        // Round, bottom left above the rupee counter, blood red. Split, it sits on the line
+        // between the halves, shared by both.
         GfxPrint_SetColor(printer, 200, 20, 20, 255);
-        PrintAt(printer, 2, 24, RoundLabel(run.round));
+        PrintAt(printer, 2, split ? 14 : 24, RoundLabel(run.round));
 
-        // Perks, as short labels under the round.
-        static const char* perkTags[PERK_COUNT] = { "JUG", "REV", "DTP", "STM" };
-        std::string perks;
-        for (int i = 0; i < PERK_COUNT; i++) {
-            if (run.players[0].perks[i]) {
-                perks += perkTags[i];
-                perks += " ";
-            }
-        }
-        if (!perks.empty()) {
-            GfxPrint_SetColor(printer, 120, 220, 120, 255);
-            PrintAt(printer, 2, 22, perks);
-        }
+        DrawPerks(printer, run.players[0], split ? 12 : 22);
+        DrawPoints(printer, 0, split ? 13 : 26, split ? 10 : 22);
 
-        // Points, bottom right, with recent changes stacked above.
-        GfxPrint_SetColor(printer, 255, 255, 255, 255);
-        PrintRight(printer, 38, 26, std::to_string(run.players[0].points));
-        int row = 25;
-        for (auto it = run.popups.rbegin(); it != run.popups.rend() && row >= 22; ++it, row--) {
-            if (it->amount >= 0) {
-                GfxPrint_SetColor(printer, 255, 220, 40, 255);
-                PrintRight(printer, 38, row, "+" + std::to_string(it->amount));
-            } else {
+        if (split) {
+            DrawPartner(printer);
+            const LinkDown& down = run.linkDown;
+            if (down.bledOut || down.downed) {
                 GfxPrint_SetColor(printer, 230, 60, 60, 255);
-                PrintRight(printer, 38, row, std::to_string(it->amount));
+                PrintCentered(printer, 6,
+                              down.bledOut ? "BLED OUT: BACK NEXT ROUND"
+                                           : "DOWN! " + std::to_string(down.downFrames / 20 + 1));
             }
         }
 
@@ -131,7 +197,7 @@ static void DrawContents(GfxPrint* printer) {
         }
         if (!timers.empty()) {
             GfxPrint_SetColor(printer, 120, 200, 255, 255);
-            PrintCentered(printer, 3, timers);
+            PrintCentered(printer, split ? 15 : 3, timers);
         }
     }
 
@@ -148,11 +214,14 @@ static void DrawContents(GfxPrint* printer) {
     if (run.announcement.framesLeft > 0) {
         GfxPrint_SetColor(printer, 255, 230, 120, 255);
         PrintCentered(printer, 8, run.announcement.text);
+        if (split) {
+            PrintCentered(printer, 19, run.announcement.text);
+        }
     }
 
     if (!run.prompt.empty()) {
         GfxPrint_SetColor(printer, 255, 255, 255, 255);
-        PrintCentered(printer, 20, run.prompt);
+        PrintCentered(printer, split ? 10 : 20, run.prompt);
     }
 }
 

@@ -39,6 +39,7 @@ static constexpr float kSpawnMaxHeightDiff = 120.0f;
 // Horde Pull stops this close to Link so each enemy's own attack takes over.
 static constexpr float kPullStopDistWalk = 140.0f;
 static constexpr float kPullStopDistFast = 80.0f;
+static constexpr float kPullStopDistPartner = 35.0f;
 static constexpr float kLostDist = 2500.0f;
 // Black Ops respawns a zombie that can't reach the player. Ours gets 15 seconds to
 // close 50 units of distance before it goes back into the round's pool. Only one in
@@ -79,7 +80,7 @@ void AwardPoints(int playerIndex, int amount) {
     PlayerState& ps = sRun.players[playerIndex];
     ps.points += amount;
     ps.totalEarned += amount;
-    sRun.popups.push_back({ amount, kFps });
+    sRun.popups.push_back({ amount, kFps, playerIndex });
     if (sRun.popups.size() > 4) {
         sRun.popups.erase(sRun.popups.begin());
     }
@@ -91,7 +92,7 @@ bool SpendPoints(int playerIndex, int amount) {
         return false;
     }
     ps.points -= amount;
-    sRun.popups.push_back({ -amount, kFps });
+    sRun.popups.push_back({ -amount, kFps, playerIndex });
     return true;
 }
 
@@ -452,20 +453,41 @@ static void SpawnPowerUp(PlayState* play, const Vec3f& pos, PowerUp type);
 // Keep home under the enemy so it never walks back or despawns for straying from home.
 // A Stalchild burrows away when its home is over 800 from Link, which a far window or a
 // big map always is: its home goes on Link instead, and it walks to him anyway.
-static void KeepHome(TrackedEnemy& enemy, Player* player) {
+static void KeepHome(TrackedEnemy& enemy, const Vec3f& target) {
     if (enemy.kind == EnemyKind::Stalchild || enemy.kind == EnemyKind::BigStalchild) {
-        enemy.actor->home.pos = player->actor.world.pos;
+        enemy.actor->home.pos = target;
     } else {
         enemy.actor->home.pos = enemy.actor->world.pos;
     }
 }
 
-static void OnEnemyKilled(PlayState* play, Player* player, TrackedEnemy& enemy) {
+// Where an undead is headed: Link, or in co-op whichever player still standing is nearer.
+struct Target {
+    Vec3f pos;
+    float dist;
+    s16 yaw;
+    bool partner; // player 2, whom the enemy's own AI doesn't know about
+};
+
+static Target TargetFor(Actor* actor, Player* player) {
+    Target target = { player->actor.world.pos, actor->xzDistToPlayer, actor->yawTowardsPlayer, false };
+    Vec3f pos;
+    float dist;
+    if (sRun.playerCount >= 2 && Coop_Target(actor->world.pos, &pos, &dist)) {
+        if (Math_Vec3f_DistXZ(&pos, &player->actor.world.pos) > 1.0f) {
+            target = { pos, dist, Math_Vec3f_Yaw(&actor->world.pos, &pos), true };
+        }
+    }
+    return target;
+}
+
+static void OnEnemyKilled(PlayState* play, Player* player, TrackedEnemy& enemy, int who) {
     enemy.killCounted = true;
     enemy.stuckFrames = 0; // now counts the death animation
-    PlayerState& ps = sRun.players[0];
+    PlayerState& ps = sRun.players[who];
     ps.kills++;
-    AwardPoints(0, PointsForKill(CurrentKillType(player)));
+    KillType type = who == 0 ? CurrentKillType(player) : enemy.hitBy == 1 ? KillType::Melee : KillType::Other;
+    AwardPoints(who, PointsForKill(type));
     sRun.lastKillPos = enemy.actor->world.pos;
 
     if (sRun.dropTracker.OnKill(ps.totalEarned, Rand_ZeroOne())) {
@@ -506,26 +528,32 @@ static void UpdateEnemies(PlayState* play, Player* player) {
             }
 
             s16 health = actor->colChkInfo.health;
+            int who = Coop_Credit(enemy);
             if (health < enemy.lastHealth) {
                 s16 damage = enemy.lastHealth - health;
                 // Double Tap and a Pack-a-Punched blade each land the hit again. The extra damage
                 // never finishes an enemy off, because its own death check already ran this frame.
-                int repeats = (sRun.players[0].perks[PERK_DOUBLE_TAP] ? 1 : 0) +
-                              (Stations_PapSword() && player->meleeWeaponState != 0 ? 1 : 0);
+                // Player 2's Punched Blade already doubles their sword's own damage.
+                int repeats = (sRun.players[who].perks[PERK_DOUBLE_TAP] ? 1 : 0) +
+                              (who == 0 && Stations_PapSword() && player->meleeWeaponState != 0 ? 1 : 0);
                 if (repeats > 0 && health > 1) {
                     health = static_cast<s16>(std::max(1, health - damage * repeats));
                     actor->colChkInfo.health = static_cast<u8>(health);
                 }
-                AwardPoints(0, kPointsPerHit);
+                AwardPoints(who, kPointsPerHit);
                 enemy.lastHealth = health;
+                if (who == 1 && health > 0) {
+                    enemy.hitBy = 0; // used: Link's next hit is his own
+                }
             }
             if (health == 0) {
-                OnEnemyKilled(play, player, enemy);
+                OnEnemyKilled(play, player, enemy, who);
             }
         }
 
         if (!enemy.killCounted) {
-            float dist = actor->xzDistToPlayer;
+            Target target = TargetFor(actor, player);
+            float dist = target.dist;
 
             // Undead outside a barricade stay there, tearing boards, until the window is open.
             if (enemy.window >= 0 && Barricades_HoldEnemy(enemy, PullSpeed(enemy.tier) * slow)) {
@@ -536,7 +564,7 @@ static void UpdateEnemies(PlayState* play, Player* player) {
                     ForgetEnemy(i, true);
                     continue;
                 }
-                KeepHome(enemy, player);
+                KeepHome(enemy, target.pos);
                 enemy.lastPos = actor->world.pos;
                 i++;
                 continue;
@@ -562,16 +590,19 @@ static void UpdateEnemies(PlayState* play, Player* player) {
 
             // Horde Pull: OoT enemies idle until Link is close. Zombies always know where he is,
             // and walk, run or sprint at him depending on the round.
-            float stopDist = enemy.tier == MoveTier::Walk ? kPullStopDistWalk : kPullStopDistFast;
-            if (hordePull && dist > stopDist && actor->freezeTimer == 0) {
-                s16 yaw = actor->yawTowardsPlayer;
+            // Player 2 is only ours to chase: undead go all the way to them to swipe.
+            float stopDist = target.partner                 ? kPullStopDistPartner
+                             : enemy.tier == MoveTier::Walk ? kPullStopDistWalk
+                                                            : kPullStopDistFast;
+            if ((hordePull || target.partner) && dist > stopDist && actor->freezeTimer == 0) {
+                s16 yaw = target.yaw;
                 float speed = PullSpeed(enemy.tier) * slow;
                 actor->world.pos.x += Math_SinS(yaw) * speed;
                 actor->world.pos.z += Math_CosS(yaw) * speed;
                 actor->shape.rot.y = yaw;
             }
 
-            KeepHome(enemy, player);
+            KeepHome(enemy, target.pos);
         }
 
         enemy.lastPos = actor->world.pos;
@@ -579,7 +610,7 @@ static void UpdateEnemies(PlayState* play, Player* player) {
     }
 }
 
-static void KillAllEnemies(PlayState* play, bool explode) {
+static void KillAllEnemies(PlayState* play, bool explode, int who = 0) {
     for (TrackedEnemy& enemy : sRun.enemies) {
         if (enemy.actor->update == nullptr) {
             continue;
@@ -588,7 +619,7 @@ static void KillAllEnemies(PlayState* play, bool explode) {
             Vec3f zero = { 0, 0, 0 };
             EffectSsBomb2_SpawnLayered(play, &enemy.actor->world.pos, &zero, &zero, 100, 19);
             enemy.killCounted = true;
-            sRun.players[0].kills++;
+            sRun.players[who].kills++;
         }
         Actor_Kill(enemy.actor);
     }
@@ -653,23 +684,26 @@ void RefillAmmo() {
     }
 }
 
-static void ActivatePowerUp(PlayState* play, PowerUp type) {
+static void ActivatePowerUp(PlayState* play, PowerUp type, int who) {
     Announce(PowerUpName(type));
     Sfx_PlaySfxCentered(NA_SE_SY_GET_ITEM);
 
     switch (type) {
         case PowerUp::MaxAmmo:
             RefillAmmo();
+            if (sRun.partner.bombBag) {
+                Coop_GiveBombs(Coop_MaxBombs());
+            }
             break;
         case PowerUp::Nuke:
-            KillAllEnemies(play, true);
+            KillAllEnemies(play, true, who);
             Sfx_PlaySfxCentered(NA_SE_IT_BOMB_EXPLOSION);
-            AwardPoints(0, kPointsNuke);
+            AwardPoints(who, kPointsNuke);
             break;
         case PowerUp::Carpenter:
             Barricades_RepairAll();
             Sfx_PlaySfxCentered(NA_SE_EV_WOOD_HIT);
-            AwardPoints(0, kPointsCarpenter);
+            AwardPoints(who, kPointsCarpenter);
             break;
         default:
             sRun.powerUpFrames[static_cast<int>(type)] = kPowerUpSeconds * kFps;
@@ -686,8 +720,19 @@ static void UpdateDrops(PlayState* play, Player* player) {
             bool pickedUp = Math_Vec3f_DistXZ(&drop.actor->world.pos, &player->actor.world.pos) < 60.0f;
             sRun.drops.erase(sRun.drops.begin() + i);
             if (pickedUp) {
-                ActivatePowerUp(play, type);
+                ActivatePowerUp(play, type, 0);
             }
+            continue;
+        }
+        // Player 2 picks drops up by walking over them; the drop itself only knows Link.
+        if (Coop_Active() && sRun.partner.actor != nullptr && !sRun.partner.downed && !sRun.partner.bledOut &&
+            Math_Vec3f_DistXZ(&drop.actor->world.pos, &sRun.partner.actor->world.pos) < 40.0f &&
+            fabsf(drop.actor->world.pos.y - sRun.partner.actor->world.pos.y) < 60.0f) {
+            PowerUp type = drop.type;
+            Actor* actor = drop.actor;
+            sRun.drops.erase(sRun.drops.begin() + i);
+            Actor_Kill(actor);
+            ActivatePowerUp(play, type, 1);
             continue;
         }
         drop.framesLeft--;
@@ -743,6 +788,12 @@ static void StartRound(int round) {
     }
 
     Extras_OnRoundStart(sRun.dogRound);
+    if (gPlayState != nullptr) {
+        Coop_OnRoundStart(gPlayState, GET_PLAYER(gPlayState));
+        if (round > 1 && sRun.partner.bombBag) {
+            Coop_GiveBombs(2);
+        }
+    }
 
     sRun.spawnTimer = 2 * kFps;
     sRun.phase = Phase::Active;
@@ -801,8 +852,10 @@ static void StartRun(PlayState* play, Player* player) {
     sRun.sceneNum = play->sceneNum;
     sRun.origin = player->actor.world.pos;
     sRun.originYaw = player->actor.shape.rot.y;
-    sRun.playerCount = 1;
-    sRun.players[0].points = CVarGetInteger(CVAR_ZOMBIES("StartingPoints"), kStartingPoints);
+    sRun.playerCount = Coop_Enabled() ? 2 : 1;
+    for (int i = 0; i < sRun.playerCount; i++) {
+        sRun.players[i].points = CVarGetInteger(CVAR_ZOMBIES("StartingPoints"), kStartingPoints);
+    }
     int startRound = std::max(CVarGetInteger(CVAR_ZOMBIES("StartingRound"), 1), 1);
     sRun.nextDogRound = FirstDogRound(Rand_ZeroOne()) + startRound - 1;
 
@@ -817,6 +870,7 @@ static void StartRun(PlayState* play, Player* player) {
     Stations_Place(play);
     Barricades_Place(play);
     Extras_OnRunStart(play);
+    Coop_StartRun(play, player);
 
     Announce(sRun.layout != nullptr ? sRun.layout->name : "ZOMBIES OF TIME", 4);
     Sfx_PlaySfxCentered(NA_SE_VO_NAVY_HELLO);
@@ -846,6 +900,7 @@ static void EndRun(const std::string& reason, bool linkIsDead) {
     sRun.drops.clear();
     Stations_Clear();
     Extras_OnRunEnd(gPlayState, linkIsDead);
+    Coop_EndRun(gPlayState);
 
     // Zombies Only hands out a fresh loadout every run, so it always puts the file back.
     if (sRun.zombiesOnly || !CVarOn(CVAR_ZOMBIES("KeepItems"), 0)) {
@@ -854,8 +909,9 @@ static void EndRun(const std::string& reason, bool linkIsDead) {
         DiscardSnapshot();
     }
 
+    bool coop = sRun.playerCount >= 2;
     Lobby_SetResults(reason, survived, sRun.players[0].kills, sRun.players[0].totalEarned,
-                     counts && survived > previousBest);
+                     coop ? sRun.players[1].kills : -1, sRun.players[1].totalEarned, counts && survived > previousBest);
     sRun.phase = Phase::GameOver;
     sRun.phaseTimer = (ZombiesOnly() ? 4 : 8) * kFps;
     Announce(reason + ": YOU SURVIVED " + std::to_string(survived) + (survived == 1 ? " ROUND" : " ROUNDS"), 8);
@@ -892,6 +948,23 @@ bool BuyHeld(PlayState* play) {
     return CHECK_BTN_ALL(play->state.input[0].cur.button, BuyButton());
 }
 
+int GetBuyers(PlayState* play, Player* player, Buyer* out) {
+    int count = 0;
+    if (!sRun.linkDown.downed && !sRun.linkDown.bledOut) {
+        Buyer& link = out[count++];
+        link.index = 0;
+        link.pos = player->actor.world.pos;
+        link.pressed = BuyPressed(play);
+        link.held = BuyHeld(play);
+        link.busy = Player_InCsMode(play);
+        link.prompt = &sRun.prompt;
+    }
+    if (Coop_Buyer(play, &out[count])) {
+        count++;
+    }
+    return count;
+}
+
 static void OnGameStateMainStart() {
     PlayState* play = gPlayState;
     Pause_OnMainStart(play);
@@ -899,6 +972,7 @@ static void OnGameStateMainStart() {
         sBuyPressed = false;
         return;
     }
+    Coop_OnMainStart(play);
     Input& input = play->state.input[0];
     sBuyPressed = CHECK_BTN_ALL(input.press.button, BuyButton());
     if (IsRunActive() && BuyButton() == BTN_L) {
@@ -956,7 +1030,10 @@ static void OnPlayerUpdate() {
             break;
     }
 
-    if (LinkIsDying(play)) {
+    // Co-op: Link goes down for player 2 to revive instead of dying.
+    if (play->gameOverCtx.state == GAMEOVER_DEATH_START && Coop_OnLinkDeath(play, player)) {
+        // handled
+    } else if (LinkIsDying(play)) {
         EndRun("GAME OVER", true);
         return;
     }
@@ -975,6 +1052,9 @@ static void OnPlayerUpdate() {
         sRun.stormFrames--;
     }
 
+    sRun.prompt.clear();
+    sRun.partner.prompt.clear();
+    Coop_Update(play, player);
     UpdateEnemies(play, player);
     UpdateDrops(play, player);
     if (sRun.players[0].perks[PERK_FAIRY_REVIVE] && !Inventory_HasSpecificBottle(ITEM_FAIRY)) {
@@ -1018,6 +1098,7 @@ static void OnActorDestroy(void* refActor) {
     Actor* actor = static_cast<Actor*>(refActor);
     Stations_OnActorDestroy(actor);
     Extras_OnActorDestroy(actor);
+    Coop_OnActorDestroy(actor);
     for (size_t i = 0; i < sRun.enemies.size(); i++) {
         if (sRun.enemies[i].actor == actor) {
             ForgetEnemy(i, !sRun.enemies[i].killCounted);
@@ -1048,6 +1129,7 @@ static void OnSceneInit(int16_t sceneNum) {
     // Same scene reloaded (a void out or a room reset): every actor was unloaded.
     sRun.enemies.clear();
     sRun.drops.clear();
+    sRun.partner.actor = nullptr; // Coop_Update spawns player 2 again
     Extras_OnSceneReload();
     sStationsNeedPlacing = true;
 }
@@ -1110,7 +1192,9 @@ static void AbandonRun() {
     if (IsRunActive()) {
         sRun.enemies.clear();
         sRun.drops.clear();
+        sRun.partner.actor = nullptr;
         Stations_Forget();
+        Coop_Reset();
         Extras_OnSceneReload();
         RestoreSnapshot(false, false);
     }
@@ -1171,6 +1255,9 @@ static void RegisterZombies() {
         EndRun("ZOMBIES OFF", false);
         sRun.phase = Phase::Inactive;
     }
+    if (!enabled) {
+        Coop_Reset();
+    }
     if (!ZombiesOnly()) {
         Lobby_Close(gPlayState);
         // Switched off before any map changed Link's age: nothing to put back later.
@@ -1194,7 +1281,11 @@ static void RegisterZombies() {
     COND_HOOK(OnSceneInit, enabled, OnSceneInit);
     COND_HOOK(OnOcarinaSongAction, enabled, OnOcarinaSong);
     COND_HOOK(OnGameFrameUpdate, enabled, OnGameFrameUpdate);
-    COND_HOOK(OnPlayDrawEnd, enabled, Barricades_Draw);
+    COND_HOOK(OnPlayDrawBegin, enabled, Coop_DrawBegin);
+    COND_HOOK(OnPlayDrawEnd, enabled, [] {
+        Barricades_Draw();
+        Coop_DrawEnd();
+    });
     COND_HOOK(OnExitGame, enabled, [](int32_t) { AbandonRun(); });
     COND_HOOK(OnGameStateMainStart, enabled, OnGameStateMainStart);
 
@@ -1208,7 +1299,7 @@ static void RegisterZombies() {
                 *should = false;
                 Actor_Kill(item);
                 if (gPlayState != nullptr) {
-                    ActivatePowerUp(gPlayState, type);
+                    ActivatePowerUp(gPlayState, type, 0);
                 }
                 break;
             }

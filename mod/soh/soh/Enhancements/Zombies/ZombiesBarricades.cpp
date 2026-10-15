@@ -253,40 +253,53 @@ void Barricades_Update(PlayState* play, Player* player) {
         w.beingTorn = false;
     }
 
-    // Repairs: the nearest damaged window in reach, unless a station prompt is already up.
-    Window* nearest = nullptr;
-    float nearestDist = kRepairRange;
-    for (Window& w : run.windows) {
-        float dist = Math_Vec3f_DistXZ(&w.pos, &player->actor.world.pos);
-        if (w.boards < kBoardsPerWindow && dist < nearestDist && fabsf(w.pos.y - player->actor.world.pos.y) < 60.0f &&
-            Arena_ZoneOpen(w.zone)) {
-            nearest = &w;
-            nearestDist = dist;
+    // Repairs: the nearest damaged window in reach of each player, unless a station
+    // prompt is already up for them.
+    Buyer buyers[2];
+    int count = GetBuyers(play, player, buyers);
+    Window* repairing[2] = {};
+    for (int b = 0; b < count; b++) {
+        const Buyer& buyer = buyers[b];
+        Vec3f buyerPos = buyer.pos;
+        float nearestDist = kRepairRange;
+        for (Window& w : run.windows) {
+            float dist = Math_Vec3f_DistXZ(&w.pos, &buyerPos);
+            if (w.boards < kBoardsPerWindow && dist < nearestDist && fabsf(w.pos.y - buyer.pos.y) < 60.0f &&
+                Arena_ZoneOpen(w.zone)) {
+                repairing[b] = &w;
+                nearestDist = dist;
+            }
+        }
+        if (repairing[b] != nullptr && !buyer.prompt->empty()) {
+            repairing[b] = nullptr;
         }
     }
     for (Window& w : run.windows) {
-        if (&w != nearest) {
+        if (&w != repairing[0] && &w != repairing[1]) {
             w.repairTimer = 0;
         }
     }
-    if (nearest == nullptr || !run.prompt.empty()) {
-        return;
-    }
-
-    run.prompt = std::string("HOLD ") + BuyButtonName() + ": REPAIR BARRIER";
-    if (!BuyHeld(play) || Player_InCsMode(play)) {
-        nearest->repairTimer = 0;
-        return;
-    }
-    if (++nearest->repairTimer >= kRepairFrames) {
-        nearest->repairTimer = 0;
-        nearest->boards++;
-        int points = RepairPoints(run.repairPointsThisRound);
-        if (points > 0) {
-            run.repairPointsThisRound += points;
-            AwardPoints(0, points);
+    for (int b = 0; b < count; b++) {
+        Window* nearest = repairing[b];
+        const Buyer& buyer = buyers[b];
+        if (nearest == nullptr || (b == 1 && nearest == repairing[0])) {
+            continue; // both at one window: it goes up at one player's pace
         }
-        SoundSource_PlaySfxAtFixedWorldPos(play, &nearest->pos, 20, NA_SE_EV_WOOD_HIT);
+        *buyer.prompt = std::string("HOLD ") + (buyer.index == 0 ? BuyButtonName() : "A") + ": REPAIR BARRIER";
+        if (!buyer.held || buyer.busy) {
+            nearest->repairTimer = 0;
+            continue;
+        }
+        if (++nearest->repairTimer >= kRepairFrames) {
+            nearest->repairTimer = 0;
+            nearest->boards++;
+            int points = RepairPoints(run.repairPointsThisRound);
+            if (points > 0) {
+                run.repairPointsThisRound += points;
+                AwardPoints(buyer.index, points);
+            }
+            SoundSource_PlaySfxAtFixedWorldPos(play, &nearest->pos, 20, NA_SE_EV_WOOD_HIT);
+        }
     }
 }
 

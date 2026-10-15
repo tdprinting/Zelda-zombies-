@@ -82,7 +82,7 @@ enum class Screen {
     Controls,
 };
 
-enum MainItem { MAIN_PLAY, MAIN_MAP, MAIN_AGE, MAIN_ROUND, MAIN_CONTROLS, MAIN_QUIT, MAIN_COUNT };
+enum MainItem { MAIN_PLAY, MAIN_MAP, MAIN_AGE, MAIN_PLAYERS, MAIN_ROUND, MAIN_CONTROLS, MAIN_QUIT, MAIN_COUNT };
 enum PauseItem { PAUSE_RESUME, PAUSE_ITEMS, PAUSE_CONTROLS, PAUSE_END, PAUSE_COUNT };
 
 struct Results {
@@ -91,6 +91,8 @@ struct Results {
     int rounds = 0;
     int kills = 0;
     int points = 0;
+    int p2Kills = -1; // -1: one player
+    int p2Points = 0;
     bool newBest = false;
 };
 
@@ -140,6 +142,15 @@ static void ChangeRound(int delta) {
     SaveSettings();
 }
 
+static int Players() {
+    return CVarGetInteger(CVAR_ZOMBIES("Players"), 1) >= 2 ? 2 : 1;
+}
+
+static void TogglePlayers() {
+    CVarSetInteger(CVAR_ZOMBIES("Players"), Players() == 1 ? 2 : 1);
+    SaveSettings();
+}
+
 static bool ToggleAge() {
     if (kMaps[MapIndex()].requiredAge >= 0) {
         return false;
@@ -158,8 +169,9 @@ bool Pause_IsOpen() {
     return sScreen == Screen::Pause || (sScreen == Screen::Controls && sControlsReturn == Screen::Pause);
 }
 
-void Lobby_SetResults(const std::string& reason, int rounds, int kills, int points, bool newBest) {
-    sResults = { true, reason, rounds, kills, points, newBest };
+void Lobby_SetResults(const std::string& reason, int rounds, int kills, int points, int p2Kills, int p2Points,
+                      bool newBest) {
+    sResults = { true, reason, rounds, kills, points, p2Kills, p2Points, newBest };
 }
 
 // Taps arrive from the draw, outside the game's update: take them only when the game
@@ -279,6 +291,9 @@ static void Activate(PlayState* play, int item) {
                         return;
                     }
                     break;
+                case MAIN_PLAYERS:
+                    TogglePlayers();
+                    break;
                 case MAIN_ROUND:
                     ChangeRound(1);
                     break;
@@ -328,6 +343,9 @@ static void Adjust(int item, int delta) {
                 Sfx_PlaySfxCentered(NA_SE_SY_ERROR);
                 return;
             }
+            break;
+        case MAIN_PLAYERS:
+            TogglePlayers();
             break;
         case MAIN_ROUND:
             ChangeRound(delta);
@@ -677,11 +695,12 @@ class LobbyWindow final : public Ship::GuiWindow {
             std::string("MAP      < ") + map.shortName + " >",
             std::string("LINK     ") + (ageLocked ? "  " : "< ") + (ChosenAge() == LINK_AGE_CHILD ? "CHILD" : "ADULT") +
                 (ageLocked ? "" : " >"),
+            std::string("PLAYERS  < ") + (Players() == 2 ? "2 SPLIT SCREEN" : "1") + " >",
             "ROUND    < " + std::to_string(CVarGetInteger(CVAR_ZOMBIES("StartingRound"), 1)) + " >",
             "CONTROLS",
             "QUIT TO TITLE",
         };
-        DrawList(labels, { false, false, ageLocked, false, false, false });
+        DrawList(labels, { false, false, ageLocked, false, false, false, false });
 
         // Map intel, right.
         float right = size.x * 0.58f;
@@ -712,8 +731,15 @@ class LobbyWindow final : public Ship::GuiWindow {
             ImGui::TextColored(kWhite, "%d", value);
             y += 44.0f * scale;
         };
-        row("KILLS", sResults.kills);
-        row("POINTS EARNED", sResults.points);
+        if (sResults.p2Kills >= 0) {
+            row("PLAYER 1 KILLS", sResults.kills);
+            row("PLAYER 1 POINTS", sResults.points);
+            row("PLAYER 2 KILLS", sResults.p2Kills);
+            row("PLAYER 2 POINTS", sResults.p2Points);
+        } else {
+            row("KILLS", sResults.kills);
+            row("POINTS EARNED", sResults.points);
+        }
         row("BEST ROUND", CVarGetInteger(CVAR_ZOMBIES("BestRound"), 0));
         if (sResults.newBest) {
             ImGui::SetCursorPos(ImVec2(80.0f * scale, y + 10.0f * scale));
@@ -745,6 +771,12 @@ class LobbyWindow final : public Ship::GuiWindow {
         ImGui::TextColored(kWhite, "POINTS  %d", run.players[0].points);
         ImGui::SetCursorPosX(right);
         ImGui::TextColored(kWhite, "KILLS   %d", run.players[0].kills);
+        if (run.playerCount >= 2) {
+            ImGui::SetCursorPosX(right);
+            ImGui::TextColored(kWhite, "P2 POINTS  %d", run.players[1].points);
+            ImGui::SetCursorPosX(right);
+            ImGui::TextColored(kWhite, "P2 KILLS   %d", run.players[1].kills);
+        }
         ImGui::SetCursorPosX(right);
         ImGui::PushTextWrapPos(size.x - 60.0f * scale);
         ImGui::TextColored(kGrey, "Ending the run counts it as a game over. Your real save is put back either way.");
@@ -766,6 +798,8 @@ class LobbyWindow final : public Ship::GuiWindow {
             { "SONG OF STORMS", "Slows the horde for 20 seconds." },
             { "GOLD TORCH", "Mystery Chest. Wooden torches: Armory, Fairy Fountain, power." },
             { "STONE TORCHES", "Perks and Pack-a-Punch. Dark until the power is on." },
+            { "PLAYER 2", "Controller 2. Stick: move. B: sword. R: bomb. A: buy, repair, revive." },
+            { "PLAYER 2 CAMERA", "Right stick or C-left/C-right turns it. Z: behind you." },
         };
         ImGui::SetWindowFontScale(1.15f * scale);
         float y = 170.0f * scale;
@@ -778,7 +812,7 @@ class LobbyWindow final : public Ship::GuiWindow {
             }
             ImGui::SetCursorPos(ImVec2(300.0f * scale, y));
             ImGui::TextColored(kWhite, "%s", line[1]);
-            y += 34.0f * scale;
+            y += 30.0f * scale;
         }
         ImGui::SetCursorPos(ImVec2(60.0f * scale, y + 6.0f * scale));
         ImGui::SetWindowFontScale(1.6f * scale);

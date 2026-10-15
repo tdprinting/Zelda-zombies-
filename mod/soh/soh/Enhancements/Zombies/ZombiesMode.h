@@ -86,9 +86,54 @@ struct TrackedEnemy {
     s16 lastHealth;
     Vec3f lastPos;
     bool killCounted;
-    float closestDist; // nearest it has come to Link since its last progress
-    int stuckFrames;   // frames without getting closer
-    int window = -1;   // barricade it is tearing through, or -1 once it is inside
+    float closestDist;  // nearest it has come to Link since its last progress
+    int stuckFrames;    // frames without getting closer
+    int window = -1;    // barricade it is tearing through, or -1 once it is inside
+    int hitBy = 0;      // player 2's last hit on it: 0 none, 1 sword, 2 bomb
+    int hitFrames = 0;  // frames since player 2 last hit it
+    int swipeTimer = 0; // frames until it can hit player 2 again
+};
+
+// Player 2 in split-screen co-op: a second Link with their own health, points and
+// weapons. Player 1 is the real Link and keeps the save's inventory.
+enum PartnerSword {
+    PARTNER_SWORD_KOKIRI,
+    PARTNER_SWORD_MASTER,
+    PARTNER_SWORD_BIGGORON,
+};
+
+struct Partner {
+    Actor* actor = nullptr;
+    int health = 48;
+    int healthCapacity = 48;
+    int sword = PARTNER_SWORD_KOKIRI;
+    bool papSword = false;
+    int bombs = 0;
+    bool bombBag = false; // bought bombs: the Armory refills them from then on
+    bool downed = false;
+    bool bledOut = false; // waits for the next round
+    int downFrames = 0;   // frames left before bleeding out
+    int reviveFrames = 0; // progress of player 1's revive
+    int invincible = 0;
+    std::string prompt;
+};
+
+// Player 1 downed in co-op (the real Link lies where he fell until revived).
+struct LinkDown {
+    bool downed = false;
+    bool bledOut = false;
+    int downFrames = 0;
+    int reviveFrames = 0;
+};
+
+// Someone at a station, window or debris pile this frame.
+struct Buyer {
+    int index = 0; // 0: Link, 1: player 2
+    Vec3f pos = {};
+    bool pressed = false;
+    bool held = false;
+    bool busy = false; // in a cutscene or a menu: can't buy
+    std::string* prompt = nullptr;
 };
 
 // A Black Ops window: boards between the outside, where undead spawn, and the arena.
@@ -125,6 +170,7 @@ struct Announcement {
 struct PointPopup {
     int amount;
     int framesLeft;
+    int player = 0;
 };
 
 struct Run {
@@ -168,6 +214,9 @@ struct Run {
     Announcement announcement;
     std::vector<PointPopup> popups;
     std::string prompt;
+
+    Partner partner;
+    LinkDown linkDown;
 };
 
 Run& GetRun();
@@ -185,6 +234,8 @@ void Announce(const std::string& text, int seconds = 3);
 const char* BuyButtonName();
 bool BuyPressed(PlayState* play);
 bool BuyHeld(PlayState* play);
+// Who can buy this frame: Link unless he's down, then player 2 in co-op. Returns how many (at most 2).
+int GetBuyers(PlayState* play, Player* player, Buyer* out);
 
 // Floor height under (x, z) within reach of refY, avoiding deep water.
 bool FloorAt(PlayState* play, float x, float z, float refY, float* outY);
@@ -245,6 +296,32 @@ void Stations_OnActorDestroy(Actor* actor);
 int Stations_BoxCost();
 bool Stations_PapSword(); // Pack-a-Punched blade: melee hits land twice
 
+// Split-screen co-op (ZombiesCoop.cpp)
+bool Coop_Enabled();   // the Players setting is 2
+bool Coop_Active();    // a co-op run is going
+bool Coop_SplitView(); // drawing two views this frame
+void Coop_StartRun(PlayState* play, Player* player);
+void Coop_EndRun(PlayState* play);
+void Coop_Reset(); // the run is gone without ending (reset, another file, mode off)
+void Coop_OnRoundStart(PlayState* play, Player* player);
+void Coop_Update(PlayState* play, Player* player);
+bool Coop_Buyer(PlayState* play, Buyer* out);
+// Where the horde should go: the nearest player still standing. Returns false if none.
+bool Coop_Target(const Vec3f& from, Vec3f* out, float* dist);
+// Player 1 just started dying: keep him down for a revive instead. Returns true if handled.
+bool Coop_OnLinkDeath(PlayState* play, Player* player);
+void Coop_OnMainStart(PlayState* play);
+void Coop_DrawBegin();
+void Coop_DrawEnd();
+void Coop_OnActorDestroy(Actor* actor);
+// The player whose hit just landed on this enemy: 1 if player 2's sword or bomb, else 0.
+int Coop_Credit(const TrackedEnemy& enemy);
+// Player 2's purchases (their own weapons, perks and health)
+void Coop_GiveSword(int sword);
+void Coop_GiveBombs(int count);
+void Coop_Heal();
+int Coop_MaxBombs();
+
 // HUD (ZombiesHud.cpp)
 void Hud_Draw();
 
@@ -263,7 +340,9 @@ bool Lobby_IsOpen();
 bool Pause_IsOpen();
 void Lobby_Close(PlayState* play);       // Zombies Only switched off
 void Pause_OnMainStart(PlayState* play); // every frame, before the game updates
-void Lobby_SetResults(const std::string& reason, int rounds, int kills, int points, bool newBest);
+// p2Kills < 0: a one player run.
+void Lobby_SetResults(const std::string& reason, int rounds, int kills, int points, int p2Kills, int p2Points,
+                      bool newBest);
 void Lobby_Update(PlayState* play, Player* player);
 void Lobby_OnSceneInit(s16 sceneNum);
 void Lobby_OnLoadGame();

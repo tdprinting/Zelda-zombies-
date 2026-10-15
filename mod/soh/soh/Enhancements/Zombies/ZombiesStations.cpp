@@ -607,11 +607,11 @@ bool Stations_ChestPlaced() {
     return sStations[static_cast<int>(StationType::MysteryChest)].placed;
 }
 
-static bool HasPerk(Perk perk) {
-    if (perk == PERK_FAIRY_REVIVE) {
+static bool HasPerk(int who, Perk perk) {
+    if (perk == PERK_FAIRY_REVIVE && who == 0) {
         return Inventory_HasSpecificBottle(ITEM_FAIRY);
     }
-    return GetRun().players[0].perks[perk];
+    return GetRun().players[who].perks[perk];
 }
 
 struct PerkInfo {
@@ -634,8 +634,21 @@ static PerkInfo PerkFor(StationType type) {
     }
 }
 
-static void ApplyPerk(Perk perk) {
-    PlayerState& ps = GetRun().players[0];
+static constexpr int kPartnerJuggernogHealth = 80; // five hearts
+
+static void ApplyPerk(int who, Perk perk) {
+    PlayerState& ps = GetRun().players[who];
+    ps.perks[perk] = true;
+    if (who == 1) {
+        // Player 2's perks live in their own state: Juggernog adds two hearts, Fairy Revive
+        // is a self-revive, the rest are read where they act.
+        Partner& partner = GetRun().partner;
+        if (perk == PERK_JUGGERNOG) {
+            partner.healthCapacity = kPartnerJuggernogHealth;
+            partner.health = partner.healthCapacity;
+        }
+        return;
+    }
     switch (perk) {
         case PERK_JUGGERNOG:
             gSaveContext.isDoubleDefenseAcquired = true;
@@ -648,7 +661,6 @@ static void ApplyPerk(Perk perk) {
         default:
             break;
     }
-    ps.perks[perk] = true;
 }
 
 // ---------------------------------------------------------------------------
@@ -662,9 +674,48 @@ struct Offer {
     std::string unavailableReason;
 };
 
-static Offer GetOffer(const Station& station) {
+// Player 2's wall buys and chest: swords and bombs, their own.
+static constexpr int kPartnerMasterSwordCost = 1500;
+static constexpr int kPartnerBombsCost = 1000;
+static constexpr int kPartnerFountainCost = 500;
+static constexpr int kPartnerBombsPerBuy = 10;
+
+struct PartnerChestPrize {
+    const char* name;
+    int weight;
+    void (*give)();
+};
+
+static const PartnerChestPrize kPartnerChest[] = {
+    { "MASTER SWORD", 3, [] { Coop_GiveSword(PARTNER_SWORD_MASTER); } },
+    { "BIGGORON SWORD", 1, [] { Coop_GiveSword(PARTNER_SWORD_BIGGORON); } },
+    { "BOMBS", 4,
+      [] {
+          GetRun().partner.bombBag = true;
+          Coop_GiveBombs(Coop_MaxBombs());
+      } },
+    { "FAIRY", 2, [] { Coop_Heal(); } },
+};
+
+static const PartnerChestPrize& RollPartnerChest() {
+    int total = 0;
+    for (const PartnerChestPrize& prize : kPartnerChest) {
+        total += prize.weight;
+    }
+    int roll = std::min(static_cast<int>(Rand_ZeroOne() * static_cast<float>(total)), total - 1);
+    for (const PartnerChestPrize& prize : kPartnerChest) {
+        if (roll < prize.weight) {
+            return prize;
+        }
+        roll -= prize.weight;
+    }
+    return kPartnerChest[0];
+}
+
+static Offer GetOffer(const Station& station, int who) {
     Offer offer;
     const Run& run = GetRun();
+    const Partner& partner = run.partner;
 
     if (NeedsPower(station.type) && !run.powerOn) {
         offer.available = false;
@@ -673,6 +724,23 @@ static Offer GetOffer(const Station& station) {
 
     switch (station.type) {
         case StationType::Armory: {
+            if (who == 1) {
+                if (partner.sword < PARTNER_SWORD_MASTER) {
+                    offer.label = "MASTER SWORD";
+                    offer.cost = kPartnerMasterSwordCost;
+                } else if (!partner.bombBag) {
+                    offer.label = "BOMBS";
+                    offer.cost = kPartnerBombsCost;
+                } else {
+                    offer.label = "BOMBS";
+                    offer.cost = kAmmoCost;
+                    if (partner.bombs >= Coop_MaxBombs()) {
+                        offer.available = false;
+                        offer.unavailableReason = "FULL";
+                    }
+                }
+                break;
+            }
             const WeaponOffer* weapon = ArmoryOffer();
             if (weapon != nullptr) {
                 offer.label = weapon->name;
@@ -694,10 +762,10 @@ static Offer GetOffer(const Station& station) {
             PerkInfo info = PerkFor(station.type);
             offer.label = info.name;
             offer.cost = info.cost;
-            if (HasPerk(info.perk)) {
+            if (HasPerk(who, info.perk)) {
                 offer.available = false;
                 offer.unavailableReason = "OWNED";
-            } else if (info.perk == PERK_FAIRY_REVIVE && FairyBottleSlot() < 0) {
+            } else if (who == 0 && info.perk == PERK_FAIRY_REVIVE && FairyBottleSlot() < 0) {
                 offer.available = false;
                 offer.unavailableReason = "NO BOTTLE FREE";
             }
@@ -718,6 +786,13 @@ static Offer GetOffer(const Station& station) {
             if (offer.available && PapNeedsLullaby()) {
                 offer.available = false;
                 offer.unavailableReason = "PLAY ZELDA'S LULLABY";
+            } else if (offer.available && who == 1) {
+                if (partner.papSword) {
+                    offer.available = false;
+                    offer.unavailableReason = "NOTHING TO UPGRADE";
+                } else {
+                    offer.label += ": PUNCHED BLADE";
+                }
             } else if (offer.available) {
                 PapUpgrade upgrade = FindPapUpgrade();
                 if (upgrade.apply == nullptr) {
@@ -731,7 +806,11 @@ static Offer GetOffer(const Station& station) {
         }
         case StationType::FairyFountain:
             offer.label = "FAIRY FOUNTAIN";
-            offer.rupeeCost = kFountainRupees;
+            if (who == 1) {
+                offer.cost = kPartnerFountainCost; // player 2 has no rupees
+            } else {
+                offer.rupeeCost = kFountainRupees;
+            }
             break;
         default:
             break;
@@ -743,7 +822,52 @@ static void Fail() {
     Sfx_PlaySfxCentered(NA_SE_SY_ERROR);
 }
 
-static void Buy(PlayState* play, Station& station, const Offer& offer) {
+// Player 2's side of the stations that give them something of their own. Returns false
+// for the ones that work the same for both (power, perks, the chest moving).
+static bool BuyForPartner(PlayState* play, Station& station, const Offer& offer) {
+    Partner& partner = GetRun().partner;
+    switch (station.type) {
+        case StationType::Armory:
+            if (partner.sword < PARTNER_SWORD_MASTER) {
+                Coop_GiveSword(PARTNER_SWORD_MASTER);
+                Announce("PLAYER 2: MASTER SWORD", 3);
+            } else {
+                partner.bombBag = true;
+                Coop_GiveBombs(kPartnerBombsPerBuy);
+            }
+            Sfx_PlaySfxCentered(NA_SE_SY_GET_ITEM);
+            return true;
+        case StationType::MysteryChest: {
+            sChestUses++;
+            if (sChestUses > 4 && !PowerUpActive(PowerUp::FireSale) && Rand_ZeroOne() < 1.0f / 6.0f) {
+                GetRun().players[1].points += offer.cost; // refund, not earnings
+                Announce("THE CHEST MOVED", 3);
+                Sfx_PlaySfxCentered(NA_SE_VO_SK_LAUGH);
+                MoveChest(play);
+                sChestUses = 0;
+                return true;
+            }
+            const PartnerChestPrize& prize = RollPartnerChest();
+            prize.give();
+            Announce(std::string("PLAYER 2: ") + prize.name, 3);
+            Sfx_PlaySfxCentered(NA_SE_SY_GET_BOXITEM);
+            return true;
+        }
+        case StationType::PackAPunch:
+            partner.papSword = true;
+            Announce("PLAYER 2: PUNCHED BLADE", 3);
+            Sfx_PlaySfxCentered(NA_SE_SY_GET_ITEM);
+            return true;
+        case StationType::FairyFountain:
+            Coop_Heal();
+            Sfx_PlaySfxCentered(NA_SE_EV_FIATY_HEAL);
+            return true;
+        default:
+            return false;
+    }
+}
+
+static void Buy(PlayState* play, Station& station, const Offer& offer, int who) {
     if (!offer.available) {
         Fail();
         return;
@@ -755,12 +879,15 @@ static void Buy(PlayState* play, Station& station, const Offer& offer) {
             return;
         }
         Rupees_ChangeBy(static_cast<s16>(-offer.rupeeCost));
-    } else if (!SpendPoints(0, offer.cost)) {
+    } else if (!SpendPoints(who, offer.cost)) {
         Fail();
         return;
     }
 
     Run& run = GetRun();
+    if (who == 1 && BuyForPartner(play, station, offer)) {
+        return;
+    }
     switch (station.type) {
         case StationType::Armory: {
             const WeaponOffer* weapon = ArmoryOffer();
@@ -776,7 +903,7 @@ static void Buy(PlayState* play, Station& station, const Offer& offer) {
             sChestUses++;
             // The Keaton laugh is our teddy bear: after a few uses the chest may move on.
             if (sChestUses > 4 && !PowerUpActive(PowerUp::FireSale) && Rand_ZeroOne() < 1.0f / 6.0f) {
-                run.players[0].points += offer.cost; // refund, not earnings: no Double Points
+                run.players[who].points += offer.cost; // refund, not earnings: no Double Points
                 Announce("THE CHEST MOVED", 3);
                 Sfx_PlaySfxCentered(NA_SE_VO_SK_LAUGH);
                 MoveChest(play);
@@ -794,7 +921,7 @@ static void Buy(PlayState* play, Station& station, const Offer& offer) {
         case StationType::DoubleTap:
         case StationType::StaminUp: {
             PerkInfo info = PerkFor(station.type);
-            ApplyPerk(info.perk);
+            ApplyPerk(who, info.perk);
             Announce(info.name, 3);
             Sfx_PlaySfxCentered(NA_SE_SY_GET_ITEM);
             break;
@@ -826,25 +953,19 @@ static void Buy(PlayState* play, Station& station, const Offer& offer) {
     }
 }
 
-void Stations_Update(PlayState* play, Player* player) {
-    Run& run = GetRun();
-    run.prompt.clear();
-
-    // Sun's Song can switch the power on from anywhere; keep the torches in step.
-    static bool lastPowerOn = false;
-    if (run.powerOn != lastPowerOn) {
-        lastPowerOn = run.powerOn;
-        RelightTorches();
+static void UpdateBuyer(PlayState* play, const Buyer& buyer) {
+    if (!buyer.prompt->empty()) {
+        return; // a revive prompt comes first
     }
-
     Station* nearest = nullptr;
     float nearestDist = kInteractDist;
+    Vec3f buyerPos = buyer.pos;
     for (Station& station : sStations) {
         if (!station.placed) {
             continue;
         }
-        float dist = Math_Vec3f_DistXZ(&station.pos, &player->actor.world.pos);
-        if (dist < nearestDist && fabsf(station.pos.y - player->actor.world.pos.y) < 80.0f) {
+        float dist = Math_Vec3f_DistXZ(&station.pos, &buyerPos);
+        if (dist < nearestDist && fabsf(station.pos.y - buyer.pos.y) < 80.0f) {
             nearest = &station;
             nearestDist = dist;
         }
@@ -853,20 +974,38 @@ void Stations_Update(PlayState* play, Player* player) {
         return;
     }
 
-    Offer offer = GetOffer(*nearest);
-    std::string button = BuyButtonName();
+    Offer offer = GetOffer(*nearest, buyer.index);
+    std::string button = buyer.index == 0 ? BuyButtonName() : "A";
+    std::string& prompt = *buyer.prompt;
     if (!offer.available) {
-        run.prompt = offer.label + " - " + offer.unavailableReason;
+        prompt = offer.label + " - " + offer.unavailableReason;
     } else if (offer.rupeeCost > 0) {
-        run.prompt = button + ": " + offer.label + " [" + std::to_string(offer.rupeeCost) + " RUPEES]";
+        prompt = button + ": " + offer.label + " [" + std::to_string(offer.rupeeCost) + " RUPEES]";
     } else if (offer.cost > 0) {
-        run.prompt = button + ": " + offer.label + " [" + std::to_string(offer.cost) + "]";
+        prompt = button + ": " + offer.label + " [" + std::to_string(offer.cost) + "]";
     } else {
-        run.prompt = button + ": " + offer.label;
+        prompt = button + ": " + offer.label;
     }
 
-    if (BuyPressed(play) && !Player_InCsMode(play)) {
-        Buy(play, *nearest, offer);
+    if (buyer.pressed && !buyer.busy) {
+        Buy(play, *nearest, offer, buyer.index);
+    }
+}
+
+void Stations_Update(PlayState* play, Player* player) {
+    Run& run = GetRun();
+
+    // Sun's Song can switch the power on from anywhere; keep the torches in step.
+    static bool lastPowerOn = false;
+    if (run.powerOn != lastPowerOn) {
+        lastPowerOn = run.powerOn;
+        RelightTorches();
+    }
+
+    Buyer buyers[2];
+    int count = GetBuyers(play, player, buyers);
+    for (int i = 0; i < count; i++) {
+        UpdateBuyer(play, buyers[i]);
     }
 }
 

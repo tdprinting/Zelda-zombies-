@@ -316,17 +316,17 @@ void Arena_Start(PlayState* play) {
     }
 }
 
-void Arena_Update(PlayState* play, Player* player) {
+static void UpdateBuyer(PlayState* play, const Buyer& buyer) {
     Run& run = GetRun();
-    if (run.layout == nullptr || !run.prompt.empty()) {
+    if (!buyer.prompt->empty()) {
         return;
     }
-
     Debris* nearest = nullptr;
     float nearestDist = kDebrisReach;
+    Vec3f buyerPos = buyer.pos;
     for (Debris& d : run.debris) {
-        float dist = Math_Vec3f_DistXZ(&d.pos, &player->actor.world.pos);
-        if (dist < nearestDist && fabsf(d.pos.y - player->actor.world.pos.y) < 80.0f) {
+        float dist = Math_Vec3f_DistXZ(&d.pos, &buyerPos);
+        if (dist < nearestDist && fabsf(d.pos.y - buyer.pos.y) < 80.0f) {
             nearest = &d;
             nearestDist = dist;
         }
@@ -336,11 +336,12 @@ void Arena_Update(PlayState* play, Player* player) {
     }
 
     const LayoutZone& zone = run.layout->zones[nearest->zone];
-    run.prompt = std::string(BuyButtonName()) + ": CLEAR DEBRIS [" + std::to_string(zone.cost) + "]";
-    if (!BuyPressed(play) || Player_InCsMode(play)) {
+    *buyer.prompt =
+        std::string(buyer.index == 0 ? BuyButtonName() : "A") + ": CLEAR DEBRIS [" + std::to_string(zone.cost) + "]";
+    if (!buyer.pressed || buyer.busy) {
         return;
     }
-    if (!SpendPoints(0, zone.cost)) {
+    if (!SpendPoints(buyer.index, zone.cost)) {
         Sfx_PlaySfxCentered(NA_SE_SY_ERROR);
         return;
     }
@@ -349,6 +350,17 @@ void Arena_Update(PlayState* play, Player* player) {
     Sfx_PlaySfxCentered(NA_SE_SY_CORRECT_CHIME);
     Announce(std::string(zone.name) + " OPEN", 3);
     OpenZone(play, nearest->zone);
+}
+
+void Arena_Update(PlayState* play, Player* player) {
+    if (GetRun().layout == nullptr) {
+        return;
+    }
+    Buyer buyers[2];
+    int count = GetBuyers(play, player, buyers);
+    for (int i = 0; i < count; i++) {
+        UpdateBuyer(play, buyers[i]);
+    }
 }
 
 } // namespace Zombies
