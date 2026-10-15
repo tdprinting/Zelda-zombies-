@@ -115,15 +115,16 @@ uint32_t sFrame = 0;
 void (*sLog)(const char*, const char*) = nullptr;
 std::atomic<void (*)(const int16_t*, uint32_t, uint32_t)> sCapture{ nullptr };
 
-// Shared with the audio thread, under sLock.
-std::mutex sLock;
-std::vector<Command> sCommands;
+// Shared with the audio thread, under sLock. The lock, the queue and the voices are never
+// destroyed: the audio thread can still be mixing while static destructors run at exit.
+std::mutex& sLock = *new std::mutex;
+std::vector<Command>& sCommands = *new std::vector<Command>;
 Listener sListeners[2];
 int sListenerCount = 0;
 float sVolume = 1.0f; // master and sound effects settings
 bool sMirror = false;
 // Audio thread only.
-std::vector<Voice> sVoices;
+std::vector<Voice>& sVoices = *new std::vector<Voice>;
 uint32_t sMixClock = 0;
 
 float Rand01() {
