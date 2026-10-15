@@ -50,6 +50,9 @@ struct LayoutSpot {
     float x;
     float z;
     float y = kNoHeight; // set on maps with floors above each other: the floor nearest this height
+    // A Black Ops window's own facing (into the room), in place of facing the zone's centre.
+    bool hasYaw = false;
+    s16 yaw = 0;
 
     static constexpr float kNoHeight = -32000.0f;
 };
@@ -57,6 +60,13 @@ struct LayoutSpot {
 struct LayoutStation {
     StationType type;
     LayoutSpot spot;
+};
+
+// A gun sold from its own spot on a wall (an imported map's wall buys), by its Black Ops
+// weapon name; "stielhandgranate" sells grenades (bombs).
+struct LayoutWallBuy {
+    LayoutSpot spot;
+    std::string boName;
 };
 
 struct LayoutZone {
@@ -67,12 +77,17 @@ struct LayoutZone {
     std::vector<LayoutSpot> windows;
     std::vector<LayoutStation> stations;
     std::vector<LayoutSpot> chestSpots; // where the Mystery Chest can move to
+    std::vector<LayoutWallBuy> wallBuys;
+    std::vector<LayoutSpot> moreDebris; // other ways in (Nacht's help room: from either room's stairs)
 };
 
 struct ArenaLayout {
     s16 sceneNum;
     const char* name;
     std::vector<LayoutZone> zones;
+    // An imported Black Ops map: its debris and doors are solid until bought, the undead
+    // find their way through its rooms (ZombiesNav.cpp), and it has no Wolfos rounds.
+    bool blackOps = false;
 };
 
 struct PlayerState {
@@ -92,6 +107,8 @@ struct TrackedEnemy {
     float closestDist;  // nearest it has come to Link since its last progress
     int stuckFrames;    // frames without getting closer
     int window = -1;    // barricade it is tearing through, or -1 once it is inside
+    int cameIn = -1;    // the barricade it came in by
+    bool climbing = false; // over a Black Ops window sill, on its way in
     int hitBy = 0;      // player 2's last hit on it: 0 none, 1 sword, 2 bomb, 3 gun
     int hitFrames = 0;  // frames since player 2 last hit it
     int swipeTimer = 0; // frames until it can swipe at anyone again
@@ -162,6 +179,7 @@ struct Debris {
     int zone;
     Vec3f pos;
     s16 yaw;
+    float radius = 0.0f; // on a Black Ops map: nothing passes within this of pos until it's cleared
 };
 
 struct ActiveDrop {
@@ -283,6 +301,8 @@ bool ZombieActor_Is(Actor* actor);
 bool ZombieActor_Busy(Actor* actor);
 void ZombieActor_SetTier(Actor* actor, MoveTier tier);
 void ZombieActor_SetTearing(Actor* actor, bool tearing);
+// Walls stop checking while it climbs through a window. False if it isn't our zombie actor.
+bool ZombieActor_SetClimbing(Actor* actor, bool climbing);
 void ZombieActor_Attack(Actor* actor);
 
 // A Black Ops map converted from the player's own install (ZombiesBoMap.cpp).
@@ -299,8 +319,25 @@ void BoMap_Update(PlayState* play);
 // ground from where Link started, so this allows more height difference than FloorAt.
 // justAbove: the spot has its own height a little above its floor (a Black Ops wall buy
 // hangs at chest height), so the floor right under it wins over one higher up.
-bool Arena_Resolve(PlayState* play, LayoutSpot spot, float refY, Vec3f* out, bool justAbove = false);
+bool Arena_Resolve(PlayState* play, LayoutSpot spot, float refY, Vec3f* out, bool justAbove = false,
+                   float lift = 60.0f);
+// Black Ops entities (windows, debris) sit about 25-30 above their floor, under a lintel.
+constexpr float kBoEntityLift = 10.0f;
 bool Arena_ZoneOpen(int zone);
+// A Black Ops map's closed debris and doors are solid: moves pos out of any it stands in.
+// Returns true if it moved.
+bool Arena_KeepOut(Vec3f* pos);
+// Undead find their way through a Black Ops map's rooms (ZombiesNav.cpp): a walk grid
+// built from the map's collision when the run starts, and a flow field toward the players.
+void Nav_Build(PlayState* play);
+void Nav_Clear();
+bool Nav_Ready();
+// The grid's size and how much of it the last scoring reached (for tests and debugging).
+void Nav_Stats(int* nodes, int* links, int* reached);
+void Nav_Update(PlayState* play);
+// Where an undead at from should head next to reach the nearest player, and how far it
+// has to walk. False when from isn't on the grid or nothing leads there.
+bool Nav_Steer(PlayState* play, const Vec3f& from, Vec3f* toward, float* pathDist);
 void Arena_Start(PlayState* play);
 void Arena_Update(PlayState* play, Player* player);
 void Arena_DrawDebris(PlayState* play);
@@ -338,6 +375,10 @@ struct ArmoryWares {
     int cost = 0;
 };
 bool Stations_ArmoryWares(Vec3f* pos, ArmoryWares* wares);
+// The map's own wall buys (an imported Black Ops map): how many, and what one sells. pos
+// is the spot on the wall.
+int Stations_WallBuyCount();
+bool Stations_WallBuyWares(int index, Vec3f* pos, ArmoryWares* wares);
 // Chalk outlines of the wall buys (ZombiesChalk.cpp), drawn with the world.
 void Chalk_Draw(PlayState* play);
 

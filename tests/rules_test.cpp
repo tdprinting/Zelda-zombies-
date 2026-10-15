@@ -301,6 +301,69 @@ static void TestGunTable() {
     EXPECT_EQ(GunInfo(GunId::Stakeout).wallCost, 1500);
     EXPECT_EQ(GunAmmoCost(GunId::M14, false), 250);
     EXPECT_EQ(GunAmmoCost(GunId::M14, true), kPapAmmoCost);
+    // Nacht der Untoten's wall guns at Black Ops' prices, sold from their own wall spots only.
+    EXPECT_EQ(GunInfo(GunId::Kar98k).wallCost, 200);
+    EXPECT_EQ(GunInfo(GunId::M1Carbine).wallCost, 600);
+    EXPECT_EQ(GunInfo(GunId::Thompson).wallCost, 1200);
+    EXPECT_EQ(GunInfo(GunId::DoubleBarrel).wallCost, 1200);
+    EXPECT_EQ(GunInfo(GunId::SawedOff).wallCost, 1200);
+    EXPECT_EQ(GunInfo(GunId::TrenchGun).wallCost, 1500);
+    EXPECT_EQ(GunInfo(GunId::BAR).wallCost, 1800);
+    for (GunId id : { GunId::Kar98k, GunId::M1Carbine, GunId::Thompson, GunId::DoubleBarrel, GunId::SawedOff,
+                      GunId::TrenchGun, GunId::BAR }) {
+        EXPECT_EQ(GunInfo(id).wallZone, -1);
+        EXPECT_EQ(GunInfo(id).boxWeight, 0);
+    }
+    // A map's wall buy names its gun with or without the zombies weapons' _zm suffix.
+    EXPECT_TRUE(GunByBoName("zombie_kar98k") == GunId::Kar98k);
+    EXPECT_TRUE(GunByBoName("zombie_doublebarrel") == GunId::DoubleBarrel);
+    EXPECT_TRUE(GunByBoName("zombie_doublebarrel_sawed") == GunId::SawedOff);
+    EXPECT_TRUE(GunByBoName("zombie_shotgun") == GunId::TrenchGun);
+    EXPECT_TRUE(GunByBoName("m14") == GunId::M14);
+    EXPECT_TRUE(GunByBoName("stielhandgranate") == GunId::None);
+    EXPECT_TRUE(GunByBoName(nullptr) == GunId::None);
+    // Kar98k: one head shot on round 1, as the bolt-action does.
+    EXPECT_TRUE(GunInfo(GunId::Kar98k).base.damage * GunInfo(GunId::Kar98k).headshot >= BoZombieHealth(1));
+}
+
+// High rounds: nothing overflows or stops growing sensibly however long a run goes.
+static void TestHighRounds() {
+    int last = 0;
+    for (int round = 1; round <= 255; round++) {
+        int count = ZombiesForRound(round, 1);
+        EXPECT_TRUE(count >= 1 && count < 100000);
+        EXPECT_TRUE(round <= 5 || count >= last);
+        last = count;
+        EXPECT_TRUE(ZombiesForRound(round, kMaxPlayers) >= count);
+        EXPECT_TRUE(SpawnDelaySeconds(round) >= 0.25f && SpawnDelaySeconds(round) <= 2.0f);
+        uint8_t hp = ScaleHealth(255, round, 200);
+        EXPECT_TRUE(hp >= 1);
+        EXPECT_TRUE(BoZombieHealth(round) >= 150);
+        EXPECT_TRUE(round == 1 || BoZombieHealth(round) >= BoZombieHealth(round - 1));
+        // A gun hit stays a finite, positive share of health at any round.
+        float share = BoDamageToHp(20.0f, 255, round, 100);
+        EXPECT_TRUE(share > 0.0f && share <= 255.0f * 20.0f / 150.0f);
+        EXPECT_TRUE(round < 9 || PickMoveTier(round, 0.0f) == MoveTier::Sprint);
+    }
+    // Black Ops: +100 a round to round 9, then x1.1 (rounded down) from round 10.
+    EXPECT_EQ(BoZombieHealth(30), [] {
+        int h = 950;
+        for (int r = 10; r <= 30; r++) {
+            h += h / 10;
+        }
+        return h;
+    }());
+    // Round 30's horde, solo: 24 + 3 * (6 * 4.5) = 105.
+    EXPECT_EQ(ZombiesForRound(30, 1), 105);
+    // The drop threshold grows 14% a drop: a run's whole points never push it past int.
+    DropTracker tracker;
+    int earned = 0;
+    for (int kill = 0; kill < 200000 && earned < 2000000000 - 1000; kill++) {
+        earned += 1000;
+        tracker.OnKill(earned, 0.5f);
+        tracker.NewRound();
+        EXPECT_TRUE(tracker.threshold > 0 && tracker.increment > 0);
+    }
 }
 
 static void TestGunSlots() {
@@ -353,6 +416,7 @@ int main() {
     TestItemScaling();
     TestGunTable();
     TestGunSlots();
+    TestHighRounds();
     TestBoHealth();
     TestRoundSizes();
     TestSpawnDelay();

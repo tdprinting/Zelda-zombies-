@@ -101,6 +101,7 @@ struct ZombieState {
     State state = State::Rising;
     MoveTier tier = MoveTier::Walk;
     bool tearing = false;
+    bool climbing = false; // through a window: no walls until it's in
     int variant = 0; // which of a role's animations this zombie uses
     Role role = Role::Rise;
     float time = 0.0f;
@@ -347,7 +348,7 @@ static void ZombieUpdate(Actor* thisx, PlayState* play) {
     thisx->speedXZ = 0.0f; // the mode moves it
     Actor_MoveXZGravity(thisx);
     // Walls, floor, ceiling and water, as the Redead checks them.
-    Actor_UpdateBgCheckInfo(play, thisx, 30.0f, 18.0f, 40.0f, 0x1D);
+    Actor_UpdateBgCheckInfo(play, thisx, 30.0f, 18.0f, 40.0f, z.climbing ? 0x1C : 0x1D);
     thisx->focus.pos = thisx->world.pos;
     thisx->focus.pos.y += z.tier == MoveTier::Crawl ? 15.0f : 50.0f;
 
@@ -430,6 +431,14 @@ void ZombieActor_SetTearing(Actor* actor, bool tearing) {
     if (ZombieState* z = StateOf(actor)) {
         z->tearing = tearing;
     }
+}
+
+bool ZombieActor_SetClimbing(Actor* actor, bool climbing) {
+    if (ZombieState* z = StateOf(actor)) {
+        z->climbing = climbing;
+        return true;
+    }
+    return false;
 }
 
 void ZombieActor_Attack(Actor* actor) {

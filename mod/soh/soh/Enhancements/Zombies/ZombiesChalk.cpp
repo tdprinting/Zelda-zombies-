@@ -675,6 +675,7 @@ struct Wall {
 };
 
 static Wall sWall;
+static std::vector<Wall> sWallBuyWalls; // one per wall buy of an imported map
 
 // The wall at (x, z), seen along -n from just in front. off: how far it stands out of
 // the plane through onPlane (negative: set back); dot: how nearly it faces along n.
@@ -700,16 +701,18 @@ static bool SameWall(PlayState* play, const Vec3f& onPlane, const Vec3f& n, floa
     return WallAt(play, onPlane, n, y, &off, &dot) && dot > 0.95f && std::fabs(off) < 8.0f;
 }
 
-static void FindWall(PlayState* play, const Vec3f& at) {
-    sWall = Wall();
-    sWall.found = true;
-    sWall.from = at;
-    sWall.scene = play->sceneNum;
+// centred: a Black Ops wall buy's own spot on the wall, where the drawing goes as it is
+// (no torch to clear), at the spot's height. Otherwise the Armory torch on its floor.
+static void FindWall(PlayState* play, const Vec3f& at, Wall& wall, bool centred = false) {
+    wall = Wall();
+    wall.found = true;
+    wall.from = at;
+    wall.scene = play->sceneNum;
     float best = 1e9f;
     Vec3f n = {};
     Vec3f wallHit = {};
     float front = 0.0f;
-    const float height = at.y + 50.0f;
+    const float height = centred ? at.y : at.y + 50.0f;
     for (int i = 0; i < 16; i++) {
         s16 yaw = static_cast<s16>(i * 0x1000);
         // From a little behind the spot: a Black Ops wall buy's spot is on the wall itself.
@@ -743,14 +746,20 @@ static void FindWall(PlayState* play, const Vec3f& at) {
         // Open ground: chalk it on the floor in front of the torch, facing the run's start.
         const Run& run = GetRun();
         s16 yaw = Math_Vec3f_Yaw(const_cast<Vec3f*>(&at), const_cast<Vec3f*>(&run.origin));
-        sWall.floor = true;
-        sWall.normal = { Math_SinS(yaw), 0.0f, Math_CosS(yaw) };
-        sWall.centre = { at.x + sWall.normal.x * 40.0f, at.y + 1.0f, at.z + sWall.normal.z * 40.0f };
+        wall.floor = true;
+        wall.normal = { Math_SinS(yaw), 0.0f, Math_CosS(yaw) };
+        wall.centre = { at.x + wall.normal.x * 40.0f, at.y + 1.0f, at.z + wall.normal.z * 40.0f };
         return;
     }
     // The point of the wall's plane straight behind the torch, and the drawing beside it
     // so the torch doesn't stand in front of it, where the wall goes on far enough.
     Vec3f base = { at.x - n.x * front, height, at.z - n.z * front };
+    if (centred) {
+        float lift = (front > 0.0f && front < 12.0f ? front : 0.0f) + 1.5f;
+        wall.normal = n;
+        wall.centre = { base.x + n.x * lift, height, base.z + n.z * lift };
+        return;
+    }
     Vec3f along = { n.z, 0.0f, -n.x };
     Vec3f place = { wallHit.x, height, wallHit.z }; // failing that, where the ray met it
     // The further out the torch stands, the further aside the drawing goes to clear it.
@@ -784,8 +793,8 @@ static void FindWall(PlayState* play, const Vec3f& at) {
     // A Black Ops wall buy's spot is the face of the wall as drawn, which can stand a
     // little proud of its collision: the chalk goes on the face.
     float lift = (curved ? depth : front > 0.0f && front < 12.0f ? front : 0.0f) + 1.5f;
-    sWall.normal = n;
-    sWall.centre = { place.x + n.x * lift, height, place.z + n.z * lift };
+    wall.normal = n;
+    wall.centre = { place.x + n.x * lift, height, place.z + n.z * lift };
 }
 
 // One textured quad: centre, half extents along right and up. A texture load holds at
@@ -831,16 +840,36 @@ static void Quad(std::vector<Gfx>& dl, std::vector<Vtx>& verts, const ChalkImage
 static constexpr float kPriceNear = 150.0f; // the price shows inside this distance
 static constexpr float kPriceFade = 40.0f;
 
+static void DrawWares(PlayState* play, const Vec3f& at, const ArmoryWares& wares, const Wall& wall, int slot);
+
 void Chalk_Draw(PlayState* play) {
-    Vec3f at;
-    ArmoryWares wares;
-    if (play == nullptr || !Stations_ArmoryWares(&at, &wares)) {
+    if (play == nullptr) {
         return;
     }
-    if (!sWall.found || sWall.scene != play->sceneNum || Math_Vec3f_DistXYZ(&sWall.from, &at) > 1.0f) {
-        FindWall(play, at);
+    Vec3f at;
+    ArmoryWares wares;
+    if (Stations_ArmoryWares(&at, &wares)) {
+        if (!sWall.found || sWall.scene != play->sceneNum || Math_Vec3f_DistXYZ(&sWall.from, &at) > 1.0f) {
+            FindWall(play, at, sWall);
+        }
+        DrawWares(play, at, wares, sWall, 0);
     }
+    // An imported map's own wall buys, each chalked on its spot.
+    int count = std::min(Stations_WallBuyCount(), 15);
+    sWallBuyWalls.resize(static_cast<size_t>(count));
+    for (int i = 0; i < count; i++) {
+        if (!Stations_WallBuyWares(i, &at, &wares)) {
+            continue;
+        }
+        Wall& wall = sWallBuyWalls[i];
+        if (!wall.found || wall.scene != play->sceneNum || Math_Vec3f_DistXYZ(&wall.from, &at) > 1.0f) {
+            FindWall(play, at, wall, true);
+        }
+        DrawWares(play, at, wares, wall, i + 1);
+    }
+}
 
+static void DrawWares(PlayState* play, const Vec3f& at, const ArmoryWares& wares, const Wall& wall, int slot) {
     const Drawing* drawing = nullptr;
     if (wares.gun != 0) {
         drawing = GunDrawing(static_cast<GunId>(wares.gun));
@@ -855,17 +884,17 @@ void Chalk_Draw(PlayState* play) {
 
     // The quad's frame: across the wall and up it (or along the ground, away from it).
     // Read facing the wall (or, on the ground, from the start's side).
-    const Vec3f& n = sWall.normal;
+    const Vec3f& n = wall.normal;
     Vec3f right = { n.z, 0.0f, -n.x };
-    Vec3f up = sWall.floor ? Vec3f{ -n.x, 0.0f, -n.z } : Vec3f{ 0.0f, 1.0f, 0.0f };
+    Vec3f up = wall.floor ? Vec3f{ -n.x, 0.0f, -n.z } : Vec3f{ 0.0f, 1.0f, 0.0f };
 
-    // Per-frame buffers, kept for the frame the list is drawn in.
-    static std::vector<Gfx> sDl[3];
-    static std::vector<Vtx> sVerts[3];
-    static int sFlip = 0;
-    sFlip = (sFlip + 1) % 3;
-    std::vector<Gfx>& dl = sDl[sFlip];
-    std::vector<Vtx>& verts = sVerts[sFlip];
+    // Per-frame buffers, kept for the frame the list is drawn in: one set per drawing.
+    static std::vector<Gfx> sDl[16][3];
+    static std::vector<Vtx> sVerts[16][3];
+    static int sFlip[16] = {};
+    sFlip[slot] = (sFlip[slot] + 1) % 3;
+    std::vector<Gfx>& dl = sDl[slot][sFlip[slot]];
+    std::vector<Vtx>& verts = sVerts[slot][sFlip[slot]];
     dl.clear();
     verts.clear();
     dl.reserve(64);
@@ -885,7 +914,7 @@ void Chalk_Draw(PlayState* play) {
     gSPTexture(p++, 0xFFFF, 0xFFFF, 0, G_TX_RENDERTILE, G_ON);
     dl.insert(dl.end(), g, p);
 
-    Vec3f origin = sWall.centre;
+    Vec3f origin = wall.centre;
     Vec3f zero = { 0.0f, 0.0f, 0.0f };
     float priceY = -16.0f;
     if (drawing != nullptr) {
@@ -896,7 +925,8 @@ void Chalk_Draw(PlayState* play) {
     }
 
     Player* player = GET_PLAYER(play);
-    float dist = player != nullptr ? Math_Vec3f_DistXZ(&player->actor.world.pos, &at) : 1e9f;
+    Vec3f from = at;
+    float dist = player != nullptr ? Math_Vec3f_DistXZ(&player->actor.world.pos, &from) : 1e9f;
     float shown = std::clamp((kPriceNear - dist) / kPriceFade, 0.0f, 1.0f);
     if (shown > 0.0f && wares.cost > 0) {
         const ChalkImage& price = PriceImage(wares.cost);

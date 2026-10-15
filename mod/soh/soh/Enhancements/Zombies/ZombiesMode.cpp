@@ -773,6 +773,9 @@ static void UpdateEnemies(PlayState* play, Player* player) {
             }
 
             // Undead outside a barricade stay there, tearing boards, until the window is open.
+            if (enemy.window >= 0) {
+                enemy.cameIn = enemy.window;
+            }
             if (enemy.window >= 0 && Barricades_HoldEnemy(enemy, PullSpeed(enemy.tier) * slow)) {
                 enemy.closestDist = dist;
                 ZombieActor_SetTearing(actor, enemy.tearTimer > 0);
@@ -787,6 +790,26 @@ static void UpdateEnemies(PlayState* play, Player* player) {
                 enemy.lastPos = actor->world.pos;
                 i++;
                 continue;
+            }
+
+            // On a Black Ops map the undead walk the map's rooms (ZombiesNav.cpp): through
+            // doors and up the stairs, not straight at a player through a wall or a floor.
+            // Close by on the same floor they go straight in.
+            Vec3f navTo;
+            float navDist;
+            if (Nav_Ready() && Nav_Steer(play, actor->world.pos, &navTo, &navDist)) {
+                bool sameFloor = fabsf(target.pos.y - actor->world.pos.y) < 45.0f;
+                enemy.cameIn = -1;
+                if (navDist > 80.0f || !sameFloor) {
+                    target.yaw = Math_Vec3f_Yaw(&actor->world.pos, &navTo);
+                    dist = std::max(dist, navDist);
+                }
+            } else if (Nav_Ready() && enemy.cameIn >= 0 && enemy.cameIn < static_cast<int>(sRun.windows.size())) {
+                // Off the walk grid just after its window opened: in through the window.
+                const Window& w = sRun.windows[enemy.cameIn];
+                Vec3f in = { w.pos.x + Math_SinS(w.yaw) * 60.0f, w.pos.y, w.pos.z + Math_CosS(w.yaw) * 60.0f };
+                target.yaw = Math_Vec3f_Yaw(&actor->world.pos, &in);
+                dist = std::max(dist, Math_Vec3f_DistXZ(&actor->world.pos, &in) + kStuckMinDist);
             }
 
             if (dist < enemy.closestDist - kStuckProgress || dist < kStuckMinDist) {
@@ -825,6 +848,7 @@ static void UpdateEnemies(PlayState* play, Player* player) {
                 actor->world.pos.z += Math_CosS(yaw) * speed;
                 actor->shape.rot.y = yaw;
             }
+            Arena_KeepOut(&actor->world.pos); // closed debris and doors hold the undead too
 
             KeepHome(enemy, target.pos);
         }
@@ -1016,7 +1040,10 @@ static bool sLastOneCalled = false;
 static void StartRound(int round) {
     sRun.round = round;
     sLastOneCalled = false;
-    sRun.dogRound = CVarOn(CVAR_ZOMBIES("WolfosRounds"), 1) && round == sRun.nextDogRound;
+    // Nacht der Untoten has no hellhound rounds in Black Ops, so the Black Ops map has no
+    // Wolfos rounds either.
+    bool dogsAllowed = sRun.layout == nullptr || !sRun.layout->blackOps;
+    sRun.dogRound = dogsAllowed && CVarOn(CVAR_ZOMBIES("WolfosRounds"), 1) && round == sRun.nextDogRound;
     sRun.dropTracker.NewRound();
     sRun.repairPointsThisRound = 0;
 

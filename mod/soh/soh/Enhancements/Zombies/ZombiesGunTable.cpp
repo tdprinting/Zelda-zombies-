@@ -2,12 +2,16 @@
 // so tests/rules_test.cpp builds it on its own.
 //
 // Stats are Black Ops 1 Zombies gameplay values (Nacht der Untoten, Verruckt, Kino der
-// Toten), written down in our own table. Fire rates are frames between shots at OoT's 20
-// logic updates a second (600 rounds a minute is 2 frames); reloads are frames too.
+// Toten), written down in our own table. Nacht's World at War wall guns (Kar98k to BAR)
+// are our own numbers matched to how they behave there: a bolt-action that one-shots
+// early heads, a semi-auto carbine, the Thompson, three shotguns and the BAR. Fire rates
+// are frames between shots at OoT's 20 logic updates a second (600 rounds a minute is 2
+// frames); reloads are frames too.
 
 #include "ZombiesGuns.h"
 
 #include <algorithm>
+#include <cstring>
 
 namespace Zombies {
 
@@ -29,6 +33,14 @@ static const GunStats kGuns[] = {
     { GunId::HK21,     GunClass::Lmg,      { "HK21",    130,  125, 500,   0,   0 },   { "H115 OSCILLATOR",    200, 150, 750,   0,   0 }, 2.0f, 1, true,  1.8f, 100, 4.0f, 2500, 3,    0, 0, 3, false, "hk21_zm" },
     { GunId::RPK,      GunClass::Lmg,      { "RPK",     130,  100, 400,   0,   0 },   { "R115 RESONATOR",     200, 125, 500,   0,   0 }, 2.0f, 1, true,  1.6f, 90,  4.0f, 2500, 3,    0, 0, 3, false, "rpk_zm" },
     { GunId::RayGun,   GunClass::Launcher, { "RAY GUN", 1000,  20, 160, 300,  90 },   { "PORTER'S X2 RAY GUN",1500,  40, 200, 500, 110 }, 1.0f, 1, false, 5.0f, 60,  1.0f, 3000, 0,    0, 0, 1, true,  "ray_gun_zm" },
+    // Nacht der Untoten's wall guns, World at War's: each on its own spot on the map's walls (wallZone -1).
+    { GunId::Kar98k,   GunClass::Rifle,    { "KAR98K",  100,    5,  50,   0,   0 },   { "ARMAGEDDON 98",      600,   8,  60,   0,   0 }, 4.0f, 1, false, 22.0f, 50, 2.0f, 3000, 2,  200,-1, 0, false, "zombie_kar98k" },
+    { GunId::M1Carbine,GunClass::Rifle,    { "M1A1 CARBINE",120, 15, 150,   0,   0 },   { "WIDDERSHINS RC-1",   160,  30, 180,   0,   0 }, 2.5f, 1, false, 2.5f, 40,  2.5f, 2500, 2,  600,-1, 0, false, "zombie_m1carbine" },
+    { GunId::Thompson, GunClass::Smg,      { "THOMPSON",120,   20, 200,   0,   0 },   { "GIBS-O-MATIC",       200,  40, 250,   0,   0 }, 2.0f, 1, true,  1.6f, 52,  4.0f, 1600, 1, 1200,-1, 0, false, "zombie_thompson" },
+    { GunId::DoubleBarrel,GunClass::Shotgun,{ "DOUBLE-BARREL", 80, 2,  60,   0,   0 },   { "24 BORE LONG RANGE", 160,   2,  60,   0,   0 }, 1.5f, 8, false, 5.0f, 60,  6.0f,  800, 1, 1200,-1, 0, false, "zombie_doublebarrel" },
+    { GunId::SawedOff, GunClass::Shotgun,  { "SAWED-OFF",100,   2,  60,   0,   0 },   { "SNUFF BOX",          200,   2,  60,   0,   0 }, 1.5f, 8, false, 5.0f, 55,  8.0f,  550, 1, 1200,-1, 0, false, "zombie_doublebarrel_sawed" },
+    { GunId::TrenchGun,GunClass::Shotgun,  { "TRENCH GUN",100,  6,  60,   0,   0 },   { "GUT SHOT",           200,  10,  60,   0,   0 }, 1.5f, 8, false, 8.0f, 70,  6.0f,  750, 1, 1500,-1, 0, false, "zombie_shotgun" },
+    { GunId::BAR,      GunClass::Lmg,      { "BAR",     140,   20, 180,   0,   0 },   { "THE WIDOW MAKER",    260,  30, 300,   0,   0 }, 2.0f, 1, true,  2.6f, 56,  3.5f, 2500, 3, 1800,-1, 0, false, "zombie_bar" },
 };
 // clang-format on
 
@@ -40,6 +52,21 @@ const GunStats& GunInfo(GunId id) {
         return kGuns[0];
     }
     return kGuns[i];
+}
+
+GunId GunByBoName(const char* boName) {
+    if (boName == nullptr) {
+        return GunId::None;
+    }
+    for (int i = 1; i < static_cast<int>(GunId::Count); i++) {
+        const char* name = kGuns[i].boName;
+        // A map's entities name the gun without the _zm suffix the zombies weapons carry.
+        size_t n = std::strlen(boName);
+        if (std::strcmp(name, boName) == 0 || (std::strncmp(name, boName, n) == 0 && std::strcmp(name + n, "_zm") == 0)) {
+            return kGuns[i].id;
+        }
+    }
+    return GunId::None;
 }
 
 const GunVariant& GunVariantOf(GunId id, bool pap) {

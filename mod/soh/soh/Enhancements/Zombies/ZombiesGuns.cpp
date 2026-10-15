@@ -1220,9 +1220,12 @@ int Guns_ScaleItemHit(PlayState* play, Player* player, TrackedEnemy& enemy, int 
 
 static std::vector<GunId> WallGuns() {
     std::vector<GunId> list;
+    if (Stations_WallBuyCount() > 0) {
+        return list; // the map sells its guns from its own walls (ZombiesStations.cpp)
+    }
     for (int i = 1; i < static_cast<int>(GunId::Count); i++) {
         const GunStats& gun = GunInfo(static_cast<GunId>(i));
-        if (gun.wallCost > 0 && (GetRun().layout == nullptr || Arena_ZoneOpen(gun.wallZone))) {
+        if (gun.wallCost > 0 && gun.wallZone >= 0 && (GetRun().layout == nullptr || Arena_ZoneOpen(gun.wallZone))) {
             list.push_back(gun.id);
         }
     }
@@ -1272,9 +1275,12 @@ const char* Guns_ArmoryBrowse(PlayState* play, int who) {
 }
 
 bool Guns_ArmoryOffer(int who, std::string* label, int* cost, bool* available, std::string* reason) {
+    return Guns_WallOffer(ClampWho(who), RackGun(ClampWho(who)), label, cost, available, reason);
+}
+
+bool Guns_WallOffer(int who, GunId id, std::string* label, int* cost, bool* available, std::string* reason) {
     who = ClampWho(who);
-    GunId id = RackGun(who);
-    if (id == GunId::None) {
+    if (id == GunId::None || id >= GunId::Count) {
         return false;
     }
     const PlayerGuns& guns = sGuns[who];
@@ -1296,9 +1302,12 @@ bool Guns_ArmoryOffer(int who, std::string* label, int* cost, bool* available, s
 }
 
 bool Guns_ArmoryBuy(PlayState* play, int who) {
+    return Guns_WallBuy(play, ClampWho(who), RackGun(ClampWho(who)));
+}
+
+bool Guns_WallBuy(PlayState* play, int who, GunId id) {
     who = ClampWho(who);
-    GunId id = RackGun(who);
-    if (id == GunId::None) {
+    if (id == GunId::None || id >= GunId::Count) {
         return false;
     }
     PlayerGuns& guns = sGuns[who];

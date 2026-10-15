@@ -35,6 +35,15 @@ enum class GunId : uint8_t {
     HK21,
     RPK,
     RayGun,
+    // Nacht der Untoten's World at War guns: bought from their own spots on the map's walls
+    // (wallZone -1), never from the Armory's rack.
+    Kar98k,
+    M1Carbine,
+    Thompson,
+    DoubleBarrel,
+    SawedOff,
+    TrenchGun,
+    BAR,
     Count,
 };
 
@@ -72,7 +81,8 @@ struct GunStats {
     float range;        // OoT units: beyond this a bullet does nothing
     int pierce;         // undead one bullet can pass through
     int wallCost;       // 0: not a wall buy
-    int wallZone;       // authored arenas: the zone whose debris has to be cleared first
+    int wallZone;       // authored arenas: the zone whose debris has to be cleared first; -1: only sold
+                        // from its own spot on an imported map's wall, never on the Armory's rack
     int boxWeight;      // Mystery Chest weight, 0: not in the chest
     bool projectile;    // fires a travelling bolt instead of a hitscan bullet
     const char* boName; // the Black Ops asset name the importer looks the model up by
@@ -183,6 +193,12 @@ bool Guns_ArmoryBuy(PlayState* play, int who);
 const char* Guns_ArmoryBrowse(PlayState* play, int who);
 // The wall gun on the rack entry Link is looking at, None on the Zelda item.
 GunId Guns_ArmoryRackGun(int who);
+// A gun on its own wall spot (an imported map's wall buys): the gun at its wall price, or
+// its ammo once the player holds it. False for no gun.
+bool Guns_WallOffer(int who, GunId id, std::string* label, int* cost, bool* available, std::string* reason);
+bool Guns_WallBuy(PlayState* play, int who, GunId id);
+// The gun whose Black Ops asset is this name (a wall buy entity's weapon), None if unknown.
+GunId GunByBoName(const char* boName);
 
 // Mystery Chest: weight of the guns in the roll for this player, and handing one over.
 int Guns_ChestWeight(int who);

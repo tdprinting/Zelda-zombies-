@@ -13,6 +13,7 @@
 
 #include <libultraship/bridge/consolevariablebridge.h>
 
+#include <algorithm>
 #include <cmath>
 
 #include "soh/frame_interpolation.h"
@@ -27,7 +28,6 @@ extern PlayState* gPlayState;
 namespace Zombies {
 
 static constexpr float kResolveRange = 250.0f;
-static constexpr float kSpotLift = 60.0f;
 static constexpr float kDebrisReach = 110.0f;
 
 // Kakariko Graveyard, after the flow of Black Ops' first map: a small start area
@@ -245,7 +245,7 @@ const ArenaLayout* Arena_ForScene(s16 sceneNum) {
     }
 }
 
-bool Arena_Resolve(PlayState* play, LayoutSpot spot, float refY, Vec3f* out, bool justAbove) {
+bool Arena_Resolve(PlayState* play, LayoutSpot spot, float refY, Vec3f* out, bool justAbove, float lift) {
     if (spot.y > LayoutSpot::kNoHeight) {
         refY = spot.y;
     }
@@ -256,7 +256,7 @@ bool Arena_Resolve(PlayState* play, LayoutSpot spot, float refY, Vec3f* out, boo
     if (justAbove && spot.y > LayoutSpot::kNoHeight) {
         // Look down from just above the spot first, so a floor overhead (Nacht's help
         // room over a wall buy, its roof) isn't taken for the spot's own.
-        Vec3f low = { spot.x, refY + kSpotLift, spot.z };
+        Vec3f low = { spot.x, refY + lift, spot.z };
         floorY = BgCheck_EntityRaycastFloor3(&play->colCtx, &poly, &bgId, &low);
     }
     if (floorY <= BGCHECK_Y_MIN + 1.0f || fabsf(floorY - refY) > kResolveRange) {
@@ -281,13 +281,76 @@ bool Arena_ZoneOpen(int zone) {
 static void OpenZone(PlayState* play, int zone) {
     Run& run = GetRun();
     run.openZones |= 1u << zone;
-    for (size_t i = 0; i < run.debris.size(); i++) {
+    // Every way into the zone clears: Nacht's help room opens from either staircase.
+    for (size_t i = 0; i < run.debris.size();) {
         if (run.debris[i].zone == zone) {
             run.debris.erase(run.debris.begin() + i);
-            break;
+        } else {
+            i++;
         }
     }
     Stations_OpenZone(play, zone);
+}
+
+// How wide the way is at a Black Ops debris pile or door: the narrowest line across it
+// through pos, wall to wall. The blocker sits in the middle of that line and spans it.
+static void FitBlocker(PlayState* play, Debris* d) {
+    constexpr float kReach = 160.0f;
+    float bestWidth = 1e9f;
+    Vec3f bestMid = d->pos;
+    for (int i = 0; i < 8; i++) {
+        s16 yaw = static_cast<s16>(i * 0x1000);
+        float dx = Math_SinS(yaw);
+        float dz = Math_CosS(yaw);
+        float reach[2];
+        for (int side = 0; side < 2; side++) {
+            float sign = side == 0 ? 1.0f : -1.0f;
+            Vec3f a = { d->pos.x, d->pos.y + 35.0f, d->pos.z };
+            Vec3f b = { a.x + dx * sign * kReach, a.y, a.z + dz * sign * kReach };
+            Vec3f hit;
+            CollisionPoly* poly = nullptr;
+            s32 bgId = 0;
+            reach[side] = BgCheck_EntityLineTest1(&play->colCtx, &a, &b, &hit, &poly, true, false, false, true, &bgId)
+                              ? Math_Vec3f_DistXZ(&a, &hit)
+                              : kReach;
+        }
+        float width = reach[0] + reach[1];
+        if (width < bestWidth) {
+            bestWidth = width;
+            float mid = (reach[0] - reach[1]) * 0.5f;
+            bestMid = { d->pos.x + dx * mid, d->pos.y, d->pos.z + dz * mid };
+        }
+    }
+    d->pos = bestMid;
+    d->radius = std::clamp(bestWidth * 0.5f + 10.0f, 40.0f, 110.0f);
+}
+
+bool Arena_KeepOut(Vec3f* pos) {
+    const Run& run = GetRun();
+    if (run.layout == nullptr || !run.layout->blackOps) {
+        return false;
+    }
+    bool moved = false;
+    for (const Debris& d : run.debris) {
+        if (d.radius <= 0.0f || pos->y < d.pos.y - 70.0f || pos->y > d.pos.y + 110.0f) {
+            continue;
+        }
+        float dx = pos->x - d.pos.x;
+        float dz = pos->z - d.pos.z;
+        float dist = sqrtf(dx * dx + dz * dz);
+        if (dist >= d.radius) {
+            continue;
+        }
+        if (dist < 0.01f) {
+            dx = Math_SinS(static_cast<s16>(d.yaw + 0x8000));
+            dz = Math_CosS(static_cast<s16>(d.yaw + 0x8000));
+            dist = 1.0f;
+        }
+        pos->x = d.pos.x + dx / dist * d.radius;
+        pos->z = d.pos.z + dz / dist * d.radius;
+        moved = true;
+    }
+    return moved;
 }
 
 void Arena_Start(PlayState* play) {
@@ -317,18 +380,32 @@ void Arena_Start(PlayState* play) {
         run.origin = start;
     }
 
+    bool blackOps = run.layout->blackOps;
     for (size_t z = 1; z < run.layout->zones.size() && z < 32; z++) {
         const LayoutZone& zone = run.layout->zones[z];
         Vec3f pos;
         Vec3f centre;
-        if (Arena_Resolve(play, zone.debris, run.origin.y, &pos) &&
+        if (Arena_Resolve(play, zone.debris, run.origin.y, &pos, blackOps, kBoEntityLift) &&
             Arena_Resolve(play, zone.centre, run.origin.y, &centre)) {
             run.debris.push_back({ static_cast<int>(z), pos, Math_Vec3f_Yaw(&pos, &centre) });
+            for (const LayoutSpot& more : zone.moreDebris) {
+                if (Arena_Resolve(play, more, run.origin.y, &pos, blackOps, kBoEntityLift)) {
+                    run.debris.push_back({ static_cast<int>(z), pos, Math_Vec3f_Yaw(&pos, &centre) });
+                }
+            }
         } else {
             // Nowhere to put the debris: start with the zone open rather than locked away.
             run.openZones |= 1u << z;
         }
     }
+    // On a Black Ops map the debris and doors are solid, as they are there: nothing gets
+    // past one until it's bought.
+    if (blackOps) {
+        for (Debris& d : run.debris) {
+            FitBlocker(play, &d);
+        }
+    }
+    Nav_Build(play);
 }
 
 static void UpdateBuyer(PlayState* play, const Buyer& buyer) {
@@ -340,7 +417,8 @@ static void UpdateBuyer(PlayState* play, const Buyer& buyer) {
     float nearestDist = kDebrisReach;
     Vec3f buyerPos = buyer.pos;
     for (Debris& d : run.debris) {
-        float dist = Math_Vec3f_DistXZ(&d.pos, &buyerPos);
+        // A solid pile is reached from its edge.
+        float dist = Math_Vec3f_DistXZ(&d.pos, &buyerPos) - std::max(d.radius - 40.0f, 0.0f);
         if (dist < nearestDist && fabsf(d.pos.y - buyer.pos.y) < 80.0f) {
             nearest = &d;
             nearestDist = dist;
@@ -370,6 +448,14 @@ static void UpdateBuyer(PlayState* play, const Buyer& buyer) {
 void Arena_Update(PlayState* play, Player* player) {
     if (GetRun().layout == nullptr) {
         return;
+    }
+    Nav_Update(play);
+    if (Arena_KeepOut(&player->actor.world.pos)) {
+        player->linearVelocity = 0.0f;
+    }
+    Actor* partner = GetRun().partner.actor;
+    if (partner != nullptr) {
+        Arena_KeepOut(&partner->world.pos);
     }
     Buyer buyers[2];
     int count = GetBuyers(play, player, buyers);

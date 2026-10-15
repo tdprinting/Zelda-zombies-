@@ -33,6 +33,9 @@ static constexpr int kWindowCount = 4;
 static constexpr float kWindowDists[] = { 520.0f, 460.0f, 600.0f, 400.0f };
 static constexpr float kSpawnBehind = 130.0f; // how far outside the boards undead appear
 static constexpr float kHoldDist = 35.0f;     // where undead stand while tearing
+static constexpr float kClimbStart = 25.0f;   // a Black Ops window: this close to the hold spot, it climbs
+static constexpr float kClimbDepth = 75.0f;   // and is in once this far past the boards
+static constexpr float kClimbSpeed = 2.5f;
 // Close enough to the hold point to tear. Generous: two undead at one window shove each
 // other apart, and a fence or wall can keep them short of the exact spot.
 static constexpr float kTearReach = 80.0f;
@@ -62,12 +65,29 @@ bool Barricades_Enabled() {
     return CVarGetInteger(CVAR_ZOMBIES("Barricades"), 1) != 0 && !GetRun().windows.empty();
 }
 
+// Floor for the spawn outside a window. First looked for from just above the window's own
+// floor, so a roof or an awning over the spot (Nacht has both) isn't taken for it.
+static bool SpawnFloor(PlayState* play, float x, float z, float refY, float* outY) {
+    Vec3f probe = { x, refY + 60.0f, z };
+    CollisionPoly* poly;
+    s32 bgId;
+    f32 floorY = BgCheck_EntityRaycastFloor3(&play->colCtx, &poly, &bgId, &probe);
+    WaterBox* waterBox;
+    f32 waterY;
+    if (floorY > BGCHECK_Y_MIN + 1.0f && fabsf(floorY - refY) <= 80.0f &&
+        !(WaterBox_GetSurface1(play, &play->colCtx, x, z, &waterY, &waterBox) && waterY > floorY + 10.0f)) {
+        *outY = floorY;
+        return true;
+    }
+    return FloorAt(play, x, z, refY, outY);
+}
+
 // A window at pos facing toward inside, if it has floor outside for undead to spawn on.
 static bool MakeWindow(PlayState* play, const Vec3f& pos, const Vec3f& inside, int zone, Window* out) {
     s16 yaw = Math_Vec3f_Yaw(const_cast<Vec3f*>(&pos), const_cast<Vec3f*>(&inside));
     for (float behind : { kSpawnBehind, kSpawnBehind * 0.6f }) {
         Vec3f spawn = { pos.x - Math_SinS(yaw) * behind, pos.y, pos.z - Math_CosS(yaw) * behind };
-        if (FloorAt(play, spawn.x, spawn.z, pos.y, &spawn.y) && LineIsClear(play, pos, spawn)) {
+        if (SpawnFloor(play, spawn.x, spawn.z, pos.y, &spawn.y) && LineIsClear(play, pos, spawn)) {
             out->pos = pos;
             out->yaw = yaw;
             out->spawnPos = spawn;
@@ -89,8 +109,15 @@ static void PlaceFromLayout(PlayState* play, const ArenaLayout& layout) {
         for (const LayoutSpot& spot : zone.windows) {
             Vec3f pos;
             Window window;
-            if (Arena_Resolve(play, spot, run.origin.y, &pos) &&
-                MakeWindow(play, pos, centre, static_cast<int>(z), &window)) {
+            if (!Arena_Resolve(play, spot, run.origin.y, &pos, spot.hasYaw, kBoEntityLift)) {
+                continue;
+            }
+            // A Black Ops window faces into its room as the map has it.
+            Vec3f inside = centre;
+            if (spot.hasYaw) {
+                inside = { pos.x + Math_SinS(spot.yaw) * 100.0f, pos.y, pos.z + Math_CosS(spot.yaw) * 100.0f };
+            }
+            if (MakeWindow(play, pos, inside, static_cast<int>(z), &window)) {
                 run.windows.push_back(window);
             }
         }
@@ -176,20 +203,57 @@ bool Barricades_HoldEnemy(TrackedEnemy& enemy, float speed) {
         return false;
     }
     Window& w = run.windows[enemy.window];
-    if (w.boards == 0) {
+    // A Black Ops window is a hole in a wall, sill and all, with the player clip across it:
+    // the zombie climbs through, as there, rather than walking.
+    bool climbIn = run.layout != nullptr && run.layout->blackOps;
+    Actor* actor = enemy.actor;
+    if (w.boards == 0 && !enemy.climbing && (!climbIn || actor == nullptr)) {
         // The way in is open.
         enemy.window = -1;
         enemy.stuckFrames = 0;
         return false;
     }
 
-    Actor* actor = enemy.actor;
     if (ZombieActor_Busy(actor)) {
         enemy.stuckFrames = 0;
         return true; // climbing out of the ground or swiping through the boards
     }
     float inX = Math_SinS(w.yaw);
     float inZ = Math_CosS(w.yaw);
+
+    if (w.boards == 0 || enemy.climbing) { // one already climbing finishes, boards or not
+        float depthNow = (actor->world.pos.x - w.pos.x) * inX + (actor->world.pos.z - w.pos.z) * inZ;
+        float side = (actor->world.pos.x - w.pos.x) * inZ - (actor->world.pos.z - w.pos.z) * inX;
+        if (enemy.climbing || (depthNow > -kHoldDist - kClimbStart && fabsf(side) < kWindowWidth * 0.5f)) {
+            if (depthNow >= kClimbDepth) {
+                // In: the rest of the way is the walk grid's.
+                ZombieActor_SetClimbing(actor, false);
+                enemy.climbing = false;
+                enemy.window = -1;
+                enemy.stuckFrames = 0;
+                return false;
+            }
+            enemy.climbing = true;
+            enemy.stuckFrames = 0;
+            actor->shape.rot.y = w.yaw;
+            if (actor->freezeTimer != 0) {
+                return true;
+            }
+            if (ZombieActor_SetClimbing(actor, true)) {
+                // Straight across the sill, lined up on the window's middle.
+                float step = std::max(speed, kClimbSpeed);
+                actor->world.pos.x += inX * step - inZ * side * 0.2f;
+                actor->world.pos.z += inZ * step + inX * side * 0.2f;
+            } else {
+                // An OoT stand-in can't be let through the walls: it lands inside.
+                actor->world.pos.x = w.pos.x + inX * kClimbDepth;
+                actor->world.pos.z = w.pos.z + inZ * kClimbDepth;
+                actor->world.pos.y = w.pos.y;
+            }
+            actor->prevPos = actor->world.pos;
+            return true;
+        }
+    }
 
     // Walk up to the boards from outside.
     float targetX = w.pos.x - inX * kHoldDist;
@@ -214,7 +278,7 @@ bool Barricades_HoldEnemy(TrackedEnemy& enemy, float speed) {
 
     // Each undead at the boards pulls its own off, as in Black Ops: two at a window
     // open it twice as fast.
-    if (len < kTearReach) {
+    if (len < kTearReach && w.boards > 0) {
         w.beingTorn = true;
         if (actor->freezeTimer == 0 && ++enemy.tearTimer >= kTearFrames) {
             enemy.tearTimer = 0;

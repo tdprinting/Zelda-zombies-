@@ -449,8 +449,8 @@ static LayoutSpot Spot(const Entity& e, float scale) {
     return s;
 }
 
-// Black Ops zone volumes name the room they cover. Our zones: 0 the start room, then one
-// per door or debris pile, in the order the map's doors lead.
+// Black Ops zone volumes name the room they cover. Our zones: 0 the start room, 1 the help
+// room upstairs, 2 the box room, as in Nacht der Untoten.
 static int ZoneForName(const std::string& name) {
     if (name.find("start") == 0) {
         return 0;
@@ -461,10 +461,18 @@ static int ZoneForName(const std::string& name) {
     return 1; // upstairs and anything else
 }
 
+// A Black Ops yaw (degrees, Z up) as an OoT one.
+static s16 OotYaw(float codYawDeg) {
+    constexpr float kPi = 3.14159265f;
+    float rad = codYawDeg * kPi / 180.0f;
+    return static_cast<s16>(static_cast<int>(atan2f(cosf(rad), -sinf(rad)) * (32768.0f / kPi)));
+}
+
 static void BuildLayout(BoMap& map, const std::vector<Entity>& ents) {
     ArenaLayout& layout = map.layout;
     layout.sceneNum = SCENE_GRAVEYARD;
     layout.name = "NACHT DER UNTOTEN";
+    layout.blackOps = true;
     layout.zones.clear();
     layout.zones.resize(3);
     static const char* kZoneNames[] = { "START ROOM", "HELP ROOM", "BOX ROOM" };
@@ -478,34 +486,26 @@ static void BuildLayout(BoMap& map, const std::vector<Entity>& ents) {
         float x, y, z;
     };
     std::vector<Volume> volumes;
-    bool haveStart = false;
+    std::vector<LayoutSpot> starts;
     float sx = 0, sy = 0, sz = 0;
-    int starts = 0;
-    bool haveCentre[3] = {};
-    float cx[3] = {}, cz[3] = {}, cy[3] = {};
-    int cn[3] = {};
     for (const Entity& e : ents) {
         if (e.kind == "zone") {
-            int z = ZoneForName(e.detail);
-            volumes.push_back({ z, e.pos[0] * map.scale, e.pos[1] * map.scale, e.pos[2] * map.scale });
-            cx[z] += e.pos[0] * map.scale;
-            cy[z] += e.pos[1] * map.scale;
-            cz[z] += e.pos[2] * map.scale;
-            cn[z]++;
+            volumes.push_back({ ZoneForName(e.detail), e.pos[0] * map.scale, e.pos[1] * map.scale, e.pos[2] * map.scale });
         } else if (e.kind == "player_start") {
+            starts.push_back(Spot(e, map.scale));
             sx += e.pos[0] * map.scale;
             sy += e.pos[1] * map.scale;
             sz += e.pos[2] * map.scale;
-            starts++;
-            haveStart = true;
         }
     }
-    // A spot's zone is the nearest zone volume on its floor.
+    // A zone volume's origin stands about a man's height over its floor. A spot's zone is
+    // the nearest volume over the same floor.
+    constexpr float kVolumeLift = 55.0f;
     auto zoneAt = [&](float x, float y, float z) {
         int best = 0;
         float bestD = 1e30f;
         for (const Volume& v : volumes) {
-            float dy = fabsf(v.y - y) > 120.0f ? 1000.0f : 0.0f;
+            float dy = fabsf(v.y - kVolumeLift - y) > 80.0f ? 1000.0f : 0.0f;
             float d = (v.x - x) * (v.x - x) + (v.z - z) * (v.z - z) + dy * dy;
             if (d < bestD) {
                 bestD = d;
@@ -514,73 +514,182 @@ static void BuildLayout(BoMap& map, const std::vector<Entity>& ents) {
         }
         return best;
     };
+    // Each zone's own floor: the lowest of its volumes (a volume reaching up a stairwell
+    // stands higher).
+    float zoneFloor[3] = { 1e30f, 1e30f, 1e30f };
+    for (const Volume& v : volumes) {
+        zoneFloor[v.zone] = std::min(zoneFloor[v.zone], v.y);
+    }
+    auto onZoneFloor = [&](const Volume& v) { return v.y < zoneFloor[v.zone] + 100.0f; };
     for (int z = 0; z < 3; z++) {
-        if (cn[z] > 0) {
-            haveCentre[z] = true;
-            layout.zones[z].centre = { cx[z] / cn[z], cz[z] / cn[z] };
-            layout.zones[z].centre.y = cy[z] / cn[z];
+        float cx = 0, cy = 0, cz = 0;
+        int n = 0;
+        for (const Volume& v : volumes) {
+            if (v.zone == z && onZoneFloor(v)) {
+                cx += v.x;
+                cy += v.y - kVolumeLift;
+                cz += v.z;
+                n++;
+            }
+        }
+        if (n > 0) {
+            float count = static_cast<float>(n);
+            layout.zones[z].centre = { cx / count, cz / count };
+            layout.zones[z].centre.y = cy / count;
         }
     }
-    if (haveStart) {
-        layout.zones[0].centre = { sx / starts, sz / starts };
-        layout.zones[0].centre.y = sy / starts;
+    if (!starts.empty()) {
+        float n = static_cast<float>(starts.size());
+        layout.zones[0].centre = { sx / n, sz / n };
+        layout.zones[0].centre.y = sy / n;
     }
     for (int z = 1; z < 3; z++) {
-        if (!haveCentre[z]) {
+        if (layout.zones[z].centre.y <= LayoutSpot::kNoHeight) {
             layout.zones[z].centre = layout.zones[0].centre;
         }
     }
 
-    bool armoryPlaced = false;
-    bool chestPlaced = false;
+    // Everything a station must keep clear of, so prompts don't overlap.
+    std::vector<LayoutSpot> taken;
+
     bool debrisPlaced[3] = {};
     for (const Entity& e : ents) {
         LayoutSpot spot = Spot(e, map.scale);
         if (e.kind == "window") {
-            // Windows belong to the room they open into.
+            // Windows belong to the room they open into, and face into it as the map has them.
+            spot.hasYaw = true;
+            spot.yaw = OotYaw(e.yaw);
             layout.zones[zoneAt(spot.x, spot.y, spot.z)].windows.push_back(spot);
+            taken.push_back(spot);
         } else if (e.kind == "debris" || e.kind == "door") {
             // A door or debris pile leads into the room named after the arrow: start_2_box opens the box room.
             size_t arrow = e.detail.find("_2_");
             int into = arrow == std::string::npos ? 1 : ZoneForName(e.detail.substr(arrow + 3));
-            if (into > 0 && !debrisPlaced[into]) {
+            if (into <= 0) {
+                continue;
+            }
+            LayoutZone& zone = layout.zones[into];
+            if (!debrisPlaced[into]) {
                 debrisPlaced[into] = true;
-                layout.zones[into].debris = spot;
+                zone.debris = spot;
                 if (e.cost > 0) {
-                    layout.zones[into].cost = e.cost;
+                    zone.cost = e.cost;
+                }
+            } else {
+                // The same way in drawn as more than one piece (a staircase) counts once;
+                // another way in (the help room's second staircase) gets its own pile.
+                bool same = false;
+                for (const LayoutSpot& d : zone.moreDebris) {
+                    same = same || (d.x - spot.x) * (d.x - spot.x) + (d.z - spot.z) * (d.z - spot.z) < 200.0f * 200.0f;
+                }
+                const LayoutSpot& first = zone.debris;
+                same = same || (first.x - spot.x) * (first.x - spot.x) + (first.z - spot.z) * (first.z - spot.z) <
+                                   200.0f * 200.0f;
+                if (!same) {
+                    zone.moreDebris.push_back(spot);
                 }
             }
-        } else if (e.kind == "wall_buy" && !armoryPlaced) {
-            // Our Armory stands at the first wall buy in the start room; the guns go on the rest.
-            if (zoneAt(spot.x, spot.y, spot.z) == 0) {
-                layout.zones[0].stations.push_back({ StationType::Armory, spot });
-                armoryPlaced = true;
-            }
+            taken.push_back(spot);
+        } else if (e.kind == "wall_buy") {
+            // Every wall buy sells its own gun from its own spot, as in Black Ops.
+            layout.zones[zoneAt(spot.x, spot.y, spot.z)].wallBuys.push_back({ spot, e.detail });
+            taken.push_back(spot);
         } else if (e.kind == "chest") {
             int z = zoneAt(spot.x, spot.y, spot.z);
-            if (!chestPlaced) {
+            bool first = true;
+            for (const LayoutZone& zone : layout.zones) {
+                first = first && zone.chestSpots.empty();
+            }
+            if (first) {
                 layout.zones[z].stations.push_back({ StationType::MysteryChest, spot });
-                chestPlaced = true;
             }
             layout.zones[z].chestSpots.push_back(spot);
+            taken.push_back(spot);
         }
     }
-    // Nacht has no perks, power or Pack-a-Punch, as in Black Ops. The Fairy Fountain
-    // stands by the start so hearts can still be bought.
+
+    // The Armory (the Zelda items' rack) and the Fairy Fountain stand on the two player
+    // starts farthest apart, in the start room.
+    LayoutSpot armory = layout.zones[0].centre;
     LayoutSpot fountain = layout.zones[0].centre;
-    fountain.x += 60.0f;
-    layout.zones[0].stations.push_back({ StationType::FairyFountain, fountain });
-    if (!armoryPlaced) {
-        LayoutSpot armory = layout.zones[0].centre;
-        armory.x -= 60.0f;
-        layout.zones[0].stations.push_back({ StationType::Armory, armory });
+    armory.x -= 80.0f;
+    fountain.x += 80.0f;
+    float farthest = -1.0f;
+    for (size_t i = 0; i < starts.size(); i++) {
+        for (size_t j = i + 1; j < starts.size(); j++) {
+            float d = (starts[i].x - starts[j].x) * (starts[i].x - starts[j].x) +
+                      (starts[i].z - starts[j].z) * (starts[i].z - starts[j].z);
+            if (d > farthest) {
+                farthest = d;
+                armory = starts[i];
+                fountain = starts[j];
+            }
+        }
     }
+    layout.zones[0].stations.push_back({ StationType::Armory, armory });
+    layout.zones[0].stations.push_back({ StationType::FairyFountain, fountain });
+    taken.push_back(armory);
+    taken.push_back(fountain);
+
+    // Black Ops' Nacht has no perks, power or Pack-a-Punch. Ours keeps them so a run can
+    // go on into the high rounds: each goes on a zone volume of its room (on that room's
+    // floor), as far as it can get from everything already there. The far rooms hold the
+    // power and Pack-a-Punch, so opening the map is still the way to them.
+    struct Wanted {
+        StationType type;
+        int zone;
+    };
+    static constexpr Wanted kWanted[] = {
+        { StationType::Power, 1 },     { StationType::PackAPunch, 2 }, { StationType::Juggernog, 1 },
+        { StationType::DoubleTap, 2 }, { StationType::StaminUp, 1 },   { StationType::FairyRevive, 0 },
+    };
+    for (const Wanted& want : kWanted) {
+        int zone = debrisPlaced[want.zone] || want.zone == 0 ? want.zone : 0;
+        const Volume* best = nullptr;
+        float bestGap = -1.0f;
+        for (const Volume& v : volumes) {
+            if (v.zone != zone || !onZoneFloor(v)) {
+                continue;
+            }
+            LayoutSpot s;
+            s.x = v.x;
+            s.z = v.z;
+            s.y = v.y - kVolumeLift;
+            float gap = 1e9f;
+            for (const LayoutSpot& t : taken) {
+                if (fabsf(t.y - s.y) < 100.0f) {
+                    gap = std::min(gap, sqrtf((t.x - s.x) * (t.x - s.x) + (t.z - s.z) * (t.z - s.z)));
+                }
+            }
+            if (gap > bestGap) {
+                bestGap = gap;
+                best = &v;
+            }
+        }
+        LayoutSpot s;
+        if (best != nullptr && bestGap > 110.0f) {
+            s.x = best->x;
+            s.z = best->z;
+            s.y = best->y - kVolumeLift;
+        } else {
+            // No volume left with room: beside the room's centre.
+            s = layout.zones[zone].centre;
+            s.x += 70.0f * static_cast<float>(taken.size() % 3) - 70.0f;
+            s.z += 70.0f;
+        }
+        layout.zones[zone].stations.push_back({ want.type, s });
+        taken.push_back(s);
+    }
+
     // A zone the map gave no way into would never open: fold it into the start room.
     for (int z = 2; z >= 1; z--) {
         if (!debrisPlaced[z]) {
-            for (const LayoutSpot& w : layout.zones[z].windows) {
-                layout.zones[0].windows.push_back(w);
-            }
+            LayoutZone& from = layout.zones[z];
+            LayoutZone& to = layout.zones[0];
+            to.windows.insert(to.windows.end(), from.windows.begin(), from.windows.end());
+            to.stations.insert(to.stations.end(), from.stations.begin(), from.stations.end());
+            to.chestSpots.insert(to.chestSpots.end(), from.chestSpots.begin(), from.chestSpots.end());
+            to.wallBuys.insert(to.wallBuys.end(), from.wallBuys.begin(), from.wallBuys.end());
             layout.zones.erase(layout.zones.begin() + z);
         }
     }
@@ -695,8 +804,8 @@ static bool LoadFile(BoMap& map) {
                 v.v.ob[0] = s.pos[0];
                 v.v.ob[1] = s.pos[1];
                 v.v.ob[2] = s.pos[2];
-                v.v.tc[0] = static_cast<s16>(std::clamp((s.uv[0] - offU) * tw * 32.0f, -32768.0f, 32767.0f));
-                v.v.tc[1] = static_cast<s16>(std::clamp((s.uv[1] - offV) * th * 32.0f, -32768.0f, 32767.0f));
+                v.v.tc[0] = static_cast<s16>(std::clamp((s.uv[0] - offU) * static_cast<float>(tw) * 32.0f, -32768.0f, 32767.0f));
+                v.v.tc[1] = static_cast<s16>(std::clamp((s.uv[1] - offV) * static_cast<float>(th) * 32.0f, -32768.0f, 32767.0f));
                 std::memcpy(v.v.cn, s.rgba, 4);
                 mesh.verts.push_back(v);
             }

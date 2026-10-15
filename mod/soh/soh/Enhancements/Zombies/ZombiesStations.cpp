@@ -48,6 +48,20 @@ struct Station {
 };
 
 static Station sStations[static_cast<int>(StationType::Count)];
+
+// An imported map's wall buys: each sells one gun (or grenades) from its own spot on the
+// wall, chalked there, as in Black Ops. No torch: the chalk is the marker.
+struct WallBuy {
+    GunId gun = GunId::None;
+    bool grenades = false; // the stielhandgranate's spot: bombs
+    Vec3f spot = {};       // on the wall, where the chalk goes
+    Vec3f floor = {};      // the floor under it, where the buyer stands near
+    int zone = 0;
+};
+static std::vector<WallBuy> sWallBuys;
+static constexpr float kWallBuyReach = 85.0f;
+static constexpr int kGrenadeCost = 250;
+static constexpr int kGrenadesPerBuy = 4;
 static int sChestUses = 0; // prizes since the chest last moved
 static bool sChestMoved = false;
 static bool sPapSword = false;
@@ -174,6 +188,7 @@ static bool PlaceAtSpot(PlayState* play, int index, const LayoutSpot& spot) {
 }
 
 void Stations_Clear() {
+    sWallBuys.clear();
     for (Station& station : sStations) {
         if (station.torch != nullptr) {
             Actor_Kill(station.torch);
@@ -194,6 +209,31 @@ void Stations_OnActorDestroy(Actor* actor) {
         if (station.torch == actor) {
             station.torch = nullptr;
             station.placed = false;
+        }
+    }
+}
+
+static void PlaceWallBuys(PlayState* play) {
+    sWallBuys.clear();
+    const ArenaLayout* layout = GetRun().layout;
+    if (layout == nullptr) {
+        return;
+    }
+    for (size_t z = 0; z < layout->zones.size(); z++) {
+        for (const LayoutWallBuy& w : layout->zones[z].wallBuys) {
+            WallBuy buy;
+            buy.grenades = w.boName.find("granate") != std::string::npos || w.boName.find("grenade") != std::string::npos;
+            buy.gun = buy.grenades ? GunId::None : GunByBoName(w.boName.c_str());
+            if (!buy.grenades && buy.gun == GunId::None) {
+                continue; // a gun the table doesn't have
+            }
+            if (!Arena_Resolve(play, w.spot, GetRun().origin.y, &buy.floor, true)) {
+                continue;
+            }
+            float height = w.spot.y > LayoutSpot::kNoHeight ? w.spot.y : buy.floor.y + 45.0f;
+            buy.spot = { w.spot.x, height, w.spot.z };
+            buy.zone = static_cast<int>(z);
+            sWallBuys.push_back(buy);
         }
     }
 }
@@ -226,6 +266,7 @@ void Stations_Place(PlayState* play) {
         s16 angle = run.originYaw + static_cast<s16>(slot * (0x10000 / count));
         PlaceStation(play, index, angle);
     }
+    PlaceWallBuys(play);
 }
 
 // A new run: the chest's use count and the Punched Blade start over. A void-out
@@ -642,6 +683,19 @@ bool Stations_ChestMoved() {
     return sChestMoved;
 }
 
+// Nacht's box has the one spot and never moves, as in Black Ops: no teddy bear there.
+static bool ChestCanMove() {
+    const ArenaLayout* layout = GetRun().layout;
+    if (layout == nullptr) {
+        return true;
+    }
+    size_t spots = 0;
+    for (const LayoutZone& zone : layout->zones) {
+        spots += zone.chestSpots.size();
+    }
+    return spots != 1;
+}
+
 bool Stations_ChestPlaced() {
     return sStations[static_cast<int>(StationType::MysteryChest)].placed;
 }
@@ -913,7 +967,7 @@ static bool BuyForPartner(PlayState* play, Station& station, const Offer& offer)
                 return false; // the imported box rolls for player 2 too (RollBox)
             }
             sChestUses++;
-            if (!PowerUpActive(PowerUp::FireSale) && ChestMoves(sChestUses, sChestMoved, Rand_ZeroOne())) {
+            if (!PowerUpActive(PowerUp::FireSale) && ChestCanMove() && ChestMoves(sChestUses, sChestMoved, Rand_ZeroOne())) {
                 GetRun().players[1].points += offer.cost; // refund, not earnings
                 Announce("THE CHEST MOVED", 3);
                 Sfx_PlaySfxCentered(NA_SE_VO_SK_LAUGH);
@@ -960,7 +1014,7 @@ static bool BuyForPartner(PlayState* play, Station& station, const Offer& offer)
 // false when the bear comes up instead (the buyer gets their points back).
 static bool RollBox(int who, int cost, BoxPrize* prize) {
     sChestUses++;
-    if (!PowerUpActive(PowerUp::FireSale) && ChestMoves(sChestUses, sChestMoved, Rand_ZeroOne())) {
+    if (!PowerUpActive(PowerUp::FireSale) && ChestCanMove() && ChestMoves(sChestUses, sChestMoved, Rand_ZeroOne())) {
         GetRun().players[who].points += cost; // refund, not earnings: no Double Points
         Announce("THE CHEST MOVED", 3);
         if (!Sound_Play("box_teddy")) {
@@ -1057,7 +1111,7 @@ static void Buy(PlayState* play, Station& station, const Offer& offer, int who) 
             }
             sChestUses++;
             // The Keaton laugh is our teddy bear: after a few uses the chest may move on.
-            if (!PowerUpActive(PowerUp::FireSale) && ChestMoves(sChestUses, sChestMoved, Rand_ZeroOne())) {
+            if (!PowerUpActive(PowerUp::FireSale) && ChestCanMove() && ChestMoves(sChestUses, sChestMoved, Rand_ZeroOne())) {
                 run.players[who].points += offer.cost; // refund, not earnings: no Double Points
                 Announce("THE CHEST MOVED", 3);
                 Sfx_PlaySfxCentered(NA_SE_VO_SK_LAUGH);
@@ -1125,6 +1179,76 @@ static void Buy(PlayState* play, Station& station, const Offer& offer, int who) 
     }
 }
 
+static Offer WallBuyOffer(const WallBuy& w, int who) {
+    Offer offer;
+    if (!w.grenades) {
+        Guns_WallOffer(who, w.gun, &offer.label, &offer.cost, &offer.available, &offer.unavailableReason);
+        return offer;
+    }
+    offer.label = "GRENADES";
+    offer.cost = kGrenadeCost;
+    bool full = who == 1 ? GetRun().partner.bombBag && GetRun().partner.bombs >= Coop_MaxBombs()
+                         : INV_CONTENT(ITEM_BOMB) == ITEM_BOMB && AMMO(ITEM_BOMB) >= CUR_CAPACITY(UPG_BOMB_BAG);
+    if (full) {
+        offer.available = false;
+        offer.unavailableReason = "FULL";
+    }
+    return offer;
+}
+
+static void UpdateWallBuyer(PlayState* play, const Buyer& buyer, const WallBuy& w) {
+    Offer offer = WallBuyOffer(w, buyer.index);
+    std::string button = buyer.index == 0 ? BuyButtonName() : "A";
+    if (!offer.available) {
+        *buyer.prompt = offer.label + " - " + offer.unavailableReason;
+    } else {
+        *buyer.prompt = button + ": " + offer.label + " [" + std::to_string(offer.cost) + "]";
+    }
+    if (!buyer.pressed || buyer.busy) {
+        return;
+    }
+    if (!offer.available || !SpendPoints(buyer.index, offer.cost)) {
+        Fail();
+        return;
+    }
+    Sound_Play("purchase");
+    if (!w.grenades) {
+        Guns_WallBuy(play, buyer.index, w.gun);
+        return;
+    }
+    // Black Ops' grenades are our bombs.
+    if (buyer.index == 1) {
+        GetRun().partner.bombBag = true;
+        Coop_GiveBombs(kGrenadesPerBuy);
+    } else {
+        if (INV_CONTENT(ITEM_BOMB) != ITEM_BOMB) {
+            Item_Give(play, ITEM_BOMB_BAG_20);
+            AMMO(ITEM_BOMB) = 0;
+            AutoEquip(play, ITEM_BOMB);
+        }
+        AMMO(ITEM_BOMB) = static_cast<s8>(std::min<int>(AMMO(ITEM_BOMB) + kGrenadesPerBuy, CUR_CAPACITY(UPG_BOMB_BAG)));
+    }
+    Announce(buyer.index == 1 ? "PLAYER 2: GRENADES" : "GRENADES", 2);
+    Sfx_PlaySfxCentered(NA_SE_SY_GET_ITEM);
+}
+
+int Stations_WallBuyCount() {
+    return static_cast<int>(sWallBuys.size());
+}
+
+bool Stations_WallBuyWares(int index, Vec3f* pos, ArmoryWares* wares) {
+    if (index < 0 || index >= static_cast<int>(sWallBuys.size())) {
+        return false;
+    }
+    const WallBuy& w = sWallBuys[index];
+    *pos = w.spot;
+    wares->gun = static_cast<int>(w.gun);
+    wares->item = w.grenades ? static_cast<u8>(ITEM_BOMB) : static_cast<u8>(ITEM_NONE);
+    wares->ammo = false;
+    wares->cost = WallBuyOffer(w, 0).cost;
+    return true;
+}
+
 static void UpdateBuyer(PlayState* play, const Buyer& buyer) {
     if (!buyer.prompt->empty()) {
         return; // a revive prompt comes first
@@ -1141,6 +1265,20 @@ static void UpdateBuyer(PlayState* play, const Buyer& buyer) {
             nearest = &station;
             nearestDist = dist;
         }
+    }
+    // A wall buy nearer than any station: that's what's for sale.
+    WallBuy* wall = nullptr;
+    float wallDist = kWallBuyReach;
+    for (WallBuy& w : sWallBuys) {
+        float dist = Math_Vec3f_DistXZ(&w.spot, &buyerPos);
+        if (dist < wallDist && fabsf(w.floor.y - buyer.pos.y) < 60.0f && Arena_ZoneOpen(w.zone)) {
+            wall = &w;
+            wallDist = dist;
+        }
+    }
+    if (wall != nullptr && (nearest == nullptr || wallDist < nearestDist)) {
+        UpdateWallBuyer(play, buyer, *wall);
+        return;
     }
     if (nearest == nullptr) {
         return;
