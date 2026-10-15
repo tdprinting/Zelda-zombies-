@@ -16,7 +16,8 @@
 //                   --attach merges a head onto a body, or a gun onto view hands at tag_weapon)
 //   bomap gameanim <zone> <xanim> <out.zzanim> [--model <zone> <xmodel>]... [--attach-tag <bone>]
 //                   the game's animation file; the models give the bind pose
-//   bomap mapgeo <zone> <out.zzmap> [--main <dir>] [--scale s] [--large] [--no-props]  the game's map file
+//   bomap mapgeo <zone> <out.zzmap> [--main <dir>] [--scale s] [--large] [--no-props] [--exposure e]
+//                   the game's map file, with the lightmaps and lights baked into vertex colours
 //
 // <zone> is a fastfile (.ff) or an already inflated zone. --main is the install's main/
 // folder, whose .iwd archives hold most textures.
@@ -121,6 +122,8 @@ static int GameCommand(const std::string& command, const Zone& zone, int argc, c
             mapOptions.maxTexture = 128;
         } else if (args[i] == "--no-props") {
             mapOptions.staticModels = false;
+        } else if (args[i] == "--exposure" && i + 1 < args.size()) {
+            mapOptions.light.exposure = std::stof(args[++i]);
         } else {
             positional.push_back(args[i]);
         }
@@ -131,7 +134,7 @@ static int GameCommand(const std::string& command, const Zone& zone, int argc, c
     }
     if (command == "mapgeo") {
         if (positional.size() != 1) {
-            fprintf(stderr, "usage: bomap mapgeo <zone> <out.zzmap> [--main <dir>] [--scale s] [--large] [--no-props]\n");
+            fprintf(stderr, "usage: bomap mapgeo <zone> <out.zzmap> [--main <dir>] [--scale s] [--large] [--no-props] [--exposure e]\n");
             return 2;
         }
         mapOptions.mainDir = mainDir;
@@ -151,6 +154,10 @@ static int GameCommand(const std::string& command, const Zone& zone, int argc, c
         }
         printf("visible    %zu meshes, %zu verts, %zu tris, %zu static models\n", info.meshes, info.verts, info.tris,
                info.staticModels);
+        if (info.subdivideEdge > 0) {
+            printf("           world edges over %.0f units split so the vertex light keeps the lightmap's detail\n",
+                   info.subdivideEdge);
+        }
         printf("materials  %zu, images %zu (%zu colour maps not found%s)\n", info.materials, info.images,
                info.missingImages, mainDir.empty() ? ": pass --main <install>/main for .iwd textures" : "");
         printf("bounds     (%.0f %.0f %.0f) .. (%.0f %.0f %.0f), spawn (%.0f %.0f %.0f)\n", info.boundsMin[0],

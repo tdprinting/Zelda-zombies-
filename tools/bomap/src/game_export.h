@@ -6,6 +6,7 @@
 
 #include "asset_export.h"
 #include "fastfile.h"
+#include "map_light.h"
 #include "texture_source.h"
 #include "zone_walker.h"
 
@@ -69,6 +70,8 @@ struct MapGeoOptions {
     bool staticModels = true;
     int propVertexBudget = 600; // per static model: the first level of detail at or under it
     std::string mainDir;    // the install's main/ folder, for .iwd textures; may be empty
+    LightOptions light;     // how the lightmaps and lights are baked into vertex colours
+    size_t maxVisibleTris = 400000; // big world triangles are split for the bake up to this
 };
 
 struct MapGeoInfo {
@@ -79,6 +82,7 @@ struct MapGeoInfo {
     size_t missingImages = 0;
     float boundsMin[3] = {}, boundsMax[3] = {}; // OoT coordinates after scaling
     float spawn[3] = {};
+    float subdivideEdge = 0; // world edges longer than this were split for the bake (0: none)
 };
 
 // ZZBOMAP1 for a map zone (needs its clipMap_t and GfxWorld).

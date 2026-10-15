@@ -34,6 +34,8 @@ struct {
   u32 material
   u32 vertCount
   struct { s16 pos[3]; f32 uv[2]; u8 rgba[4]; } verts[vertCount]   // rgba: baked light
+                                                                    // (lightmap + primary lights; times a
+                                                                    // stand-in colour when image is -1)
   u32 indexCount
   u16 indices[indexCount]                                           // triangle list
 } meshes

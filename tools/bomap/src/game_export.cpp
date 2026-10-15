@@ -1,6 +1,7 @@
 #include "game_export.h"
 
 #include "entities.h"
+#include "map_light.h"
 
 #include <algorithm>
 #include <array>
@@ -655,6 +656,138 @@ struct MeshBuilder {
     }
 };
 
+
+// A world surface on its way to the map file, in Black Ops axes.
+struct WorldVert {
+    float pos[3];
+    float normal[3];
+    float uv[2];
+    float lm[2];
+    float alpha;
+};
+
+struct WorldSurface {
+    uint32_t material = 0;
+    int light = 0; // the surface's primary light
+    std::vector<WorldVert> verts;
+    std::vector<uint32_t> tris;
+};
+
+WorldVert Midpoint(const WorldVert& a, const WorldVert& b) {
+    WorldVert m;
+    for (int c = 0; c < 3; c++) {
+        m.pos[c] = (a.pos[c] + b.pos[c]) * 0.5f;
+        m.normal[c] = a.normal[c] + b.normal[c];
+    }
+    float len = std::sqrt(Dot(m.normal, m.normal));
+    for (float& c : m.normal) {
+        c = len > 0 ? c / len : 0.0f;
+    }
+    for (int c = 0; c < 2; c++) {
+        m.uv[c] = (a.uv[c] + b.uv[c]) * 0.5f;
+        m.lm[c] = (a.lm[c] + b.lm[c]) * 0.5f;
+    }
+    m.alpha = (a.alpha + b.alpha) * 0.5f;
+    return m;
+}
+
+float EdgeLength(const WorldVert& a, const WorldVert& b) {
+    float d[3] = { a.pos[0] - b.pos[0], a.pos[1] - b.pos[1], a.pos[2] - b.pos[2] };
+    return std::sqrt(Dot(d, d));
+}
+
+// Splits every edge longer than `maxEdge` at its middle, again and again. Whether an
+// edge splits depends only on the edge, so neighbouring triangles split it the same
+// way and no cracks open. Returns false (leaving `ws` as it was) past 65535 vertices.
+bool SplitLongEdges(WorldSurface& ws, float maxEdge, bool countOnly, size_t* triCount) {
+    std::vector<WorldVert> verts = ws.verts;
+    std::map<std::pair<uint32_t, uint32_t>, uint32_t> mids;
+    std::vector<uint32_t> out;
+    std::vector<std::array<uint32_t, 3>> work;
+    for (size_t t = 0; t + 2 < ws.tris.size(); t += 3) {
+        work.push_back({ ws.tris[t], ws.tris[t + 1], ws.tris[t + 2] });
+    }
+    size_t count = 0;
+    auto mid = [&](uint32_t a, uint32_t b) {
+        auto key = std::make_pair(std::min(a, b), std::max(a, b));
+        auto it = mids.find(key);
+        if (it != mids.end()) {
+            return it->second;
+        }
+        uint32_t i = static_cast<uint32_t>(verts.size());
+        verts.push_back(Midpoint(verts[a], verts[b]));
+        mids.emplace(key, i);
+        return i;
+    };
+    while (!work.empty()) {
+        std::array<uint32_t, 3> t = work.back();
+        work.pop_back();
+        bool split[3];
+        int n = 0;
+        for (int e = 0; e < 3; e++) {
+            split[e] = EdgeLength(verts[t[e]], verts[t[(e + 1) % 3]]) > maxEdge;
+            n += split[e];
+        }
+        if (n == 0) {
+            count++;
+            if (!countOnly) {
+                out.insert(out.end(), t.begin(), t.end());
+            }
+            continue;
+        }
+        // Rotate so the first split edge is t0-t1 (and for two, the unsplit one is t2-t0).
+        int r = 0;
+        if (n == 1) {
+            r = split[0] ? 0 : split[1] ? 1 : 2;
+        } else if (n == 2) {
+            r = !split[2] ? 0 : !split[0] ? 1 : 2;
+        }
+        uint32_t a = t[r], b = t[(r + 1) % 3], c = t[(r + 2) % 3];
+        uint32_t ab = mid(a, b);
+        if (n == 1) {
+            work.push_back({ a, ab, c });
+            work.push_back({ ab, b, c });
+        } else if (n == 2) {
+            uint32_t bc = mid(b, c);
+            work.push_back({ ab, b, bc });
+            work.push_back({ a, ab, bc });
+            work.push_back({ a, bc, c });
+        } else {
+            uint32_t bc = mid(b, c), ca = mid(c, a);
+            work.push_back({ a, ab, ca });
+            work.push_back({ ab, b, bc });
+            work.push_back({ ca, bc, c });
+            work.push_back({ ab, bc, ca });
+        }
+        if (verts.size() > 0xFFFF) {
+            return false;
+        }
+    }
+    if (triCount != nullptr) {
+        *triCount = count;
+    }
+    if (!countOnly) {
+        ws.verts = std::move(verts);
+        ws.tris = std::move(out);
+    }
+    return true;
+}
+
+size_t SubdividedTriCount(const WorldSurface& ws, float maxEdge) {
+    size_t count = 0;
+    WorldSurface copy;
+    copy.tris = ws.tris;
+    copy.verts = ws.verts;
+    if (!SplitLongEdges(copy, maxEdge, true, &count)) {
+        return ws.tris.size() / 3;
+    }
+    return count;
+}
+
+void Subdivide(WorldSurface& ws, float maxEdge) {
+    SplitLongEdges(ws, maxEdge, false, nullptr);
+}
+
 } // namespace
 
 Model ReadBrushModel(const Zone& zone, const WalkResult& walk, int submodel) {
@@ -895,39 +1028,6 @@ std::vector<uint8_t> WriteMapGeo(const Zone& zone, const WalkResult& walk, const
     uint32_t gvertCount = s.U32(draw + 156);
     size_t gindices = walk.Pointer(draw + 188);
     uint32_t gindexCount = s.U32(draw + 184);
-    // The primary lightmap's green channel is how much of the main light reaches each
-    // spot: a cheap, good looking stand-in for the full baked lighting.
-    std::vector<uint8_t> shadow;
-    int shadowW = 0, shadowH = 0;
-    {
-        size_t lm = walk.Pointer(draw + 16);
-        int image = lm != kNoData ? walk.AssetAt(lm) : -1;
-        if (image >= 0) {
-            try {
-                if (!DecodeZoneImage(zone, walk, image, shadow, shadowW, shadowH)) {
-                    shadow.clear();
-                }
-            } catch (const std::exception&) {
-                shadow.clear();
-            }
-        }
-    }
-    auto bake = [&](size_t v, uint8_t rgba[4]) {
-        float light = 0.75f;
-        if (!shadow.empty()) {
-            float lu = s.F32(v + 28), lv = s.F32(v + 32);
-            int x = std::clamp(static_cast<int>(lu * shadowW), 0, shadowW - 1);
-            int y = std::clamp(static_cast<int>(lv * shadowH), 0, shadowH - 1);
-            light = 0.4f + 0.6f * shadow[(static_cast<size_t>(y) * shadowW + x) * 4 + 1] / 255.0f;
-        }
-        // World vertex colours are mostly blend weights between a material's layers (they
-        // paint terrain magenta), so only the light goes in; alpha is kept.
-        uint32_t color = s.U32(v + 16);
-        for (int k = 0; k < 3; k++) {
-            rgba[k] = static_cast<uint8_t>(std::clamp(255.0f * light, 0.0f, 255.0f));
-        }
-        rgba[3] = static_cast<uint8_t>(color >> 24);
-    };
     auto putPos = [&](const float cod[3], int16_t out[3]) {
         float o[3];
         ToOotAxes(cod, o);
@@ -971,6 +1071,61 @@ std::vector<uint8_t> WriteMapGeo(const Zone& zone, const WalkResult& walk, const
         }
     }
     bool flipWorld = agree < 0;
+
+    // Static models first: their triangle count sets how far the world's triangles
+    // can be split for the bake.
+    struct PropInst {
+        int model;
+        float origin[3];
+        float axis[3][3];
+        float scale;
+        int light;
+    };
+    std::map<int, Model> propModels;
+    std::vector<PropInst> props;
+    size_t propTris = 0;
+    if (options.staticModels) {
+        uint32_t smodelCount = s.U32(gw + 836);
+        size_t insts = walk.Pointer(gw + 836 + 96);
+        for (uint32_t i = 0; i < smodelCount && insts != kNoData; i++) {
+            size_t inst = insts + i * 76;
+            int mi = walk.AssetAt(inst + 56);
+            if (mi < 0 || walk.assets[mi].header == kNoData) {
+                continue;
+            }
+            auto it = propModels.find(mi);
+            if (it == propModels.end()) {
+                // The first level of detail within the budget keeps grass and trees affordable.
+                int lods = ModelLodCount(zone, walk, mi), lod = 0;
+                while (lod + 1 < lods && ModelLodVerts(zone, walk, mi, lod) > options.propVertexBudget) {
+                    lod++;
+                }
+                it = propModels.emplace(mi, ReadModel(zone, walk, mi, lod)).first;
+            }
+            PropInst p;
+            p.model = mi;
+            for (int c = 0; c < 3; c++) {
+                p.origin[c] = s.F32(inst + 4 + c * 4);
+            }
+            for (int r = 0; r < 3; r++) {
+                for (int c = 0; c < 3; c++) {
+                    p.axis[r][c] = s.F32(inst + 16 + (r * 3 + c) * 4);
+                }
+            }
+            p.scale = s.F32(inst + 52);
+            p.light = s.U8(inst + 75);
+            props.push_back(p);
+            for (const Surface& surf : it->second.surfaces) {
+                if (!surf.material.empty() && !SkipVisual(surf.material, walk) && surf.verts.size() <= 0xFFFF) {
+                    propTris += surf.tris.size() / 3;
+                }
+            }
+        }
+    }
+
+    // World surfaces, each with the vertex range its triangles use.
+    MapLighting lighting(zone, walk, worldIndex, options.light);
+    std::vector<WorldSurface> world;
     for (uint32_t i = 0; i < surfaceCount && surfaces != kNoData; i++) {
         size_t sf = surfaces + i * 80;
         int matIndex = walk.AssetAt(sf + 48);
@@ -987,100 +1142,145 @@ std::vector<uint8_t> WriteMapGeo(const Zone& zone, const WalkResult& walk, const
         // only the range this surface's triangles use.
         uint32_t lowest = 0xFFFF, highest = 0;
         for (uint32_t k = 0; k < triCount * 3; k++) {
-            uint32_t i = s.U16(gindices + (base + k) * 2);
-            lowest = std::min(lowest, i);
-            highest = std::max(highest, i);
+            uint32_t idx = s.U16(gindices + (base + k) * 2);
+            lowest = std::min(lowest, idx);
+            highest = std::max(highest, idx);
         }
         if (triCount == 0 || highest >= vertCount) {
             continue;
         }
-        uint32_t used = highest - lowest + 1;
-        uint32_t mi = mats.Add(walk, material, &textures, options.maxTexture);
-        MeshBuilder::Mesh& mesh = meshes.For(mi, used);
-        int start = static_cast<int>(mesh.verts.size()) - static_cast<int>(lowest);
+        WorldSurface ws;
+        ws.material = mats.Add(walk, material, &textures, options.maxTexture);
+        ws.light = s.U8(sf + 54);
         for (uint32_t k = lowest; k <= highest; k++) {
             size_t v = gverts + (first + k) * 44;
-            MeshBuilder::V out;
-            float cod[3] = { s.F32(v), s.F32(v + 4), s.F32(v + 8) };
-            putPos(cod, out.pos);
+            WorldVert out;
+            for (int c = 0; c < 3; c++) {
+                out.pos[c] = s.F32(v + c * 4);
+            }
+            uint32_t packed = s.U32(v + 36);
+            float sc = ((packed >> 24) + 192.0f) / 32385.0f;
+            for (int c = 0; c < 3; c++) {
+                out.normal[c] = ((packed >> (c * 8) & 0xFF) - 127.0f) * sc;
+            }
             out.uv[0] = s.F32(v + 20);
             out.uv[1] = s.F32(v + 24);
-            bake(v, out.rgba);
-            mesh.verts.push_back(out);
+            out.lm[0] = s.F32(v + 28);
+            out.lm[1] = s.F32(v + 32);
+            // World vertex colours are mostly blend weights between a material's layers;
+            // only the alpha (how much a blend layer shows) is kept.
+            out.alpha = static_cast<float>(s.U32(v + 16) >> 24);
+            ws.verts.push_back(out);
         }
         for (uint32_t t = 0; t < triCount; t++) {
-            uint16_t idx[3];
+            uint32_t idx[3];
             for (int k = 0; k < 3; k++) {
-                idx[k] = static_cast<uint16_t>(start + s.U16(gindices + (base + t * 3 + k) * 2));
+                idx[k] = s.U16(gindices + (base + t * 3 + k) * 2) - lowest;
             }
-            mesh.indices.push_back(idx[0]);
-            mesh.indices.push_back(idx[flipWorld ? 2 : 1]);
-            mesh.indices.push_back(idx[flipWorld ? 1 : 2]);
+            ws.tris.push_back(idx[0]);
+            ws.tris.push_back(idx[flipWorld ? 2 : 1]);
+            ws.tris.push_back(idx[flipWorld ? 1 : 2]);
         }
-        stats.tris += triCount;
+        world.push_back(std::move(ws));
     }
 
-    // Static models: crates, sandbags, trees, furniture.
-    if (options.staticModels) {
-        uint32_t smodelCount = s.U32(gw + 836);
-        size_t insts = walk.Pointer(gw + 836 + 96);
-        std::map<int, Model> cache;
-        for (uint32_t i = 0; i < smodelCount && insts != kNoData; i++) {
-            size_t inst = insts + i * 76;
-            int mi = walk.AssetAt(inst + 56);
-            if (mi < 0 || walk.assets[mi].header == kNoData) {
+    // Light is baked per vertex, so big triangles (floors, walls) are split until their
+    // edges are short enough to carry the lightmap's detail, as far as the budget allows.
+    size_t worldTris = 0;
+    for (const WorldSurface& ws : world) {
+        worldTris += ws.tris.size() / 3;
+    }
+    size_t budget = options.maxVisibleTris > propTris ? options.maxVisibleTris - propTris : 0;
+    float edge = 0;
+    if (lighting.HasLightmap() && worldTris < budget) {
+        for (float candidate : { 1024.0f, 768.0f, 512.0f, 384.0f, 256.0f, 192.0f, 128.0f, 96.0f, 64.0f, 48.0f, 32.0f }) {
+            size_t total = 0;
+            for (const WorldSurface& ws : world) {
+                total += SubdividedTriCount(ws, candidate);
+                if (total > budget) {
+                    break;
+                }
+            }
+            if (total > budget) {
+                break;
+            }
+            edge = candidate;
+        }
+    }
+    stats.subdivideEdge = edge;
+    for (WorldSurface& ws : world) {
+        if (edge > 0) {
+            Subdivide(ws, edge);
+        }
+        uint32_t mi = ws.material;
+        float albedo[3] = { 1, 1, 1 };
+        if (mats.image[mi] < 0) {
+            MaterialAlbedo(mats.names[mi], albedo);
+        }
+        MeshBuilder::Mesh& mesh = meshes.For(mi, ws.verts.size());
+        size_t start = mesh.verts.size();
+        for (const WorldVert& wv : ws.verts) {
+            MeshBuilder::V out;
+            putPos(wv.pos, out.pos);
+            out.uv[0] = wv.uv[0];
+            out.uv[1] = wv.uv[1];
+            float light[3];
+            lighting.World(wv.pos, wv.normal, wv.lm[0], wv.lm[1], ws.light, light);
+            lighting.ToBytes(light, albedo, out.rgba);
+            out.rgba[3] = static_cast<uint8_t>(std::clamp(wv.alpha, 0.0f, 255.0f));
+            mesh.verts.push_back(out);
+        }
+        for (uint32_t idx : ws.tris) {
+            mesh.indices.push_back(static_cast<uint16_t>(start + idx));
+        }
+        stats.tris += ws.tris.size() / 3;
+    }
+    world.clear();
+    lighting.FinishGrid();
+
+    // Static models: crates, sandbags, trees, furniture. No lightmap: they take the
+    // light the world around them got, and their own primary light.
+    for (const PropInst& p : props) {
+        const Model& model = propModels.at(p.model);
+        bool flip = NeedsFlip(model.surfaces);
+        stats.staticModels++;
+        for (const Surface& surf : model.surfaces) {
+            if (surf.material.empty() || SkipVisual(surf.material, walk) || surf.verts.size() > 0xFFFF) {
                 continue;
             }
-            auto it = cache.find(mi);
-            if (it == cache.end()) {
-                // The first level of detail within the budget keeps grass and trees affordable.
-                int lods = ModelLodCount(zone, walk, mi), lod = 0;
-                while (lod + 1 < lods && ModelLodVerts(zone, walk, mi, lod) > options.propVertexBudget) {
-                    lod++;
-                }
-                it = cache.emplace(mi, ReadModel(zone, walk, mi, lod)).first;
+            uint32_t mat = mats.Add(walk, surf.material, &textures, options.maxTexture);
+            float albedo[3] = { 1, 1, 1 };
+            if (mats.image[mat] < 0) {
+                MaterialAlbedo(surf.material, albedo);
             }
-            const Model& model = it->second;
-            float origin[3] = { s.F32(inst + 4), s.F32(inst + 8), s.F32(inst + 12) };
-            float axis[3][3];
-            for (int r = 0; r < 3; r++) {
+            MeshBuilder::Mesh& mesh = meshes.For(mat, surf.verts.size());
+            uint16_t start = static_cast<uint16_t>(mesh.verts.size());
+            for (const Vertex& v : surf.verts) {
+                float pos[3], n[3];
                 for (int c = 0; c < 3; c++) {
-                    axis[r][c] = s.F32(inst + 16 + (r * 3 + c) * 4);
+                    pos[c] = p.origin[c] + p.scale * (v.pos[0] * p.axis[0][c] + v.pos[1] * p.axis[1][c] + v.pos[2] * p.axis[2][c]);
+                    n[c] = v.normal[0] * p.axis[0][c] + v.normal[1] * p.axis[1][c] + v.normal[2] * p.axis[2][c];
                 }
+                float len = std::sqrt(Dot(n, n));
+                for (float& c : n) {
+                    c = len > 0 ? c / len : 0.0f;
+                }
+                MeshBuilder::V out;
+                putPos(pos, out.pos);
+                out.uv[0] = v.uv[0];
+                out.uv[1] = v.uv[1];
+                float light[3];
+                lighting.Prop(pos, n, p.light, light);
+                lighting.ToBytes(light, albedo, out.rgba);
+                out.rgba[3] = 255;
+                mesh.verts.push_back(out);
             }
-            float scale = s.F32(inst + 52);
-            bool flip = NeedsFlip(model.surfaces);
-            stats.staticModels++;
-            for (const Surface& surf : model.surfaces) {
-                if (surf.material.empty() || SkipVisual(surf.material, walk) || surf.verts.size() > 0xFFFF) {
-                    continue;
-                }
-                uint32_t mat = mats.Add(walk, surf.material, &textures, options.maxTexture);
-                MeshBuilder::Mesh& mesh = meshes.For(mat, surf.verts.size());
-                uint16_t start = static_cast<uint16_t>(mesh.verts.size());
-                for (const Vertex& v : surf.verts) {
-                    float world[3], n[3];
-                    for (int c = 0; c < 3; c++) {
-                        world[c] = origin[c] + scale * (v.pos[0] * axis[0][c] + v.pos[1] * axis[1][c] + v.pos[2] * axis[2][c]);
-                        n[c] = v.normal[0] * axis[0][c] + v.normal[1] * axis[1][c] + v.normal[2] * axis[2][c];
-                    }
-                    MeshBuilder::V out;
-                    putPos(world, out.pos);
-                    out.uv[0] = v.uv[0];
-                    out.uv[1] = v.uv[1];
-                    // No baked light for props: a soft light from above.
-                    uint8_t l = static_cast<uint8_t>(150 + 70 * std::clamp(n[2], -1.0f, 1.0f));
-                    out.rgba[0] = out.rgba[1] = out.rgba[2] = l;
-                    out.rgba[3] = 255;
-                    mesh.verts.push_back(out);
-                }
-                for (size_t t = 0; t + 2 < surf.tris.size(); t += 3) {
-                    mesh.indices.push_back(static_cast<uint16_t>(start + surf.tris[t]));
-                    mesh.indices.push_back(static_cast<uint16_t>(start + surf.tris[flip ? t + 2 : t + 1]));
-                    mesh.indices.push_back(static_cast<uint16_t>(start + surf.tris[flip ? t + 1 : t + 2]));
-                }
-                stats.tris += surf.tris.size() / 3;
+            for (size_t t = 0; t + 2 < surf.tris.size(); t += 3) {
+                mesh.indices.push_back(static_cast<uint16_t>(start + surf.tris[t]));
+                mesh.indices.push_back(static_cast<uint16_t>(start + surf.tris[flip ? t + 2 : t + 1]));
+                mesh.indices.push_back(static_cast<uint16_t>(start + surf.tris[flip ? t + 1 : t + 2]));
             }
+            stats.tris += surf.tris.size() / 3;
         }
     }
 
