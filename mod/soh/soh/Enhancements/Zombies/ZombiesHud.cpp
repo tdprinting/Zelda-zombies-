@@ -197,7 +197,7 @@ static void DrawContents(GfxPrint* printer) {
         }
         if (!timers.empty()) {
             GfxPrint_SetColor(printer, 120, 200, 255, 255);
-            PrintCentered(printer, split ? 15 : 3, timers);
+            PrintCentered(printer, split ? 15 : 22, timers); // bottom centre, as Black Ops shows them
         }
     }
 
