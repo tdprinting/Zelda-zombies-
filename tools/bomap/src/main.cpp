@@ -16,6 +16,10 @@
 //                   --attach merges a head onto a body, or a gun onto view hands at tag_weapon)
 //   bomap gameanim <zone> <xanim> <out.zzanim> [--model <zone> <xmodel>]... [--attach-tag <bone>]
 //                   the game's animation file; the models give the bind pose
+//   bomap playeranims <zone>... --out <dir> --model <zone> <xmodel>
+//                   Black Ops' third-person player animations for Link (stand, aim, walk, run,
+//                   fire, reload, raise, put away) as .zzanim files, the player skeleton they
+//                   play on as <dir>/player_skeleton.zzmodel, and their player_ manifest lines
 //   bomap mapgeo <zone> <out.zzmap> [--main <dir>] [--scale s] [--large] [--no-props] [--exposure e]
 //                   the game's map file, with the lightmaps and lights baked into vertex colours
 //   bomap fx <zone> <effect>                          what a particle effect holds
@@ -36,6 +40,7 @@
 #include "fastfile.h"
 #include "fx_export.h"
 #include "hud_export.h"
+#include "player_anims.h"
 #include "zone_walker.h"
 
 #include <algorithm>
@@ -43,6 +48,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <map>
 #include <optional>
 #include <stdexcept>
@@ -359,7 +365,102 @@ static int HudCommand(int argc, char** argv) {
     return 0;
 }
 
+// bomap playeranims <zone>... --out <dir> --model <zone> <xmodel>
+static int PlayerAnimsCommand(int argc, char** argv) {
+    std::vector<std::string> zones;
+    std::string outDir, modelZone, modelName;
+    for (int i = 2; i < argc; i++) {
+        std::string a = argv[i];
+        if (a == "--out" && i + 1 < argc) {
+            outDir = argv[++i];
+        } else if (a == "--model" && i + 2 < argc) {
+            modelZone = argv[++i];
+            modelName = argv[++i];
+        } else {
+            zones.push_back(a);
+        }
+    }
+    if (zones.empty() || outDir.empty() || modelName.empty()) {
+        fprintf(stderr, "usage: bomap playeranims <zone>... --out <dir> --model <zone> <xmodel>\n"
+                        "  e.g. bomap playeranims common_zombie.ff --out zombies/models "
+                        "--model zombie_cod5_prototype.ff c_usa_dempsey_body\n");
+        return 2;
+    }
+    // The player body the animations were made for: its bones are the bind pose that
+    // turns their translations into positions, and the game's reference skeleton.
+    Zone mz = ReadFastfile(modelZone);
+    WalkResult mw = WalkZone(mz);
+    int mi = mw.Find(0x05, modelName);
+    if (mi < 0) {
+        fprintf(stderr, "no xmodel named %s in %s\n", modelName.c_str(), modelZone.c_str());
+        return 1;
+    }
+    Model body = ReadModel(mz, mw, mi);
+    Model skeleton = body;
+    skeleton.surfaces.clear(); // bones only: the game never draws it
+    if (!WriteFile(outDir + "/player_skeleton.zzmodel", WriteGameModel(skeleton, mw, nullptr, 64))) {
+        fprintf(stderr, "can't write %s/player_skeleton.zzmodel\n", outDir.c_str());
+        return 1;
+    }
+    printf("wrote %s/player_skeleton.zzmodel: %zu bones\n", outDir.c_str(), skeleton.bones.size());
+    std::vector<std::string> lines = { "player_skeleton player_skeleton" };
+    std::vector<Zone> zoneData;
+    std::vector<WalkResult> walks;
+    for (const std::string& z : zones) {
+        zoneData.push_back(ReadFastfile(z));
+        walks.push_back(WalkZone(zoneData.back()));
+    }
+    int missing = 0;
+    for (const PlayerAnimRole& role : PlayerAnimRoles()) {
+        bool found = false;
+        for (const char* name : role.names) {
+            for (size_t z = 0; z < zoneData.size() && !found; z++) {
+                int index = walks[z].Find(0x04, name);
+                if (index < 0) {
+                    continue;
+                }
+                Anim anim = ReadAnim(zoneData[z], walks[z], index);
+                GameAnimInfo info;
+                std::string out = outDir + "/" + name + ".zzanim";
+                if (!WriteFile(out, WriteGameAnim(anim, &body, &info))) {
+                    fprintf(stderr, "can't write %s\n", out.c_str());
+                    return 1;
+                }
+                printf("%-24s %s: %d frames, %.2f s, moves %.1f units/s\n", role.role, name, info.frames, info.seconds,
+                       info.seconds > 0 ? info.rootDistance / info.seconds : 0.0f);
+                lines.push_back(std::string(role.role) + " " + name);
+                found = true;
+            }
+            if (found) {
+                break;
+            }
+        }
+        if (!found) {
+            printf("%-24s not found (the game uses its stand-in)\n", role.role);
+            missing++;
+        }
+    }
+    std::string manifestPath = outDir + "/manifest.txt";
+    std::string old;
+    {
+        std::ifstream in(manifestPath, std::ios::binary);
+        old.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    std::ofstream(manifestPath, std::ios::binary) << MergeManifest(old, lines);
+    printf("%zu player animations written, %d roles not found; %s updated\n", lines.size() - 1, missing,
+           manifestPath.c_str());
+    return 0;
+}
+
 int main(int argc, char** argv) {
+    if (argc >= 2 && std::string(argv[1]) == "playeranims") {
+        try {
+            return PlayerAnimsCommand(argc, argv);
+        } catch (const std::exception& e) {
+            fprintf(stderr, "bomap: %s\n", e.what());
+            return 1;
+        }
+    }
     if (argc >= 2 && std::string(argv[1]) == "hud") {
         try {
             return HudCommand(argc, argv);

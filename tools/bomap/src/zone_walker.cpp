@@ -708,6 +708,7 @@ std::string Walker::SndBank(size_t h, SoundBankRecord& rec) {
             size_t alias = head + a * 84;
             SoundAliasRecord ar;
             ar.name = XStr(alias, 0);
+            ar.alias = alias;
             XStr(alias, 8);  // subtitle
             XStr(alias, 12); // secondaryname
             if (IsInline(alias, 16)) {
@@ -722,6 +723,7 @@ std::string Walker::SndBank(size_t h, SoundBankRecord& rec) {
                     std::string name = ar.name;
                     ar = it->second;
                     ar.name = name;
+                    ar.alias = alias;
                     ar.shared = true;
                 }
             }

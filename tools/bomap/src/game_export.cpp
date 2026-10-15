@@ -422,6 +422,17 @@ std::vector<uint8_t> WriteGameAnim(const Anim& anim, const Model* bind, GameAnim
         out.U32(static_cast<uint32_t>(std::lround(time * anim.numFrames)));
         out.Name(name, 32);
     }
+    // Optional trailer (readers that stop after the notetracks ignore it): how far the
+    // animation carries the character, in OoT axes, so a walk can be played at the pace
+    // the character moves.
+    float travel[3] = { 0, 0, 0 };
+    if (!anim.rootTrans.keys.empty() && anim.rootTrans.keys.back().size() >= 3) {
+        ToOotAxes(anim.rootTrans.keys.back().data(), travel);
+    }
+    out.Raw("ROOT", 4);
+    for (float v : travel) {
+        out.F32(v);
+    }
     if (info != nullptr) {
         info->bones = anim.bones.size();
         info->bonesWithPos = withPos;

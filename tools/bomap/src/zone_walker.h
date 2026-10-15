@@ -84,6 +84,7 @@ struct ImageRecord {
 struct SoundAliasRecord {
     std::string name;
     std::string file;   // streamed file name, or the loaded sound's name
+    size_t alias = kNoData; // the alias's 84-byte snd_alias_t (volume, pitch, distances, flags)
     bool loaded = false; // the sound's data is inside the zone
     size_t asset = kNoData; // LoadedSound: snd_asset header (56 bytes)
     size_t data = kNoData;  // LoadedSound: the sample data
