@@ -1,9 +1,11 @@
-# An Android build of Ship of Harkinian with Zombies of Time.
+# The Android build of Zombies of Time.
 #
 # Official SoH has no Android version, so this builds on linkzenic's Android port
-# of SoH 9.3.0 (pinned below), adds the mode, and produces a debug APK. It installs
-# next to a normal SoH app as "com.linkzenic.soh.localtest" and asks for your own
-# Ocarina of Time ROM like any SoH build. No game data is included.
+# of SoH 9.3.0 (pinned below), applies the Zombies of Time engine patches (mod/patches
+# and mod/patches-android), adds the mode, and produces a debug APK. It installs as its
+# own app, "Zombies of Time" (com.tdprinting.zombiesoftime), next to any SoH app, keeps
+# its data in /storage/emulated/0/ZombiesOfTime, and asks for your own Ocarina of Time
+# ROM like any SoH build. No game data is included.
 name: Android build
 
 on:
@@ -38,8 +40,8 @@ jobs:
         run: |
           git -C libultraship apply --check ../CMake/patches/libultraship-android.patch
           git -C libultraship apply ../CMake/patches/libultraship-android.patch
-      - name: Add Zombies of Time
-        run: cp -R mod/soh/. soh-android/soh/
+      - name: Turn the port into Zombies of Time
+        run: ./scripts/apply.sh --android soh-android
       - name: Install host dependencies
         run: |
           sudo apt-get update
@@ -66,6 +68,9 @@ jobs:
         run: |
           APK=$(find soh-android/Android/app/build/outputs/apk/debug -name '*.apk' | head -1)
           test -n "$APK"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt2" dump badging "$APK" > badging.txt
+          grep -q "^package: name='com.tdprinting.zombiesoftime'" badging.txt
+          grep -q "^application-label:'Zombies of Time'" badging.txt
           cp "$APK" zombies-of-time-android.apk
       - uses: actions/upload-artifact@v4
         with:

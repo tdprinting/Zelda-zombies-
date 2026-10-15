@@ -40,8 +40,8 @@ void Bounds_Scan(PlayState* play) {
         if (SurfaceType_GetSceneExitIndex(&play->colCtx, poly, BGCHECK_SCENE) == 0) {
             continue;
         }
-        const Vec3s& a = header->vtxList[COLPOLY_VTX_INDEX(poly->flags_vIA)];
-        const Vec3s& b = header->vtxList[COLPOLY_VTX_INDEX(poly->flags_vIB)];
+        const Vec3s& a = header->vtxList[COLPOLY_VTX_A(poly)];
+        const Vec3s& b = header->vtxList[COLPOLY_VTX_B(poly)];
         const Vec3s& c = header->vtxList[poly->vIC];
         ExitBox box;
         box.minX = std::min({ a.x, b.x, c.x }) - kMargin;

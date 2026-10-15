@@ -146,6 +146,9 @@ static int GameCommand(const std::string& command, const Zone& zone, int argc, c
                "brushes left out\n",
                info.colVerts, info.colTris, info.wallOnlyTris, info.worldBrushes, info.brushTris, info.terrainTris,
                info.skippedBrushes);
+        if (info.colWeld > 0) {
+            printf("           welded on a %d unit grid to fit OoT's 32767 collision triangles\n", info.colWeld);
+        }
         printf("visible    %zu meshes, %zu verts, %zu tris, %zu static models\n", info.meshes, info.verts, info.tris,
                info.staticModels);
         printf("materials  %zu, images %zu (%zu colour maps not found%s)\n", info.materials, info.images,

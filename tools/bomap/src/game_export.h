@@ -74,6 +74,7 @@ struct MapGeoOptions {
 struct MapGeoInfo {
     size_t colVerts = 0, colTris = 0, wallOnlyTris = 0;
     size_t worldBrushes = 0, skippedBrushes = 0, brushTris = 0, terrainTris = 0;
+    int colWeld = 0; // grid the collision was welded on to fit, 0 when it fit as is
     size_t images = 0, materials = 0, meshes = 0, verts = 0, tris = 0, staticModels = 0;
     size_t missingImages = 0;
     float boundsMin[3] = {}, boundsMax[3] = {}; // OoT coordinates after scaling

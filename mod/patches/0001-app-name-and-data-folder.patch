@@ -1,0 +1,82 @@
+diff --git a/soh/soh/OTRGlobals.cpp b/soh/soh/OTRGlobals.cpp
+index d336c3c5..e52a70ca 100644
+--- a/soh/soh/OTRGlobals.cpp
++++ b/soh/soh/OTRGlobals.cpp
+@@ -276,7 +276,7 @@ std::string portArchivePath = "";
+ static bool sohArchiveVersionMatch = false;
+ 
+ OTRGlobals::OTRGlobals() {
+-    context = Ship::Context::CreateUninitializedInstance("Ship of Harkinian", appShortName, "shipofharkinian.json");
++    context = Ship::Context::CreateUninitializedInstance("Zombies of Time", appShortName, "shipofharkinian.json");
+ 
+     portArchivePath = Ship::Context::LocateFileAcrossAppDirs("soh.o2r");
+     OTRVersion portArchiveVersion = DetectOTRVersion("soh.o2r", false);
+@@ -499,12 +499,12 @@ void OTRGlobals::RunExtract(int argc, char* argv[]) {
+                     msg = "\x1b[4;2HPlease re-extract it from the download.\n"
+                           "\x1b[6;2HPress the Home button to exit...";
+ #elif defined(__WIIU__)
+-                    msg = "Please extract the soh.o2r from the Ship of Harkinian download\nto your folder.\n\nPress "
++                    msg = "Please extract the soh.o2r from the Zombies of Time download\nto your folder.\n\nPress "
+                           "and hold the power\n"
+                           "button to shutdown...";
+ #else
+                     msg =
+-                        "Please extract the soh.o2r from the Ship of Harkinian download to your folder.\n\nExiting...";
++                        "Please extract the soh.o2r from the Zombies of Time download to your folder.\n\nExiting...";
+ #endif
+                     std::string title =
+                         !std::filesystem::exists(portArchivePath) ? "Missing soh.o2r" : "soh.o2r is outdated";
+@@ -588,7 +588,7 @@ void OTRGlobals::RunExtract(int argc, char* argv[]) {
+ #if !defined(__SWITCH__) && !defined(__WIIU__)
+                 if (args.empty()) {
+                     SohGui::RegisterPopup(
+-                        "Run Ship of Harkinian", "All files have been processed. Run SoH?", "Yes", "No",
++                        "Run Zombies of Time", "All files have been processed. Run Zombies of Time?", "Yes", "No",
+                         [&]() {
+                             if (!std::filesystem::exists(Ship::Context::GetAppDirectoryPath(appShortName) +
+                                                          "/oot.o2r") &&
+@@ -856,7 +856,7 @@ void OTRGlobals::Initialize() {
+     // populated here rather than in Menu::InitElement (where the window backends are handled).
+     SohGui::GetSohMenu()->UpdateAudioBackendObjects();
+ 
+-    SPDLOG_INFO("Starting Ship of Harkinian version {} (Branch: {} | Commit: {})", (char*)gBuildVersion,
++    SPDLOG_INFO("Starting Zombies of Time on Ship of Harkinian {} (Branch: {} | Commit: {})", (char*)gBuildVersion,
+                 (char*)gGitBranch, (char*)gGitCommitHash);
+ 
+     auto loader = context->GetResourceManager()->GetResourceLoader();
+@@ -1486,19 +1486,13 @@ bool VerifyArchiveVersion(OTRVersion version) {
+ }
+ 
+ #ifdef __linux__
+-// When run as an AppImage, keep user data in ~/.local/share/soh instead of the launch folder.
+-// Keep using the launch folder if it already has data from older versions.
++// When run as an AppImage, keep user data in ~/.local/share/zombiesoftime instead of the launch folder,
++// even when that folder holds a Ship of Harkinian install, so the two never share saves or settings.
+ static void SetAppImageHome() {
+     if (getenv("APPIMAGE") == nullptr || getenv("SHIP_HOME") != nullptr) {
+         return;
+     }
+ 
+-    for (const char* file : { "shipofharkinian.json", "oot.o2r", "oot-mq.o2r" }) {
+-        if (std::filesystem::exists(file)) {
+-            return;
+-        }
+-    }
+-
+     std::filesystem::path home;
+     const char* dataHome = getenv("XDG_DATA_HOME");
+     const char* userHome = getenv("HOME");
+diff --git a/soh/soh/OTRGlobals.h b/soh/soh/OTRGlobals.h
+index 1c4745d9..d25daca2 100644
+--- a/soh/soh/OTRGlobals.h
++++ b/soh/soh/OTRGlobals.h
+@@ -29,7 +29,8 @@ struct ExtensionEntry {
+ 
+ extern std::unordered_map<std::string, ExtensionEntry> ExtensionCache;
+ 
+-const std::string appShortName = "soh";
++// Zombies of Time installs next to Ship of Harkinian: its own data folder name.
++const std::string appShortName = "zombiesoftime";
+ 
+ class Randomizer;
+ class SaveStateMgr;

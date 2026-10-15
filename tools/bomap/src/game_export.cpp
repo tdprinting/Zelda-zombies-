@@ -494,6 +494,50 @@ struct ColBuilder {
     }
 };
 
+constexpr size_t kMaxColTris = 0x7FFF;
+
+// Snaps the collision vertices to a grid of `cell` units, merging the ones that land
+// together, and drops the triangles that collapse or repeat.
+void WeldCollision(ColBuilder& col, int cell) {
+    std::unordered_map<uint64_t, uint16_t> merged;
+    std::vector<int16_t> verts;
+    std::vector<uint16_t> remap(col.verts.size() / 3);
+    for (size_t i = 0; i < remap.size(); i++) {
+        int16_t snapped[3];
+        for (int c = 0; c < 3; c++) {
+            float v = std::round(static_cast<float>(col.verts[i * 3 + c]) / cell) * cell;
+            snapped[c] = static_cast<int16_t>(std::clamp(v, -32768.0f, 32767.0f));
+        }
+        uint64_t key = static_cast<uint64_t>(static_cast<uint16_t>(snapped[0])) |
+                       static_cast<uint64_t>(static_cast<uint16_t>(snapped[1])) << 16 |
+                       static_cast<uint64_t>(static_cast<uint16_t>(snapped[2])) << 32;
+        auto it = merged.find(key);
+        if (it == merged.end()) {
+            it = merged.emplace(key, static_cast<uint16_t>(verts.size() / 3)).first;
+            verts.insert(verts.end(), snapped, snapped + 3);
+        }
+        remap[i] = it->second;
+    }
+    std::set<std::array<uint16_t, 3>> seen;
+    std::vector<ColBuilder::Tri> tris;
+    for (ColBuilder::Tri t : col.tris) {
+        for (uint16_t& v : t.v) {
+            v = remap[v];
+        }
+        if (t.v[0] == t.v[1] || t.v[1] == t.v[2] || t.v[0] == t.v[2]) {
+            continue;
+        }
+        std::array<uint16_t, 3> key = { t.v[0], t.v[1], t.v[2] };
+        std::sort(key.begin(), key.end());
+        if (seen.insert(key).second) {
+            tris.push_back(t);
+        }
+    }
+    col.verts = std::move(verts);
+    col.tris = std::move(tris);
+    col.weld.clear();
+}
+
 struct Plane {
     float n[3];
     float d;
@@ -829,8 +873,16 @@ std::vector<uint8_t> WriteMapGeo(const Zone& zone, const WalkResult& walk, const
             stats.terrainTris += col.tris.size() - before;
         }
     }
-    if (col.tris.size() > 0xFFFF) {
-        throw std::runtime_error("collision needs more than 65535 triangles (" + std::to_string(col.tris.size()) + ")");
+    // OoT's polygon ids are s16. A mesh with more triangles is welded on a coarser and
+    // coarser grid (2, 4, 8 ... units) until it fits: small bevels and rubble flatten out,
+    // the floors and walls players touch stay put.
+    for (int cell = 2; col.tris.size() > kMaxColTris; cell *= 2) {
+        if (cell > 64) {
+            throw std::runtime_error("collision needs more than " + std::to_string(kMaxColTris) + " triangles (" +
+                                     std::to_string(col.tris.size()) + ")");
+        }
+        WeldCollision(col, cell);
+        stats.colWeld = cell;
     }
 
     // ---- visible geometry

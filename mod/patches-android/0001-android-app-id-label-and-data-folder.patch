@@ -1,0 +1,79 @@
+diff --git a/Android/app/build.gradle b/Android/app/build.gradle
+index 67b2709..bafbfb0 100644
+--- a/Android/app/build.gradle
++++ b/Android/app/build.gradle
+@@ -18,7 +18,7 @@ android {
+     }
+     defaultConfig {
+         if (buildAsApplication) {
+-            applicationId project.findProperty('sohApplicationId') ?: "com.linkzenic.soh"
++            applicationId project.findProperty('sohApplicationId') ?: "com.tdprinting.zombiesoftime"
+         }
+         minSdkVersion 24
+         targetSdkVersion 33
+@@ -38,7 +38,6 @@ android {
+     }
+     buildTypes {
+         debug {
+-            applicationIdSuffix ".localtest"
+             externalNativeBuild {
+                 cmake {
+                     arguments "-DSDL_SHARED=ON", "-DANDROID_STL=c++_static", "-DHAVE_LD_VERSION_SCRIPT=OFF",'-DUSE_OPENGLES=ON', "-DBUILD_REMOTE_CONTROL=1", "-DANDROID_APP_VERSION_NAME=${androidAppVersionName}", "-DSOH_CONFIG_FILENAME=${sohConfigFile}"
+@@ -71,7 +70,7 @@ android {
+             def versionCode = variant.versionCode
+ 
+             def gitTag = System.getenv("GIT_TAG") ?: "v${versionName}"
+-            def newApkName = "soh_${buildType}_${gitTag}.apk"
++            def newApkName = "ZombiesOfTime_${buildType}_${gitTag}.apk"
+             outputFileName = newApkName
+         }
+     }
+diff --git a/Android/app/src/main/java/com/dishii/soh/MainActivity.java b/Android/app/src/main/java/com/dishii/soh/MainActivity.java
+index d2ccffe..f966ba1 100644
+--- a/Android/app/src/main/java/com/dishii/soh/MainActivity.java
++++ b/Android/app/src/main/java/com/dishii/soh/MainActivity.java
+@@ -64,7 +64,7 @@ public class MainActivity extends SDLActivity{
+     private volatile boolean mIsAiming = false;
+     private static final int COPY_BUFFER_SIZE = 65536;
+     private static final int RUMBLE_MAX_DURATION_MS = 5000;
+-    private static final String DATA_FOLDER_NAME = BuildConfig.DEBUG ? "SOH93-Test" : "SOH";
++    private static final String DATA_FOLDER_NAME = "ZombiesOfTime";
+     private static String currentDataRootPath = "/storage/emulated/0/" + DATA_FOLDER_NAME;
+     private static final String PREF_DATA_ROOT_PATH = "dataRootPath";
+     private static final String PREF_LEGACY_DATA_MIGRATION_COMPLETE = "legacyDataMigrationComplete";
+@@ -307,7 +307,7 @@ public class MainActivity extends SDLActivity{
+             layout.setPadding(padding, padding, padding, padding);
+ 
+             TextView message = new TextView(this);
+-            message.setText("Choose where Ship of Harkinian stores saves, mods, settings, and support files.");
++            message.setText("Choose where Zombies of Time stores saves, mods, settings, and support files.");
+             message.setTextColor(Color.BLACK);
+             layout.addView(message);
+ 
+@@ -363,7 +363,7 @@ public class MainActivity extends SDLActivity{
+         if (restartRequired) {
+             runOnUiThread(() -> new AlertDialog.Builder(this)
+                     .setTitle("Restart Required")
+-                    .setMessage("Ship of Harkinian will use the new data folder after restarting. Existing data was copied when needed; the old folder was left in place.")
++                    .setMessage("Zombies of Time will use the new data folder after restarting. Existing data was copied when needed; the old folder was left in place.")
+                     .setCancelable(false)
+                     .setPositiveButton("Close App", (dialog, which) -> finish())
+                     .show());
+@@ -577,7 +577,7 @@ public class MainActivity extends SDLActivity{
+ 
+         if (!targetRootFolder.exists() || isMissingAssets || isMissingSohOtr) {
+             showSetupProgressDialog("Preparing Data Folder",
+-                    "Copying required support files. Please keep Ship of Harkinian open; SD cards may take a few minutes.");
++                    "Copying required support files. Please keep Zombies of Time open; SD cards may take a few minutes.");
+             Executors.newSingleThreadExecutor().execute(() -> setupFilesInBackground(targetRootFolder));
+         } else {
+             // No setup needed; but always ensure soh.o2r is present from APK assets
+diff --git a/Android/app/src/main/res/values/strings.xml b/Android/app/src/main/res/values/strings.xml
+index f7259ff..dff7fa3 100644
+--- a/Android/app/src/main/res/values/strings.xml
++++ b/Android/app/src/main/res/values/strings.xml
+@@ -1,3 +1,3 @@
+ <resources>
+-    <string name="app_name">Ship of Harkinian</string>
++    <string name="app_name">Zombies of Time</string>
+ </resources>

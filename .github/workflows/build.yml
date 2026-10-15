@@ -56,11 +56,12 @@ jobs:
           max-size: "2G"
           key: ${{ runner.os }}-ccache-${{ github.sha }}
           restore-keys: ${{ runner.os }}-ccache-
-      - name: Add Zombies of Time to Ship of Harkinian
+      - name: Turn Ship of Harkinian into Zombies of Time
         run: ./scripts/apply.sh
-      - name: Build Ship of Harkinian with Zombies of Time
+      - name: Build Zombies of Time
         working-directory: Shipwright
         run: |
           cmake -H. -Bbuild-cmake -GNinja -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           cmake --build build-cmake --target soh -j4
+          test -x build-cmake/soh/ZombiesOfTime

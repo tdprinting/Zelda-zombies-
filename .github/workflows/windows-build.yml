@@ -1,7 +1,8 @@
-# A Windows build of Ship of Harkinian with Zombies of Time, for play-testing.
-# Download the "zombies-of-time-windows" artifact from the run, unzip it and run
-# soh.exe. Like any SoH build, it asks for your own Ocarina of Time ROM on first
-# launch; no game data is included.
+# The Windows build of Zombies of Time, for play-testing.
+# Download the "zombies-of-time-windows" artifact from the run, unzip it to its own
+# folder and run ZombiesOfTime.exe. Saves, settings and logs stay in that folder, apart
+# from any Ship of Harkinian install. Like SoH, it asks for your own Ocarina of Time
+# ROM on first launch; no game data is included.
 name: Windows build
 
 on:
@@ -23,7 +24,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y $(cat Shipwright/linux-build-deps/apt.txt)
-      - name: Add Zombies of Time to Ship of Harkinian
+      - name: Turn Ship of Harkinian into Zombies of Time
         run: ./scripts/apply.sh
       - name: Generate soh.o2r
         working-directory: Shipwright
@@ -47,7 +48,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - name: Add Zombies of Time to Ship of Harkinian
+      - name: Turn Ship of Harkinian into Zombies of Time
         shell: bash
         run: ./scripts/apply.sh
       - name: Configure ccache
@@ -70,7 +71,7 @@ jobs:
         with:
           name: soh.o2r
           path: Shipwright/build-windows/soh
-      - name: Build SoH
+      - name: Build Zombies of Time
         working-directory: Shipwright
         env:
           VCPKG_ROOT: ${{ github.workspace }}/Shipwright/vcpkg
@@ -79,10 +80,12 @@ jobs:
           cmake --build build-windows --config Release --parallel 10
           (cd build-windows && cpack)
           cd ..
-          mv _packages/*.zip _packages/soh-windows.zip
+          mv _packages/*.zip _packages/zombies-of-time-windows.zip
       - name: Unzip package
         working-directory: Shipwright
-        run: Expand-Archive -Path _packages/soh-windows.zip -DestinationPath zombies-of-time-windows
+        run: |
+          Expand-Archive -Path _packages/zombies-of-time-windows.zip -DestinationPath zombies-of-time-windows
+          if (-not (Test-Path zombies-of-time-windows/ZombiesOfTime.exe)) { throw "ZombiesOfTime.exe is missing from the package" }
       - uses: actions/upload-artifact@v4
         with:
           name: zombies-of-time-windows

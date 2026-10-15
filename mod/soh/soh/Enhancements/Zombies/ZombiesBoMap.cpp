@@ -11,8 +11,10 @@
 // OoT's limits that a Black Ops map runs into, and what happens here:
 // - Collision memory is sized per scene, far smaller than a whole map needs. The map's
 //   collision gets its own allocation here, sized from the map.
-// - Collision vertex ids are 13 bits (8191 vertices) and lookup nodes 16 bits. The
-//   converter keeps the collision mesh inside those; this file refuses anything bigger.
+// - Collision vertex ids were 13 bits (8191 vertices); the engine patch
+//   mod/patches/0003-collision-vertex-ids-past-8191.patch keeps the top bits in
+//   CollisionPoly::vtxHi, so up to 65535. Polygon ids are s16 (32767) and lookup nodes
+//   u16. The converter keeps the collision mesh inside those; this file refuses more.
 // - Display lists draw from a 32-vertex buffer: meshes are cut into batches.
 
 #include "ZombiesMode.h"
@@ -46,7 +48,8 @@ u32 BgCheck_InitializeStaticLookup(CollisionContext* colCtx, PlayState* play, St
 namespace Zombies {
 
 static constexpr u32 kVersion = 1;
-static constexpr int kMaxColVerts = 0x1FFF; // vertex ids share their u16 with three flag bits
+static constexpr int kMaxColVerts = 0xFFFF; // 13 bits beside the flags, 3 more in vtxHi
+static constexpr int kMaxColPolys = 0x7FFF; // polygon ids are s16
 static constexpr int kMaxNodes = 0xFFFE;    // lookup node ids are u16, 0xFFFF ends a list
 static constexpr float kCellSize = 200.0f;  // collision lookup cell, in OoT units
 
@@ -179,7 +182,7 @@ static u32 SurfaceSfx(u8 surface) {
 
 static bool BuildCollision(BoMap& map, const std::vector<std::array<u16, 3>>& tris, const std::vector<u8>& triSurface,
                            const std::vector<u8>& triFlags) {
-    if (map.colVerts.empty() || map.colVerts.size() > kMaxColVerts || tris.empty() || tris.size() > 0xFFFF) {
+    if (map.colVerts.empty() || map.colVerts.size() > kMaxColVerts || tris.empty() || tris.size() > kMaxColPolys) {
         return false;
     }
     // One surface type per (surface, flags) pair. Camera data 0 is the normal camera.
@@ -216,8 +219,9 @@ static bool BuildCollision(BoMap& map, const std::vector<std::array<u16, 3>>& tr
         poly.type = static_cast<u16>(surfaceIndex[key]);
         // Clip walls are invisible in Black Ops: the camera and arrows go through them.
         u16 exclude = wallOnly ? 0x2000 | 0x8000 : 0;
-        poly.flags_vIA = static_cast<u16>(tris[i][0] | exclude);
-        poly.flags_vIB = tris[i][1];
+        poly.flags_vIA = static_cast<u16>((tris[i][0] & 0x1FFF) | exclude);
+        poly.flags_vIB = static_cast<u16>(tris[i][1] & 0x1FFF);
+        poly.vtxHi = static_cast<u16>(((tris[i][0] >> 13) & 7) | (((tris[i][1] >> 13) & 7) << 3));
         poly.vIC = tris[i][2];
         poly.normal.x = static_cast<s16>(nx * 0x7FFF);
         poly.normal.y = static_cast<s16>(ny * 0x7FFF);
