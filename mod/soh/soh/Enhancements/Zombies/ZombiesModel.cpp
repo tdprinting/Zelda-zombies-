@@ -641,6 +641,33 @@ Gfx* Model_RigidDlStyled(ZModel* model, const ModelStyle& style) {
     return model->styledDl.data();
 }
 
+Gfx* Model_PosedDl(const ZModel* model, const ModelPose& pose, ModelDrawBuffers* buffers, const ModelStyle* style,
+                   u8 alpha) {
+    if (model == nullptr || pose.skin.size() != model->bones.size() || buffers == nullptr) {
+        return nullptr;
+    }
+    std::vector<Vtx>& verts = buffers->verts[buffers->flip];
+    std::vector<Gfx>& dl = buffers->dl[buffers->flip];
+    buffers->flip ^= 1;
+    BuildDl(model, pose, alpha, verts, dl, style);
+    return dl.data();
+}
+
+bool Model_BonePos(const ZModel* model, const ModelPose& pose, const char* bone, Vec3f* out) {
+    if (model == nullptr || pose.skin.size() != model->bones.size()) {
+        return false;
+    }
+    for (size_t i = 0; i < model->bones.size(); i++) {
+        if (model->bones[i].name == bone) {
+            const ModelPose::Skin& s = pose.skin[i];
+            Vec3f p = Rotate(Quat{ s.qx, s.qy, s.qz, s.qw }, model->bones[i].bindWorld.pos);
+            *out = { p.x + s.tx, p.y + s.ty, p.z + s.tz };
+            return true;
+        }
+    }
+    return false;
+}
+
 void Model_Bounds(const ZModel* model, Vec3f* lo, Vec3f* hi) {
     *lo = model != nullptr ? model->lo : Vec3f{};
     *hi = model != nullptr ? model->hi : Vec3f{};

@@ -9,10 +9,10 @@
 //
 // Every number in the table is a Black Ops gameplay fact (damage, clip, reserve, fire
 // rate, reload time, wall price, box odds) written down in our own table. No Black Ops
-// code or data is in the repository: gun models, animations and sounds are imported at
-// run time from the player's own install by tools/bomap (see Guns_ImportedModel). Until
-// then Link holds an Ocarina of Time stand-in (the hookshot or slingshot) and the guns
-// use OoT sounds.
+// code or data is in the repository: gun models and viewmodel animations are imported at
+// run time from the player's own install by tools/bomap (see Guns_ImportedModel). Without
+// them Link holds an Ocarina of Time stand-in (the hookshot or slingshot). The guns use
+// OoT sounds.
 
 #include <cstdint>
 #include <string>
@@ -143,10 +143,9 @@ namespace Zombies {
 
 struct TrackedEnemy;
 
-// The seam for the imported gun models. tools/bomap converts a gun's model, viewmodel
-// animations and sounds from the player's Black Ops install; once a renderer for them
-// exists it returns the model for a Black Ops asset name here. Until then this is null
-// and Link holds an OoT stand-in.
+// A gun's imported models (manifest roles gun_<boName>_world, _view, _anim_fire,
+// _anim_reload, _anim_draw, _anim_idle), loaded on first use and kept. Null when
+// neither model was imported: Link then holds an OoT stand-in.
 struct GunModel;
 GunModel* Guns_ImportedModel(const char* boName);
 

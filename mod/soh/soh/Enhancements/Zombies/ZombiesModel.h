@@ -71,6 +71,13 @@ using ModelStyle = std::function<bool(const std::string& material, bool textured
 Gfx* Model_RigidDlStyled(ZModel* model, const ModelStyle& style);
 float Model_VertexScale();
 
+// The posed model's display list for drawing with the caller's own matrix (a viewmodel),
+// built into buffers; vertices in model units times Model_VertexScale(). Null when unposed.
+Gfx* Model_PosedDl(const ZModel* model, const ModelPose& pose, ModelDrawBuffers* buffers,
+                   const ModelStyle* style = nullptr, u8 alpha = 255);
+// Where a bone (e.g. "tag_flash") is in the posed model, in model units. False when absent.
+bool Model_BonePos(const ZModel* model, const ModelPose& pose, const char* bone, Vec3f* out);
+
 // zombies/models/manifest.txt, written by the importer: which model or animation plays
 // each part ("zombie_model", "anim_walk", "board_model", ...). Empty when not listed.
 std::vector<std::string> Model_Manifest(const std::string& key);

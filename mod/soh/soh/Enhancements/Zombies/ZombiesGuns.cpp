@@ -18,13 +18,17 @@
 #include "ZombiesGuns.h"
 #include "ZombiesFx.h"
 #include "ZombiesMode.h"
+#include "ZombiesModel.h"
 
 #include <libultraship/bridge/consolevariablebridge.h>
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <iterator>
+#include <map>
+#include <memory>
 #include <vector>
 
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
@@ -55,15 +59,117 @@ namespace Zombies {
 // The imported-model seam
 
 struct GunModel {
-    // Filled by the imported model renderer once tools/bomap's output can be drawn: the
-    // converted world model, its viewmodel and the bone the hand holds.
-    void* worldModel;
-    void* viewModel;
+    ZModel* world = nullptr;  // in Link's hand
+    ZModel* view = nullptr;   // the first-person arms and gun
+    ZAnim* idle = nullptr;
+    ZAnim* fire = nullptr;
+    ZAnim* reload = nullptr;  // a shotgun's is one shell, looped
+    ZAnim* draw = nullptr;    // pullout; played backwards to put the gun away
+    float reloadEnd = 0.0f;   // seconds: the reload's "end" notetrack, or its length
+    Gfx* worldDl = nullptr;   // built on first use
+    ModelDrawBuffers worldBuffers;
+    ModelDrawBuffers viewBuffers;
 };
 
+static std::string RoleName(const std::string& role) {
+    std::vector<std::string> names = Model_Manifest(role);
+    return names.empty() ? std::string() : names[0];
+}
+
+// Where the "end" notetrack falls (Black Ops lets the player act from there), else the
+// animation's length.
+static float NoteTime(const ZAnim* anim, const char* note) {
+    float len = Anim_Length(anim);
+    for (float t = 0.0f; t < len; t += 1.0f / 30.0f) {
+        if (Anim_NoteBetween(anim, note, t - 1.0f / 30.0f, t)) {
+            return t;
+        }
+    }
+    return len;
+}
+
+// The models' surfaces for attachments the zombies guns don't have (scopes, silencers,
+// grenade launchers, extended magazines, the multiplayer clan tag) are left out.
+static bool GunSurface(const std::string& m, bool textured, ModelTint* tint, bool armsGreen) {
+    for (const char* extra : { "scope", "reflex", "red_dot", "aimpoint", "suppressor", "silencer", "tishina",
+                               "foregrip", "grip", "clan_tag", "player_icon", "rail", "mag_wrap", "acog", "elbit",
+                               "lens", "ir_", "flash_hider", "extclip", "dualclip", "magazines2", "grenade_launcher",
+                               "_gl", "masterkey", "flamethrower", "flamer", "m203", "gunset_attachments",
+                               "weapon_mk", "apature", "aperture", "hkmount", "_mount", "expander", "drum_mag" }) {
+        if (m.find(extra) != std::string::npos) {
+            return false;
+        }
+    }
+    if (armsGreen && m.find("glovesleeve") != std::string::npos) {
+        *tint = { 110, 190, 90 }; // Link's tunic over the sleeve
+    } else if (armsGreen && m.find("glove") != std::string::npos) {
+        *tint = { 200, 160, 120 }; // his leather gauntlets
+    } else if (!textured) {
+        bool wood = m.find("wood") != std::string::npos || m.find("stock") != std::string::npos;
+        *tint = wood ? ModelTint{ 120, 78, 44 } : ModelTint{ 74, 76, 80 };
+    }
+    return true;
+}
+
+static const ModelStyle& WorldStyle() {
+    static const ModelStyle sStyle = [](const std::string& m, bool textured, ModelTint* tint) {
+        return GunSurface(m, textured, tint, false);
+    };
+    return sStyle;
+}
+
+static const ModelStyle& ViewStyle() {
+    static const ModelStyle sStyle = [](const std::string& m, bool textured, ModelTint* tint) {
+        return GunSurface(m, textured, tint, true); // Link's arms, not a marine's
+    };
+    return sStyle;
+}
+
 GunModel* Guns_ImportedModel(const char* boName) {
-    (void)boName;
-    return nullptr; // no renderer for converted Black Ops models yet: Link holds a stand-in
+    static std::map<std::string, std::unique_ptr<GunModel>> sModels;
+    if (boName == nullptr || boName[0] == '\0') {
+        return nullptr;
+    }
+    auto it = sModels.find(boName);
+    if (it == sModels.end()) {
+        // The importer's manifest names each gun's parts; without one, Black Ops' usual names.
+        std::string key = std::string("gun_") + boName + "_";
+        std::string stem = boName;
+        if (stem.size() > 3 && stem.compare(stem.size() - 3, 3, "_zm") == 0) {
+            stem.resize(stem.size() - 3);
+        }
+        auto name = [&](const char* role, const std::string& fallback) {
+            std::string n = RoleName(key + role);
+            return n.empty() ? fallback : n;
+        };
+        auto gm = std::make_unique<GunModel>();
+        gm->world = Model_Get(name("world", "t5_weapon_" + stem + "_world"));
+        gm->view = Model_Get(name("view", "t5_weapon_" + stem + "_viewmodel_arms"));
+        gm->idle = Anim_Get(name("anim_idle", "viewmodel_" + stem + "_idle"));
+        gm->fire = Anim_Get(name("anim_fire", "viewmodel_" + stem + "_fire"));
+        gm->reload = Anim_Get(name("anim_reload", "viewmodel_" + stem + "_reload"));
+        gm->draw = Anim_Get(name("anim_draw", "viewmodel_" + stem + "_pullout"));
+        if (gm->view != nullptr && gm->idle == nullptr && gm->fire == nullptr) {
+            gm->view = nullptr; // no pose to hold it in: the stand-in viewmodel
+        }
+        gm->reloadEnd = NoteTime(gm->reload, "end");
+        bool any = gm->world != nullptr || gm->view != nullptr;
+        it = sModels.emplace(boName, any ? std::move(gm) : nullptr).first;
+    }
+    return it->second.get();
+}
+
+// The world model's display list, in model units times Model_VertexScale().
+static Gfx* GunWorldDl(GunModel* gm) {
+    if (gm == nullptr || gm->world == nullptr) {
+        return nullptr;
+    }
+    if (gm->worldDl == nullptr) {
+        ModelPose pose;
+        Model_Pose(gm->world, AnimLayer(), AnimLayer(), 0.0f, &pose);
+        gm->worldDl = Model_PosedDl(gm->world, pose, &gm->worldBuffers, &WorldStyle());
+    }
+    return gm->worldDl;
 }
 
 // ---------------------------------------------------------------------------
@@ -713,11 +819,54 @@ static void StartReload(Player* player, int who) {
     if (st.reloadFrames > 0 || st.swapFrames > 0 || !guns.CanReload()) {
         return;
     }
-    const GunStats& gun = GunInfo(guns.Current().id);
+    const GunSlot& slot = guns.Current();
+    const GunStats& gun = GunInfo(slot.id);
+    int frames = gun.reloadFrames;
+    GunModel* gm = Guns_ImportedModel(gun.boName);
+    if (gm != nullptr && gm->view != nullptr && gm->reload != nullptr && gm->reloadEnd > 0.0f) {
+        // The imported reload sets the time: a shell at a time for the shotguns' loops.
+        float sec = gm->reloadEnd;
+        if (Anim_Looping(gm->reload)) {
+            int shells = std::min(GunVariantOf(slot.id, slot.pap).clip - slot.clip, slot.reserve);
+            sec = Anim_Length(gm->reload) * static_cast<float>(std::max(shells, 1));
+        }
+        frames = std::max(1, static_cast<int>(sec * kFps + 0.5f));
+    }
     // A tactical reload (rounds left in the clip) is a little quicker, as in Black Ops.
-    st.reloadTotal = guns.Current().clip > 0 ? gun.reloadFrames * 4 / 5 : gun.reloadFrames;
+    bool looped = gm != nullptr && gm->view != nullptr && Anim_Looping(gm->reload);
+    st.reloadTotal = slot.clip > 0 && !looped ? frames * 4 / 5 : frames;
     st.reloadFrames = st.reloadTotal;
-    PlayGunSfx(player, NA_SE_IT_SWORD_PUTAWAY, PITCH_NORMAL, VOL_FULL);
+    if (gm == nullptr || gm->view == nullptr || gm->reload == nullptr) {
+        PlayGunSfx(player, NA_SE_IT_SWORD_PUTAWAY, PITCH_NORMAL, VOL_FULL);
+    }
+}
+
+// Reload sounds on the imported animation's notetracks (OoT sounds: Black Ops' own are
+// not imported).
+static void ReloadNotes(Player* player, int who) {
+    const GunState& st = sState[who];
+    const GunStats& gun = GunInfo(sGuns[who].Current().id);
+    GunModel* gm = Guns_ImportedModel(gun.boName);
+    if (gm == nullptr || gm->view == nullptr || gm->reload == nullptr || st.reloadTotal <= 0) {
+        return;
+    }
+    float len = Anim_Length(gm->reload);
+    float rate = Anim_Looping(gm->reload) ? 1.0f : gm->reloadEnd * kFps / static_cast<float>(st.reloadTotal);
+    float to = static_cast<float>(st.reloadTotal - st.reloadFrames) / kFps * rate;
+    float from = to - rate / kFps;
+    if (Anim_Looping(gm->reload) && len > 0.0f) {
+        from = std::fmod(from, len);
+        to = from + rate / kFps;
+    }
+    if (Anim_NoteBetween(gm->reload, "rmbnt#reload_clipout", from, to)) {
+        PlayGunSfx(player, NA_SE_IT_SWORD_PUTAWAY, PITCH_NORMAL, VOL_FULL);
+    }
+    if (Anim_NoteBetween(gm->reload, "rmbnt#reload_clipin", from, to)) {
+        PlayGunSfx(player, NA_SE_IT_HOOKSHOT_READY, PITCH_NORMAL, VOL_FULL);
+    }
+    if (Anim_NoteBetween(gm->reload, "rmbnt#reload_rechamber", from, to)) {
+        PlayGunSfx(player, NA_SE_IT_SWORD_PICKOUT, PITCH_NORMAL, VOL_FULL);
+    }
 }
 
 static void StartSwap(Player* player, int who) {
@@ -785,9 +934,16 @@ void Guns_Update(PlayState* play, Player* player) {
     if (st.swapFrames > 0 && --st.swapFrames == kSwapFrames / 2) {
         guns.current = st.swapTo; // the new gun comes up for the second half
     }
-    if (st.reloadFrames > 0 && --st.reloadFrames == 0) {
-        guns.Reload();
-        PlayGunSfx(player, NA_SE_IT_HOOKSHOT_READY, PITCH_NORMAL, VOL_FULL);
+    if (st.reloadFrames > 0) {
+        --st.reloadFrames;
+        ReloadNotes(player, 0);
+        if (st.reloadFrames == 0) {
+            guns.Reload();
+            GunModel* gm = Guns_ImportedModel(GunInfo(guns.Current().id).boName);
+            if (gm == nullptr || gm->view == nullptr || gm->reload == nullptr) {
+                PlayGunSfx(player, NA_SE_IT_HOOKSHOT_READY, PITCH_NORMAL, VOL_FULL);
+            }
+        }
     }
 
     bool blocked = GunBlocked(play, player);
@@ -1305,6 +1461,11 @@ static bool sPosed = false;
 // fist closed round the foregrip. [adult near, child near, adult far, child far]
 static Gfx* sGunHandDLs[4];
 static Gfx* sGripHandDLs[4];
+static Gfx* sFistHandDLs[4]; // his right fist, round an imported gun's grip
+static GunModel* sHeldGun = nullptr;
+static GunClass sHeldClass = GunClass::Pistol;
+static constexpr float kViewmodelDepth = 2.0f;
+static float sHoldTune[6] = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 16384.0f }; // ZZTUNE
 
 static void InitHandDLs() {
     sGunHandDLs[0] = (Gfx*)gLinkAdultRightHandHoldingHookshotNearDL;
@@ -1315,6 +1476,10 @@ static void InitHandDLs() {
     sGripHandDLs[1] = (Gfx*)gLinkChildLeftFistNearDL;
     sGripHandDLs[2] = (Gfx*)gLinkAdultLeftHandClosedNearDL;
     sGripHandDLs[3] = (Gfx*)gLinkChildLeftFistNearDL;
+    sFistHandDLs[0] = (Gfx*)gLinkAdultRightHandClosedNearDL;
+    sFistHandDLs[1] = (Gfx*)gLinkChildRightHandClosedNearDL;
+    sFistHandDLs[2] = (Gfx*)gLinkAdultRightHandClosedFarDL;
+    sFistHandDLs[3] = (Gfx*)gLinkChildRightHandClosedFarDL;
 }
 
 static bool GunRaised(PlayState* play, Player* player) {
@@ -1326,7 +1491,14 @@ static bool GunRaised(PlayState* play, Player* player) {
 }
 
 static void PoseLink() {
+    { // ZZTUNE
+        const char* e = getenv("ZZ_HOLD");
+        if (e != nullptr) {
+            sscanf(e, "%f,%f,%f,%f,%f,%f", &sHoldTune[0], &sHoldTune[1], &sHoldTune[2], &sHoldTune[3], &sHoldTune[4], &sHoldTune[5]);
+        }
+    }
     sPosed = false;
+    sHeldGun = nullptr;
     PlayState* play = gPlayState;
     if (play == nullptr || !RunLive()) {
         return;
@@ -1364,12 +1536,22 @@ static void PoseLink() {
     sSavedLeftHandDLists = player->leftHandDLists;
     sSavedRightHandType = player->rightHandType;
     sSavedLeftHandType = player->leftHandType;
-    if (w > 0.5f && Guns_ImportedModel(gun.boName) == nullptr) {
+    GunModel* gm = Guns_ImportedModel(gun.boName);
+    sHeldGun = nullptr;
+    if (w > 0.5f) {
         if (sGunHandDLs[0] == nullptr) {
             InitHandDLs();
         }
-        player->rightHandDLists = &sGunHandDLs[gSaveContext.linkAge];
-        player->rightHandType = LINK_IS_ADULT ? PLAYER_MODELTYPE_RH_HOOKSHOT : PLAYER_MODELTYPE_RH_BOW_SLINGSHOT;
+        if (gm != nullptr && gm->world != nullptr) {
+            // The imported gun goes into his closed fist as the hand is drawn (HoldGun).
+            player->rightHandDLists = &sFistHandDLs[gSaveContext.linkAge];
+            player->rightHandType = PLAYER_MODELTYPE_RH_CLOSED;
+            sHeldGun = gm;
+            sHeldClass = gun.gunClass;
+        } else {
+            player->rightHandDLists = &sGunHandDLs[gSaveContext.linkAge];
+            player->rightHandType = LINK_IS_ADULT ? PLAYER_MODELTYPE_RH_HOOKSHOT : PLAYER_MODELTYPE_RH_BOW_SLINGSHOT;
+        }
         if (poses.twoHanded && HoldsSword(player) && player->heldItemAction == PLAYER_IA_NONE) {
             player->leftHandDLists = &sGripHandDLs[gSaveContext.linkAge];
             player->leftHandType = PLAYER_MODELTYPE_LH_CLOSED;
@@ -1383,6 +1565,7 @@ static void UnposeLink() {
         return;
     }
     sPosed = false;
+    sHeldGun = nullptr;
     Player* player = GET_PLAYER(gPlayState);
     for (int j = 0; j < POSE_JOINTS; j++) {
         player->jointTable[kPoseLimbs[j]] = sSavedJoints[j];
@@ -1449,7 +1632,166 @@ extern "C" void ZombiesGuns_DrawViewmodel(PlayState* play, Player* player, float
     FrameInterpolation_RecordCloseChild();
 }
 
+static f32 BinangRad(float binang) {
+    return binang * (3.14159265f / 32768.0f);
+}
+
+// The imported viewmodel: Black Ops' own arms and gun, posed by its animations and drawn
+// from the eye as Black Ops draws it (its model space is the camera's). scale takes its
+// inches to OoT units, and further out than OoT's near plane. Returns the muzzle's
+// world position in flash.
+extern "C" void ZombiesGuns_DrawImportedViewmodel(PlayState* play, Player* player, Gfx* dl, float scale,
+                                                  const Vec3f* muzzle, Vec3f* flash, float bob, float sway) {
+    using namespace Zombies;
+    const View& view = play->view;
+    Vec3f eye = view.eye;
+    Vec3f at = view.lookAt;
+    s16 yaw = Math_Vec3f_Yaw(&eye, &at);
+    s16 pitch = static_cast<s16>(-Math_Vec3f_Pitch(&eye, &at));
+
+    FrameInterpolation_RecordOpenChild(&sGuns[0], 1);
+    Lights* lights = LightContext_NewLights(&play->lightCtx, play->state.gfxCtx);
+    Lights_BindAll(lights, play->lightCtx.listHead, &player->actor.world.pos);
+    Lights_Draw(lights, play->state.gfxCtx);
+    OPEN_DISPS(play->state.gfxCtx);
+    Gfx_SetupDL_25Opa(play->state.gfxCtx);
+
+    Matrix_Translate(eye.x, eye.y, eye.z, MTXMODE_NEW);
+    Matrix_RotateY(BinangRad(yaw), MTXMODE_APPLY);
+    Matrix_RotateX(BinangRad(pitch), MTXMODE_APPLY);
+    // View space: +Z forward, +X left, +Y up. Black Ops' model space has +X forward and
+    // +Z right: a quarter turn.
+    Matrix_Translate(sway, bob, 0.0f, MTXMODE_APPLY);
+    Matrix_RotateY(BinangRad(-0x4000), MTXMODE_APPLY);
+    Matrix_Scale(scale, scale, scale, MTXMODE_APPLY);
+    Matrix_MultVec3f(const_cast<Vec3f*>(muzzle), flash);
+    float vs = 1.0f / Model_VertexScale();
+    Matrix_Scale(vs, vs, vs, MTXMODE_APPLY);
+    gSPMatrix(POLY_OPA_DISP++, MATRIX_NEWMTX(play->state.gfxCtx), G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_MODELVIEW);
+    gSPDisplayList(POLY_OPA_DISP++, dl);
+
+    CLOSE_DISPS(play->state.gfxCtx);
+    FrameInterpolation_RecordCloseChild();
+}
+
+// Link's right fist with the imported gun in it: the hand's display list, then the gun
+// placed in the hand's space (where OoT's limb units are a hundredth of the world's).
+extern "C" Gfx* ZombiesGuns_FistWithGun(PlayState* play, Gfx* hand, Gfx* gun, const Vec3f* grip, float scale,
+                                        const Vec3f* offset, const Vec3s* rot) {
+    Gfx* dl = static_cast<Gfx*>(Graph_Alloc(play->state.gfxCtx, 6 * sizeof(Gfx)));
+    Mtx* mtx = static_cast<Mtx*>(Graph_Alloc(play->state.gfxCtx, sizeof(Mtx)));
+    Matrix_Push();
+    Matrix_Translate(offset->x, offset->y, offset->z, MTXMODE_NEW);
+    Matrix_RotateZ(BinangRad(rot->z), MTXMODE_APPLY);
+    Matrix_RotateY(BinangRad(rot->y), MTXMODE_APPLY);
+    Matrix_RotateX(BinangRad(rot->x), MTXMODE_APPLY);
+    float s = scale / Zombies::Model_VertexScale();
+    Matrix_Scale(s, s, s, MTXMODE_APPLY);
+    float vs = Zombies::Model_VertexScale();
+    Matrix_Translate(-grip->x * vs, -grip->y * vs, -grip->z * vs, MTXMODE_APPLY);
+    Matrix_ToMtx(mtx, const_cast<char*>(__FILE__), __LINE__);
+    Matrix_Pop();
+    Gfx* p = dl;
+    gSPDisplayList(p++, hand);
+    gSPMatrix(p++, mtx, G_MTX_PUSH | G_MTX_MUL | G_MTX_MODELVIEW);
+    gSPDisplayList(p++, gun);
+    gSPPopMatrix(p++, G_MTX_MODELVIEW);
+    gSPEndDisplayList(p++);
+    return dl;
+}
+
 namespace Zombies {
+
+// Where each imported world gun's grip is, from its own tag_weapon (in inches, Black
+// Ops' axes as imported: +X forward, +Y up).
+struct GunGrip {
+    const char* boName;
+    float x, y;
+};
+static constexpr GunGrip kGrips[] = {
+    { "m1911_zm", -11.5f, -2.5f }, { "ray_gun_zm", -10.5f, -2.0f }, { "rottweil72_zm", -12.0f, -2.5f },
+    { "ithaca_zm", -10.0f, -2.5f }, { "m14_zm", -8.0f, -2.5f },    { "commando_zm", -7.0f, -2.5f },
+    { "famas_zm", -5.5f, -2.5f },   { "hk21_zm", -7.0f, -2.5f },   { "mp40_zm", -4.5f, -2.0f },
+    { "spectre_zm", -8.0f, -2.5f },
+};
+
+static Vec3f GripOf(const char* boName) {
+    for (const GunGrip& g : kGrips) {
+        if (std::strcmp(g.boName, boName) == 0) {
+            return { g.x, g.y, 0.0f };
+        }
+    }
+    return { -5.5f, -2.5f, 0.0f }; // most rifles and SMGs
+}
+
+// The limb draw: the held imported gun goes into Link's right fist.
+static void HoldGun(s32 limbIndex, Gfx** dList, Player* player, PlayState* play) {
+    if (limbIndex != PLAYER_LIMB_R_HAND || sHeldGun == nullptr || *dList == nullptr || player != GET_PLAYER(play) ||
+        player->unk_6AD != 0) {
+        return;
+    }
+    Gfx* gun = GunWorldDl(sHeldGun);
+    if (gun == nullptr) {
+        return;
+    }
+    Vec3f grip = GripOf(GunInfo(sGuns[0].Current().id).boName);
+    // Black Ops inches to OoT units, times the limb's hundred; Link the child is smaller.
+    float scale = (64.0f / 72.0f) * 100.0f * (LINK_IS_ADULT ? 1.0f : 0.8f);
+    Vec3f offset = { sHoldTune[0], sHoldTune[1], sHoldTune[2] };
+    Vec3s rot = { static_cast<s16>(sHoldTune[3]), static_cast<s16>(sHoldTune[4]), static_cast<s16>(sHoldTune[5]) };
+    *dList = ZombiesGuns_FistWithGun(play, *dList, gun, &grip, scale, &offset, &rot);
+}
+
+// The imported viewmodel's pose: pullout (backwards to put a gun away), reload, fire or
+// idle, timed off the gun's state.
+static void PoseViewmodel(GunModel* gm, ModelPose* pose) {
+    const GunState& st = sState[0];
+    float sec = static_cast<float>(sFrame) / kFps;
+    AnimLayer layer;
+    if (gm->idle != nullptr) {
+        float len = Anim_Length(gm->idle);
+        layer = { gm->idle, len > 0.0f ? std::fmod(sec, len) : 0.0f };
+    }
+    if (st.swapFrames > 0 && gm->draw != nullptr) {
+        float t = static_cast<float>(st.swapFrames) / kSwapFrames; // 1 to 0; the gun changes at half
+        float len = Anim_Length(gm->draw);
+        layer = { gm->draw, len * (t > 0.5f ? (t - 0.5f) * 2.0f : 1.0f - t * 2.0f) };
+    } else if (st.reloadFrames > 0 && st.reloadTotal > 0 && gm->reload != nullptr) {
+        float done = static_cast<float>(st.reloadTotal - st.reloadFrames) / kFps;
+        float len = Anim_Length(gm->reload);
+        if (Anim_Looping(gm->reload)) {
+            layer = { gm->reload, len > 0.0f ? std::fmod(done, len) : 0.0f };
+        } else {
+            layer = { gm->reload, done * gm->reloadEnd * kFps / static_cast<float>(st.reloadTotal) };
+        }
+    } else if (gm->fire != nullptr && static_cast<float>(st.sinceShot) / kFps < Anim_Length(gm->fire)) {
+        layer = { gm->fire, static_cast<float>(st.sinceShot) / kFps };
+    }
+    Model_Pose(gm->view, layer, AnimLayer(), 0.0f, pose);
+}
+
+static void DrawImportedViewmodel(PlayState* play, Player* player, GunModel* gm, float bob, float sway) {
+    static ModelPose sPose;
+    PoseViewmodel(gm, &sPose);
+    Gfx* dl = Model_PosedDl(gm->view, sPose, &gm->viewBuffers, &ViewStyle());
+    if (dl == nullptr) {
+        return;
+    }
+    Vec3f muzzle = { 20.0f, -6.0f, 0.0f };
+    Model_BonePos(gm->view, sPose, "tag_flash", &muzzle);
+    Vec3f flash;
+    // Twice as far and twice the size looks the same, and keeps clear of the near plane.
+    float scale = (64.0f / 72.0f) * kViewmodelDepth;
+    ZombiesGuns_DrawImportedViewmodel(play, player, dl, scale, &muzzle, &flash, bob * 0.5f, sway * 0.5f);
+    { // ZZTUNE
+        Vec3f w = {}, e = play->view.eye;
+        Model_BonePos(gm->view, sPose, "tag_weapon", &w);
+        printf("ZZVM f=%d muzzle=(%.1f,%.1f,%.1f) weapon=(%.1f,%.1f,%.1f) flash-eye=(%.1f,%.1f,%.1f) skin0=(%.2f %.2f %.2f)\n", sFrame, muzzle.x, muzzle.y, muzzle.z, w.x, w.y, w.z, flash.x - e.x, flash.y - e.y, flash.z - e.z, sPose.skin[0].tx, sPose.skin[0].ty, sPose.skin[0].tz); fflush(stdout);
+    }
+    if (sState[0].recoil > 0.8f) {
+        MuzzleFlash(play, flash, GunInfo(sGuns[0].Current().id).projectile);
+    }
+}
 
 static void DrawViewmodel() {
     PlayState* play = gPlayState;
@@ -1466,6 +1808,11 @@ static void DrawViewmodel() {
     float bob = std::sin(sWalk) * std::min(player->actor.speedXZ, 4.0f) * 0.25f;
     float sway = std::cos(sWalk * 0.5f) * std::min(player->actor.speedXZ, 4.0f) * 0.15f +
                  std::sin(static_cast<float>(sFrame) * 0.05f) * 0.15f; // idle breathing
+    GunModel* gm = Guns_ImportedModel(GunInfo(sGuns[0].Current().id).boName);
+    if (gm != nullptr && gm->view != nullptr) {
+        DrawImportedViewmodel(play, player, gm, bob, sway);
+        return;
+    }
     float dip = 0.0f;
     if (st.reloadFrames > 0 && st.reloadTotal > 0) {
         float t = 1.0f - static_cast<float>(st.reloadFrames) / st.reloadTotal;
@@ -1576,6 +1923,13 @@ static void RegisterGuns() {
         DrawViewmodel();
     });
 
+    COND_VB_SHOULD(VB_PLAYER_OVERRIDE_LIMB_DRAW, enabled, {
+        s32 limbIndex = va_arg(args, s32);
+        Gfx** dList = va_arg(args, Gfx**);
+        Player* player = static_cast<Player*>(va_arg(args, void*));
+        PlayState* play = va_arg(args, PlayState*);
+        HoldGun(limbIndex, dList, player, play);
+    });
     COND_VB_SHOULD(VB_PLAYER_AIM_WITH_LEFT_STICK, enabled, {
         if (sAdsActive && CVarGetInteger(CVAR_SETTING("Controls.RightStickAim"), 0)) {
             *should = false; // left stick walks, right stick aims
