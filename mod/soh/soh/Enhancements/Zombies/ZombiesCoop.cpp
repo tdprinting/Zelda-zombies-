@@ -33,7 +33,11 @@ extern "C" {
 #include "seqcmd.h"
 #include "sequence.h"
 #include "variables.h"
+#include "soh/frame_interpolation.h"
 extern PlayState* gPlayState;
+void func_800AA550(View* view);
+extern u32 D_80116068[ACTORCAT_MAX]; // which of Link's states freeze each actor category
+void View_ViewportToVp(Vp* dest, Viewport* src);
 }
 
 // Display list macros need C linkage, like the HUD's: these sit outside the namespace.
@@ -135,6 +139,18 @@ static void LiftDeadFlag(Player* player) {
     }
 }
 
+// Switches and scenery (doors, platforms, gates) update before Link, while his dead flag
+// is still up, so they would stay frozen while he is down. Unfreeze them for that.
+static void FreezeSceneryOnDeath(bool freeze) {
+    for (s32 cat : { ACTORCAT_SWITCH, ACTORCAT_BG }) {
+        if (freeze) {
+            D_80116068[cat] |= PLAYER_STATE1_DEAD;
+        } else {
+            D_80116068[cat] &= ~PLAYER_STATE1_DEAD;
+        }
+    }
+}
+
 void Coop_OnMainStart(PlayState* play) {
     if (sRestoreDead) {
         sRestoreDead = false;
@@ -143,6 +159,8 @@ void Coop_OnMainStart(PlayState* play) {
             player->stateFlags1 |= PLAYER_STATE1_DEAD;
         }
     }
+    const LinkDown& down = GetRun().linkDown;
+    FreezeSceneryOnDeath(!(Coop_Active() && (down.downed || down.bledOut || sLinkRising)));
     Input& input = play->state.input[1];
     sCur = input.cur.button;
     sPress = input.press.button;
@@ -566,6 +584,7 @@ static void SpawnPartner(PlayState* play, Player* link) {
 }
 
 void Coop_Reset() {
+    FreezeSceneryOnDeath(true);
     sRestoreDead = false;
     sLinkRising = false;
     sBombs.clear();
@@ -968,6 +987,67 @@ void Coop_DrawBegin() {
 
 } // namespace Zombies
 
+// Sets up player 2's viewport and camera matrices. This is the game's own view setup
+// (func_800AAA9C) minus its camera-cut check: that check compares against the last view
+// the game set up, which would be player 1's, so every frame would read as a cut and the
+// cameras would swap their interpolation at high frame rates. Player 2's camera is
+// recorded under its own key, and only counts as a cut when it really jumps.
+static Vec3f sLastEye;
+static Vec3f sLastAt;
+static int sViewEpoch;
+
+extern "C" void ZombiesCoop_ApplySecondView(View* view, const Vec3f& eye, const Vec3f& at) {
+    GraphicsContext* gfxCtx = view->gfxCtx;
+
+    if (Math_Vec3f_DistXYZ(&sLastEye, const_cast<Vec3f*>(&eye)) + Math_Vec3f_DistXYZ(&sLastAt, const_cast<Vec3f*>(&at)) >
+        300.0f) {
+        sViewEpoch++;
+    }
+    sLastEye = eye;
+    sLastAt = at;
+
+    OPEN_DISPS(gfxCtx);
+
+    Vp* vp = (Vp*)Graph_Alloc(gfxCtx, sizeof(Vp));
+    View_ViewportToVp(vp, &view->viewport);
+    view->vp = *vp;
+    func_800AA550(view);
+    gSPViewport(POLY_OPA_DISP++, vp);
+    gSPViewport(POLY_XLU_DISP++, vp);
+
+    Mtx* projection = (Mtx*)Graph_Alloc(gfxCtx, sizeof(Mtx));
+    Mtx* viewing = (Mtx*)Graph_Alloc(gfxCtx, sizeof(Mtx));
+    view->projectionPtr = projection;
+    view->projectionFlippedPtr = projection;
+    view->viewingPtr = viewing;
+
+    f32 aspect = (f32)(view->viewport.rightX - view->viewport.leftX) /
+                 (f32)(view->viewport.bottomY - view->viewport.topY);
+    if (view->eye.x == view->lookAt.x && view->eye.y == view->lookAt.y && view->eye.z == view->lookAt.z) {
+        view->eye.x += 1.0f;
+    }
+    func_800ABE74(view->eye.x, view->eye.y, view->eye.z);
+    MtxF viewingF;
+    guLookAtF(viewingF.mf, view->eye.x, view->eye.y, view->eye.z, view->lookAt.x, view->lookAt.y, view->lookAt.z,
+              view->up.x, view->up.y, view->up.z);
+
+    FrameInterpolation_RecordOpenChild(&sViewEpoch, sViewEpoch);
+    guPerspective(projection, &view->normal, view->fovy, aspect, view->zNear, view->zFar, view->scale);
+    view->projection = *projection;
+    View_StepDistortion(view, projection);
+    gSPPerspNormalize(POLY_OPA_DISP++, view->normal);
+    gSPMatrix(POLY_OPA_DISP++, projection, G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_PROJECTION);
+    gSPPerspNormalize(POLY_XLU_DISP++, view->normal);
+    gSPMatrix(POLY_XLU_DISP++, projection, G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_PROJECTION);
+    Matrix_MtxFToMtx(&viewingF, viewing);
+    view->viewing = *viewing;
+    gSPMatrix(POLY_OPA_DISP++, viewing, G_MTX_NOPUSH | G_MTX_MUL | G_MTX_PROJECTION);
+    gSPMatrix(POLY_XLU_DISP++, viewing, G_MTX_NOPUSH | G_MTX_MUL | G_MTX_PROJECTION);
+    FrameInterpolation_RecordCloseChild();
+
+    CLOSE_DISPS(gfxCtx);
+}
+
 // The second view, drawn after the game has drawn the first. Display list macros need
 // C linkage, like the HUD's.
 extern "C" void ZombiesCoop_DrawSecondView(PlayState* play, const Vec3f& eye, const Vec3f& at) {
@@ -995,7 +1075,7 @@ extern "C" void ZombiesCoop_DrawSecondView(PlayState* play, const Vec3f& eye, co
     Vec3f up = { 0.0f, 1.0f, 0.0f };
     func_800AA358(view, &eyeCopy, &atCopy, &up);
     func_800AA460(view, view->fovy, view->zNear, play->lightCtx.fogFar);
-    func_800AAA50(view, 15);
+    ZombiesCoop_ApplySecondView(view, eye, at);
 
     OPEN_DISPS(gfxCtx);
 
