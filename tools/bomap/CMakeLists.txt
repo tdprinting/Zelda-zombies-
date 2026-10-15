@@ -18,7 +18,7 @@ if(NOT ZLIB_FOUND)
     target_include_directories(zlibstatic PUBLIC ${zlib_SOURCE_DIR} ${zlib_BINARY_DIR})
 endif()
 
-add_library(bomap_lib STATIC src/fastfile.cpp src/entities.cpp src/zone_stream.cpp src/zone_walker.cpp src/asset_export.cpp src/texture_source.cpp src/game_export.cpp src/map_light.cpp src/fx_export.cpp src/hud_export.cpp src/player_anims.cpp)
+add_library(bomap_lib STATIC src/fastfile.cpp src/entities.cpp src/zone_stream.cpp src/zone_walker.cpp src/asset_export.cpp src/texture_source.cpp src/game_export.cpp src/map_light.cpp src/fx_export.cpp src/hud_export.cpp src/player_anims.cpp src/sound_export.cpp)
 target_include_directories(bomap_lib PUBLIC src)
 target_link_libraries(bomap_lib PUBLIC ZLIB::ZLIB)
 

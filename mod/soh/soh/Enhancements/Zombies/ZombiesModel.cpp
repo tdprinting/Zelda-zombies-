@@ -418,6 +418,29 @@ bool Anim_NoteBetween(const ZAnim* anim, const char* note, float fromSec, float 
     return false;
 }
 
+std::vector<std::string> Anim_Notes(const ZAnim* anim) {
+    std::vector<std::string> out;
+    if (anim != nullptr) {
+        for (const auto& n : anim->notes) {
+            out.push_back(n.second);
+        }
+    }
+    return out;
+}
+
+std::vector<std::string> Anim_NotesBetween(const ZAnim* anim, float fromSec, float toSec) {
+    std::vector<std::string> out;
+    if (anim != nullptr) {
+        for (const auto& n : anim->notes) {
+            float t = static_cast<float>(n.first) / anim->framerate;
+            if (t > fromSec && t <= toSec) {
+                out.push_back(n.second);
+            }
+        }
+    }
+    return out;
+}
+
 float Model_Height(const ZModel* model) {
     return model != nullptr ? model->height : 0.0f;
 }

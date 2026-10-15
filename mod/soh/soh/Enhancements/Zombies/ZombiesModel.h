@@ -24,6 +24,9 @@ float Anim_Length(const ZAnim* anim); // seconds
 bool Anim_Looping(const ZAnim* anim);
 // Whether a notetrack (e.g. "fire", "footstep") falls in (fromSec, toSec].
 bool Anim_NoteBetween(const ZAnim* anim, const char* note, float fromSec, float toSec);
+// Every notetrack, and those falling in (fromSec, toSec] (the sounds a view animation names).
+std::vector<std::string> Anim_Notes(const ZAnim* anim);
+std::vector<std::string> Anim_NotesBetween(const ZAnim* anim, float fromSec, float toSec);
 float Model_Height(const ZModel* model); // bind pose top, in model units
 
 struct AnimLayer {

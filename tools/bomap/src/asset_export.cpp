@@ -866,7 +866,7 @@ std::string MaterialReport(const Zone& zone, const WalkResult& walk, int asset) 
 }
 
 std::vector<WeaponInfo> ReadWeapons(const Zone& zone, const WalkResult& walk) {
-    (void)zone;
+    Reader r{ zone.data };
     const ZoneStream& s = *walk.stream;
     auto str = [&](size_t field) { return s.CString(walk.Pointer(field)); };
     auto model = [&](size_t field) {
@@ -904,6 +904,19 @@ std::vector<WeaponInfo> ReadWeapons(const Zone& zone, const WalkResult& walk) {
             w.worldFlashFx = fx(def + 120);
             w.projExplosionFx = fx(def + 1520);
             w.projTrailFx = fx(def + 1624);
+            for (int k = 0; k < 62; k++) {
+                std::string n = str(def + 124 + k * 4);
+                if (!n.empty()) {
+                    w.sounds.push_back({ k, n });
+                }
+            }
+            size_t keys = walk.Pointer(def + 16), values = walk.Pointer(def + 20);
+            for (int k = 0; k < 20 && keys != kNoData && values != kNoData; k++) {
+                uint16_t key = r.U16(keys + k * 2), value = r.U16(values + k * 2);
+                if (key != 0 && value != 0) {
+                    w.notetrackSounds.push_back({ ScriptString(zone, key), ScriptString(zone, value) });
+                }
+            }
         }
         size_t anims = walk.Pointer(a.header + 16);
         for (int k = 0; k < 66 && anims != kNoData; k++) {
@@ -938,6 +951,12 @@ std::string WeaponReport(const Zone& zone, const WalkResult& walk) {
         }
         for (const auto& [slot, name] : w.anims) {
             out << "  anim " << slot << " " << name << (walk.Find(0x04, name) >= 0 ? "" : "  (not in this zone)") << "\n";
+        }
+        for (const auto& [slot, name] : w.sounds) {
+            out << "  sound " << slot << " " << name << "\n";
+        }
+        for (const auto& [note, alias] : w.notetrackSounds) {
+            out << "  notetrack " << note << " " << alias << "\n";
         }
     }
     return out.str();

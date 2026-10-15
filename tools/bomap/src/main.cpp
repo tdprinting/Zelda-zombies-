@@ -25,6 +25,10 @@
 //   bomap fx <zone> <effect>                          what a particle effect holds
 //   bomap gamefx <zone> <effect> <out.zzfx> [--main <dir>]   the game's particle file
 //                   (docs/ZZFX_FORMAT.md); weapons lists each gun's flash and trail effects
+//   bomap gamesound <zone>... --out <dir> [--ffmpeg <path>] [--roles <file>]
+//                   the sounds the game plays (purchases, the box, power-ups, perks, zombies,
+//                   each gun's fire and reload sounds) as WAV files and <dir>/manifest.txt,
+//                   for the game's zombies/sound/ folder; WMA is decoded with ffmpeg
 //   bomap hud <zone>... --out <dir> [--main <dir>]   the zombies HUD images (chalk marks, points
 //                   bar, perk and power-up icons, low health overlay) as <dir>/<material>.png,
 //                   for the game's zombies/hud/ folder
@@ -37,6 +41,7 @@
 #include "asset_export.h"
 #include "entities.h"
 #include "game_export.h"
+#include "sound_export.h"
 #include "fastfile.h"
 #include "fx_export.h"
 #include "hud_export.h"
@@ -456,6 +461,14 @@ int main(int argc, char** argv) {
     if (argc >= 2 && std::string(argv[1]) == "playeranims") {
         try {
             return PlayerAnimsCommand(argc, argv);
+        } catch (const std::exception& e) {
+            fprintf(stderr, "bomap: %s\n", e.what());
+            return 1;
+        }
+    }
+    if (argc >= 2 && std::string(argv[1]) == "gamesound") {
+        try {
+            return SoundCommand(argc, argv);
         } catch (const std::exception& e) {
             fprintf(stderr, "bomap: %s\n", e.what());
             return 1;

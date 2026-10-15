@@ -353,6 +353,8 @@ void Coop_Update(PlayState* play, Player* player);
 bool Coop_Buyer(PlayState* play, Buyer* out);
 // Where the horde should go: the nearest player still standing. Returns false if none.
 bool Coop_Target(const Vec3f& from, Vec3f* out, float* dist);
+// Player 2's camera, for hearing sounds from their side of the split screen.
+bool Coop_Listener(Vec3f* eye, Vec3f* at);
 // Player 1 just started dying: keep him down for a revive instead. Returns true if handled.
 bool Coop_OnLinkDeath(PlayState* play, Player* player);
 void Coop_OnMainStart(PlayState* play);

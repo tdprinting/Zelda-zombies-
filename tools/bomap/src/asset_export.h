@@ -102,6 +102,8 @@ struct WeaponInfo {
     std::vector<std::pair<int, std::string>> anims; // slot in szXAnims, anim name
     std::string viewFlashFx, worldFlashFx;          // muzzle flash effects
     std::string projExplosionFx, projTrailFx;       // projectile weapons (Ray Gun, launchers)
+    std::vector<std::pair<int, std::string>> sounds; // slot in the 62 sound names (pickupSound .. adsZoomSound), alias
+    std::vector<std::pair<std::string, std::string>> notetrackSounds; // viewmodel notetrack -> alias it plays
 };
 std::vector<WeaponInfo> ReadWeapons(const Zone& zone, const WalkResult& walk);
 std::string WeaponReport(const Zone& zone, const WalkResult& walk);

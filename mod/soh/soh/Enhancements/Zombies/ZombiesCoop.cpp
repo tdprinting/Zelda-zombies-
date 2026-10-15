@@ -1046,6 +1046,15 @@ bool Coop_SplitView() {
     return sSplit;
 }
 
+bool Coop_Listener(Vec3f* eye, Vec3f* at) {
+    if (!Coop_Active() || P().actor == nullptr) {
+        return false;
+    }
+    *eye = sEye;
+    *at = sAt;
+    return true;
+}
+
 void Coop_DrawBegin() {
     PlayState* play = gPlayState;
     if (play == nullptr) {
