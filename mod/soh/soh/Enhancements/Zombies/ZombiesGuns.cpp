@@ -175,6 +175,10 @@ static Gfx* GunWorldDl(GunModel* gm) {
     return gm->worldDl;
 }
 
+Gfx* Guns_WorldDl(GunModel* gm) {
+    return GunWorldDl(gm);
+}
+
 // ---------------------------------------------------------------------------
 // State
 
@@ -1137,6 +1141,10 @@ static GunId RackGun() {
     return sRack == 0 ? GunId::None : list[sRack - 1];
 }
 
+GunId Guns_ArmoryRackGun(int who) {
+    return who == 0 ? RackGun() : GunId::None;
+}
+
 const char* Guns_ArmoryBrowse(PlayState* play, int who) {
     if (who != 0) {
         return "";
@@ -1434,7 +1442,7 @@ static ArmPose CurrentPose(Player* player, const GunStats& gun) {
     }
     if (st.reloadFrames > 0 && st.reloadTotal > 0) {
         // Down to the reload pose, hold, and back up: 25% / 50% / 25% of the reload.
-        float t = 1.0f - static_cast<float>(st.reloadFrames) / st.reloadTotal;
+        float t = 1.0f - static_cast<float>(st.reloadFrames) / static_cast<float>(st.reloadTotal);
         float w = t < 0.25f ? Smooth(t / 0.25f) : t < 0.75f ? 1.0f : Smooth((1.0f - t) / 0.25f);
         pose = BlendPose(pose, poses.reload, w);
     }
@@ -1829,7 +1837,7 @@ static void DrawViewmodel() {
     }
     float dip = 0.0f;
     if (st.reloadFrames > 0 && st.reloadTotal > 0) {
-        float t = 1.0f - static_cast<float>(st.reloadFrames) / st.reloadTotal;
+        float t = 1.0f - static_cast<float>(st.reloadFrames) / static_cast<float>(st.reloadTotal);
         dip = t < 0.25f ? Smooth(t / 0.25f) : t < 0.75f ? 1.0f : Smooth((1.0f - t) / 0.25f);
     }
     if (st.swapFrames > 0) {

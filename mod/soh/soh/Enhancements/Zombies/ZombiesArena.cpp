@@ -27,6 +27,7 @@ extern PlayState* gPlayState;
 namespace Zombies {
 
 static constexpr float kResolveRange = 250.0f;
+static constexpr float kSpotLift = 60.0f;
 static constexpr float kDebrisReach = 110.0f;
 
 // Kakariko Graveyard, after the flow of Black Ops' first map: a small start area
@@ -244,14 +245,23 @@ const ArenaLayout* Arena_ForScene(s16 sceneNum) {
     }
 }
 
-bool Arena_Resolve(PlayState* play, LayoutSpot spot, float refY, Vec3f* out) {
+bool Arena_Resolve(PlayState* play, LayoutSpot spot, float refY, Vec3f* out, bool justAbove) {
     if (spot.y > LayoutSpot::kNoHeight) {
         refY = spot.y;
     }
     Vec3f probe = { spot.x, refY + kResolveRange, spot.z };
     CollisionPoly* poly;
     s32 bgId;
-    f32 floorY = BgCheck_EntityRaycastFloor3(&play->colCtx, &poly, &bgId, &probe);
+    f32 floorY = BGCHECK_Y_MIN;
+    if (justAbove && spot.y > LayoutSpot::kNoHeight) {
+        // Look down from just above the spot first, so a floor overhead (Nacht's help
+        // room over a wall buy, its roof) isn't taken for the spot's own.
+        Vec3f low = { spot.x, refY + kSpotLift, spot.z };
+        floorY = BgCheck_EntityRaycastFloor3(&play->colCtx, &poly, &bgId, &low);
+    }
+    if (floorY <= BGCHECK_Y_MIN + 1.0f || fabsf(floorY - refY) > kResolveRange) {
+        floorY = BgCheck_EntityRaycastFloor3(&play->colCtx, &poly, &bgId, &probe);
+    }
     if (floorY <= BGCHECK_Y_MIN + 1.0f || fabsf(floorY - refY) > kResolveRange) {
         return false;
     }
@@ -294,7 +304,7 @@ void Arena_Start(PlayState* play) {
     // Everyone starts in the first zone, like Black Ops' spawn room, wherever the map
     // loaded Link (often right on the scene exit he came in by).
     Vec3f start;
-    if (!run.layout->zones.empty() && Arena_Resolve(play, run.layout->zones[0].centre, run.origin.y, &start)) {
+    if (!run.layout->zones.empty() && Arena_Resolve(play, run.layout->zones[0].centre, run.origin.y, &start, true)) {
         Player* player = GET_PLAYER(play);
         player->actor.world.pos = start;
         player->actor.prevPos = start;

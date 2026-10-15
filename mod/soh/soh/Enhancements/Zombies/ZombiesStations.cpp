@@ -165,7 +165,7 @@ static const LayoutSpot* LayoutSpotFor(int index, int* zone) {
 
 static bool PlaceAtSpot(PlayState* play, int index, const LayoutSpot& spot) {
     Vec3f pos;
-    if (!Arena_Resolve(play, spot, GetRun().origin.y, &pos)) {
+    if (!Arena_Resolve(play, spot, GetRun().origin.y, &pos, true)) {
         return false;
     }
     SpawnTorch(play, index, pos);
@@ -257,7 +257,7 @@ static void MoveChest(PlayState* play) {
             }
             for (const LayoutSpot& spot : layout->zones[z].chestSpots) {
                 Vec3f pos;
-                if (Arena_Resolve(play, spot, GetRun().origin.y, &pos) && Math_Vec3f_DistXZ(&pos, &oldPos) > 100.0f) {
+                if (Arena_Resolve(play, spot, GetRun().origin.y, &pos, true) && Math_Vec3f_DistXZ(&pos, &oldPos) > 100.0f) {
                     options.push_back(pos);
                 }
             }
@@ -1115,6 +1115,25 @@ static void UpdateBuyer(PlayState* play, const Buyer& buyer) {
     if (buyer.pressed && !buyer.busy) {
         Buy(play, *nearest, offer, buyer.index);
     }
+}
+
+bool Stations_ArmoryWares(Vec3f* pos, ArmoryWares* wares) {
+    const Station& armory = sStations[static_cast<int>(StationType::Armory)];
+    if (!armory.placed) {
+        return false;
+    }
+    *pos = armory.pos;
+    Offer offer = GetOffer(armory, 0);
+    wares->gun = static_cast<int>(Guns_ArmoryRackGun(0));
+    wares->cost = offer.cost;
+    wares->item = ITEM_NONE;
+    wares->ammo = false;
+    if (wares->gun == static_cast<int>(GunId::None)) {
+        const WeaponOffer* weapon = ArmoryOffer();
+        wares->item = weapon != nullptr ? weapon->item : static_cast<u8>(ITEM_NONE);
+        wares->ammo = weapon == nullptr;
+    }
+    return true;
 }
 
 void Stations_Update(PlayState* play, Player* player) {

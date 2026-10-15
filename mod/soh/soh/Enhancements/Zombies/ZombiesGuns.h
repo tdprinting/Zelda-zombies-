@@ -173,6 +173,8 @@ bool Guns_ArmoryOffer(int who, std::string* label, int* cost, bool* available, s
 bool Guns_ArmoryBuy(PlayState* play, int who);
 // R at the Armory: the next rack entry. Returns the prompt suffix to show.
 const char* Guns_ArmoryBrowse(PlayState* play, int who);
+// The wall gun on the rack entry Link is looking at, None on the Zelda item.
+GunId Guns_ArmoryRackGun(int who);
 
 // Mystery Chest: weight of the guns in the roll for this player, and handing one over.
 int Guns_ChestWeight(int who);

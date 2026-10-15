@@ -297,7 +297,9 @@ void BoMap_OnSceneInit(PlayState* play);
 void BoMap_Update(PlayState* play);
 // Floor under an authored spot, near refY. Authored spots can be on slightly different
 // ground from where Link started, so this allows more height difference than FloorAt.
-bool Arena_Resolve(PlayState* play, LayoutSpot spot, float refY, Vec3f* out);
+// justAbove: the spot has its own height a little above its floor (a Black Ops wall buy
+// hangs at chest height), so the floor right under it wins over one higher up.
+bool Arena_Resolve(PlayState* play, LayoutSpot spot, float refY, Vec3f* out, bool justAbove = false);
 bool Arena_ZoneOpen(int zone);
 void Arena_Start(PlayState* play);
 void Arena_Update(PlayState* play, Player* player);
@@ -327,6 +329,17 @@ void Stations_Update(PlayState* play, Player* player);
 void Stations_OnActorDestroy(Actor* actor);
 int Stations_BoxCost();
 bool Stations_PapSword(); // Pack-a-Punched blade: melee hits land twice
+// What the Armory's wall shows Link right now: the rack entry he's looking at (R steps
+// through it). gun is a GunId (0 for the Zelda item); ammo when he owns every item.
+struct ArmoryWares {
+    int gun = 0;
+    u8 item = 0;
+    bool ammo = false;
+    int cost = 0;
+};
+bool Stations_ArmoryWares(Vec3f* pos, ArmoryWares* wares);
+// Chalk outlines of the wall buys (ZombiesChalk.cpp), drawn with the world.
+void Chalk_Draw(PlayState* play);
 
 // Split-screen co-op (ZombiesCoop.cpp)
 bool Coop_Enabled();   // the Players setting is 2

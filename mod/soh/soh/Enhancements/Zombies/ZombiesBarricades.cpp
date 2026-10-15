@@ -165,7 +165,7 @@ int Barricades_PickWindow() {
     if (count == 0) {
         return -1;
     }
-    return open[std::min(static_cast<int>(Rand_ZeroOne() * count), count - 1)];
+    return open[std::min(static_cast<int>(Rand_ZeroOne() * static_cast<f32>(count)), count - 1)];
 }
 
 bool Barricades_HoldEnemy(TrackedEnemy& enemy, float speed) {
@@ -420,6 +420,7 @@ void Barricades_Draw() {
     ZombiesBarricades_Draw(gPlayState);
     Arena_DrawDebris(gPlayState);
     Box_Draw(gPlayState);
+    Chalk_Draw(gPlayState);
     Fx_Draw(gPlayState); // translucent, so after the solid things
 }
 
