@@ -560,7 +560,10 @@ static void OnEnemyKilled(PlayState* play, Player* player, TrackedEnemy& enemy, 
     enemy.stuckFrames = 0; // now counts the death animation
     PlayerState& ps = sRun.players[who];
     ps.kills++;
-    KillType type = who == 0 ? CurrentKillType(player) : enemy.hitBy == 1 ? KillType::Melee : KillType::Other;
+    KillType type = who == 0          ? CurrentKillType(player)
+                    : enemy.hitBy == 1 ? KillType::Melee
+                    : enemy.hitBy == 3 ? KillType::Ranged // player 2's gun
+                                       : KillType::Other;
     AwardPoints(who, PointsForKill(type));
     sRun.lastKillPos = enemy.actor->world.pos;
 
@@ -1507,10 +1510,16 @@ static void RegisterZombies() {
     COND_HOOK(OnSceneInit, enabled, OnSceneInit);
     COND_HOOK(OnOcarinaSongAction, enabled, OnOcarinaSong);
     COND_HOOK(OnGameFrameUpdate, enabled, OnGameFrameUpdate);
-    COND_HOOK(OnPlayDrawBegin, enabled, Coop_DrawBegin);
+    // One hook each for the draw, so the order is fixed: the guns pose both players
+    // before the world draw and put them back only after player 2's view is drawn.
+    COND_HOOK(OnPlayDrawBegin, enabled, [] {
+        Coop_DrawBegin();
+        Guns_DrawBegin();
+    });
     COND_HOOK(OnPlayDrawEnd, enabled, [] {
         Barricades_Draw();
         Coop_DrawEnd();
+        Guns_DrawEnd();
     });
     COND_HOOK(OnExitGame, enabled, [](int32_t) { AbandonRun(); });
     COND_HOOK(OnGameStateMainStart, enabled, OnGameStateMainStart);

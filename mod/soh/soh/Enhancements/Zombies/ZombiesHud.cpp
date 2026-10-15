@@ -976,6 +976,15 @@ PlayerView PartnerView() {
         v.status = "DOWN! " + std::to_string(p.downFrames / 20 + 1);
     }
     v.prompt = p.prompt;
+    std::string name, ammo, hint;
+    bool crosshair = false;
+    if (Guns_HudInfoFor(1, &name, &ammo, &hint, &crosshair)) {
+        size_t bracket = name.find(" [");
+        v.gun = true;
+        v.gunName = bracket == std::string::npos ? name : name.substr(0, bracket);
+        v.gunAmmo = ammo;
+        v.gunHint = hint;
+    }
     return v;
 }
 

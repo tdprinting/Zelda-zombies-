@@ -733,24 +733,31 @@ struct PartnerChestPrize {
     const char* name;
     int weight;
     void (*give)();
+    u8 item; // what floats up out of the imported box
 };
 
 static const PartnerChestPrize kPartnerChest[] = {
-    { "MASTER SWORD", 3, [] { Coop_GiveSword(PARTNER_SWORD_MASTER); } },
-    { "BIGGORON SWORD", 1, [] { Coop_GiveSword(PARTNER_SWORD_BIGGORON); } },
+    { "MASTER SWORD", 3, [] { Coop_GiveSword(PARTNER_SWORD_MASTER); }, ITEM_SWORD_MASTER },
+    { "BIGGORON SWORD", 1, [] { Coop_GiveSword(PARTNER_SWORD_BIGGORON); }, ITEM_SWORD_BGS },
     { "BOMBS", 4,
       [] {
           GetRun().partner.bombBag = true;
           Coop_GiveBombs(Coop_MaxBombs());
-      } },
-    { "FAIRY", 2, [] { Coop_Heal(); } },
+      },
+      ITEM_BOMB },
+    { "FAIRY", 2, [] { Coop_Heal(); }, ITEM_FAIRY },
 };
 
-static const PartnerChestPrize& RollPartnerChest() {
+static int PartnerChestWeight() {
     int total = 0;
     for (const PartnerChestPrize& prize : kPartnerChest) {
         total += prize.weight;
     }
+    return total;
+}
+
+static const PartnerChestPrize& RollPartnerChest() {
+    int total = PartnerChestWeight();
     int roll = std::min(static_cast<int>(Rand_ZeroOne() * static_cast<float>(total)), total - 1);
     for (const PartnerChestPrize& prize : kPartnerChest) {
         if (roll < prize.weight) {
@@ -773,6 +780,10 @@ static Offer GetOffer(const Station& station, int who) {
 
     switch (station.type) {
         case StationType::Armory: {
+            // The rack's gun entries (R at the Armory, L for player 2), then its Zelda item.
+            if (Guns_ArmoryOffer(who, &offer.label, &offer.cost, &offer.available, &offer.unavailableReason)) {
+                break;
+            }
             if (who == 1) {
                 if (partner.sword < PARTNER_SWORD_MASTER) {
                     offer.label = "MASTER SWORD";
@@ -788,10 +799,6 @@ static Offer GetOffer(const Station& station, int who) {
                         offer.unavailableReason = "FULL";
                     }
                 }
-                break;
-            }
-            // The rack's gun entries (R at the Armory), then its Zelda item.
-            if (Guns_ArmoryOffer(who, &offer.label, &offer.cost, &offer.available, &offer.unavailableReason)) {
                 break;
             }
             const WeaponOffer* weapon = ArmoryOffer();
@@ -843,7 +850,9 @@ static Offer GetOffer(const Station& station, int who) {
                 offer.available = false;
                 offer.unavailableReason = "PLAY ZELDA'S LULLABY";
             } else if (offer.available && who == 1) {
-                if (partner.papSword) {
+                if (Guns_PapWanted(1, true)) {
+                    offer.label += std::string(": ") + Guns_PapName(1); // the gun in hand first
+                } else if (partner.papSword) {
                     offer.available = false;
                     offer.unavailableReason = "NOTHING TO UPGRADE";
                 } else {
@@ -884,6 +893,9 @@ static bool BuyForPartner(PlayState* play, Station& station, const Offer& offer)
     Partner& partner = GetRun().partner;
     switch (station.type) {
         case StationType::Armory:
+            if (Guns_ArmoryBuy(play, 1)) {
+                return true;
+            }
             if (partner.sword < PARTNER_SWORD_MASTER) {
                 Coop_GiveSword(PARTNER_SWORD_MASTER);
                 Announce("PLAYER 2: MASTER SWORD", 3);
@@ -894,6 +906,9 @@ static bool BuyForPartner(PlayState* play, Station& station, const Offer& offer)
             Sfx_PlaySfxCentered(NA_SE_SY_GET_ITEM);
             return true;
         case StationType::MysteryChest: {
+            if (Box_Active()) {
+                return false; // the imported box rolls for player 2 too (RollBox)
+            }
             sChestUses++;
             if (!PowerUpActive(PowerUp::FireSale) && ChestMoves(sChestUses, sChestMoved, Rand_ZeroOne())) {
                 GetRun().players[1].points += offer.cost; // refund, not earnings
@@ -903,6 +918,15 @@ static bool BuyForPartner(PlayState* play, Station& station, const Offer& offer)
                 sChestUses = 0;
                 return true;
             }
+            // Guns and player 2's own prizes share the chest.
+            int gunWeight = Guns_ChestWeight(1);
+            int roll = static_cast<int>(Rand_ZeroOne() * static_cast<float>(gunWeight + PartnerChestWeight()));
+            const char* gun = roll < gunWeight ? Guns_ChestGive(play, 1, roll) : nullptr;
+            if (gun != nullptr) {
+                Announce(std::string("PLAYER 2: ") + gun, 3);
+                Sfx_PlaySfxCentered(NA_SE_SY_GET_BOXITEM);
+                return true;
+            }
             const PartnerChestPrize& prize = RollPartnerChest();
             prize.give();
             Announce(std::string("PLAYER 2: ") + prize.name, 3);
@@ -910,6 +934,12 @@ static bool BuyForPartner(PlayState* play, Station& station, const Offer& offer)
             return true;
         }
         case StationType::PackAPunch:
+            if (Guns_PapWanted(1, true)) {
+                Guns_PackAPunch(play, 1);
+                Announce(std::string("PLAYER 2: ") + Guns_PapName(1), 3);
+                Sfx_PlaySfxCentered(NA_SE_SY_GET_ITEM);
+                return true;
+            }
             partner.papSword = true;
             Announce("PLAYER 2: PUNCHED BLADE", 3);
             Sfx_PlaySfxCentered(NA_SE_SY_GET_ITEM);
@@ -921,21 +951,6 @@ static bool BuyForPartner(PlayState* play, Station& station, const Offer& offer)
         default:
             return false;
     }
-}
-
-// The roll GunBoxPick turns into this gun for these holdings, -1 when it can't come up
-// (the player already holds it).
-static int BoxRollFor(const PlayerGuns& guns, GunId gun) {
-    int roll = 0;
-    for (int i = 1; i < static_cast<int>(GunId::Count); i++) {
-        GunId id = static_cast<GunId>(i);
-        int weight = guns.Has(id) ? 0 : GunInfo(id).boxWeight;
-        if (id == gun) {
-            return weight > 0 ? roll : -1;
-        }
-        roll += weight;
-    }
-    return -1;
 }
 
 // The chest's roll for the imported Mystery Box (ZombiesBox.cpp), made as its cycle ends:
@@ -950,19 +965,30 @@ static bool RollBox(int who, int cost, BoxPrize* prize) {
         return false;
     }
     int gunWeight = Guns_ChestWeight(who);
-    int roll = static_cast<int>(Rand_ZeroOne() * static_cast<float>(gunWeight + ChestWeight()));
+    int otherWeight = who == 1 ? PartnerChestWeight() : ChestWeight();
+    int roll = static_cast<int>(Rand_ZeroOne() * static_cast<float>(gunWeight + otherWeight));
     GunId gun = roll < gunWeight ? GunBoxPick(Guns_Of(who), roll) : GunId::None;
     if (gun != GunId::None) {
         prize->label = GunName(gun, false);
         prize->gunBoName = GunInfo(gun).boName;
-        // The gun shown is the gun given: the roll is redone against what the player holds
-        // when they take it (a wall buy in between shifts the other guns' rolls).
+        // The gun shown is the gun given, whatever the player bought in between.
         prize->give = [who, gun](PlayState* p) {
-            int at = BoxRollFor(Guns_Of(who), gun);
-            const char* name = at >= 0 ? Guns_ChestGive(p, who, at) : nullptr;
+            const char* name = Guns_ChestGiveGun(p, who, gun);
             if (name != nullptr) {
-                Announce(name, 3);
+                Announce(who == 1 ? std::string("PLAYER 2: ") + name : std::string(name), 3);
             }
+            Sfx_PlaySfxCentered(NA_SE_SY_GET_BOXITEM);
+        };
+        return true;
+    }
+    if (who == 1) {
+        // Player 2's own prizes: swords, bombs, a fairy.
+        const PartnerChestPrize& item = RollPartnerChest();
+        prize->label = item.name;
+        prize->item = item.item;
+        prize->give = [&item](PlayState*) {
+            item.give();
+            Announce(std::string("PLAYER 2: ") + item.name, 3);
             Sfx_PlaySfxCentered(NA_SE_SY_GET_BOXITEM);
         };
         return true;

@@ -256,9 +256,12 @@ always use OoT sounds (a bomb blast pitched up per gun class for shots, the swor
 for a reload, the hookshot click when it's done, the magic arrow for the Ray Gun):
 tools/bomap lists a zone's sound aliases but doesn't export their audio.
 
-Per-player gun state is kept for every player from the start; player 2's guns aren't
-wired to their controls yet (they keep their swords and bombs), and the viewmodel is off
-in split screen.
+Every player has their own guns, ammo and gun state. Player 2 starts with the M1911 too:
+Z fires (hip-fire where they face, with the same aim assist), a tap of A reloads and a
+hold swaps when there's nothing to buy, and L steps through the Armory's guns (R is their
+bombs). The Armory, Mystery Chest and Pack-a-Punch give guns to whoever uses them, and
+player 2 holds theirs the way Link does, posed in both views. A player 2 gun kill pays
+the ranged 100. The first-person viewmodel is off in split screen.
 
 ## Controls
 
@@ -310,7 +313,7 @@ the d-pad ring as PNGs named after the Black Ops material. Any that are missing 
 by the HUD's own code instead, so it never needs them.
 
 Split screen: each player gets the whole HUD in their half, scaled down, with their own
-points, perks, buttons (player 2's sword and bombs), vignette and prompts.
+points, perks, buttons (player 2's sword and bombs), gun and ammo, vignette and prompts.
 
 ## Arenas
 
@@ -492,14 +495,15 @@ Code layout:
    - **Player 2** is an actor of our own, the size of the game's Player
      struct, drawn with the game's own Link drawing code (red tunic), moved by
      the second controller with its own chase camera. Its sword is its own
-     hitbox and its bombs are the game's bombs.
+     hitbox, its bombs are the game's bombs, and its guns are the mode's (Z to
+     fire, as above).
    - **Split screen**: the game draws player 1's view into the top half of the
      screen; after the world draw, the sky, scene, rooms and actors are drawn
      again from player 2's camera into the bottom half.
    - **Own points and items**: points, kills, perks and kill credit are per
      player. Stations, windows and debris take a buyer (Link with L, player 2
-     with A); player 2's purchases go to their own sword level, bombs, health
-     and perks, never to the save file.
+     with A); player 2's purchases go to their own guns, sword level, bombs,
+     health and perks, never to the save file.
    - **Downs**: a downed player loses 5% of their points and their perks,
      bleeds out after 45 seconds and returns the next round; holding the buy
      button for 3 seconds next to them revives them. When Link goes down his

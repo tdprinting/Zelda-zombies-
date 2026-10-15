@@ -96,8 +96,8 @@ struct GunSlot {
     int reserve = 0;
 };
 
-// One player's guns. Kept per player from the start: player 1 is Link, player 2 the
-// co-op partner (whose guns aren't wired to their controls yet).
+// One player's guns. Player 1 is Link, player 2 the co-op partner (Z fires, A reloads
+// with a tap and swaps with a hold).
 struct PlayerGuns {
     GunSlot slots[kMaxGunSlots];
     int slotCount = kGunSlots;
@@ -159,6 +159,14 @@ void Guns_MaxAmmo();
 // HUD: the gun's name and button, "clip | reserve" and a reload hint, bottom right as in
 // Black Ops; crosshair while aiming in first person. False when there's nothing to show.
 bool Guns_HudInfo(std::string* name, std::string* ammo, std::string* hint, bool* crosshair);
+// The same for any player (0 Link, 1 player 2): their half of the split-screen HUD.
+bool Guns_HudInfoFor(int who, std::string* name, std::string* ammo, std::string* hint, bool* crosshair);
+
+// Drawing, called from ZombiesMode's draw hooks: Begin poses the players' arms round their
+// guns before the world is drawn; End, after both split-screen views, puts them back and
+// draws Link's first-person viewmodel.
+void Guns_DrawBegin();
+void Guns_DrawEnd();
 
 // The C button the guns live on: 1 C-Left, 2 C-Down, 3 C-Right. AutoEquip leaves it empty.
 int Guns_Button();
@@ -179,6 +187,8 @@ GunId Guns_ArmoryRackGun(int who);
 // Mystery Chest: weight of the guns in the roll for this player, and handing one over.
 int Guns_ChestWeight(int who);
 const char* Guns_ChestGive(PlayState* play, int who, int roll);
+// Hands this player exactly this gun (the one the Mystery Box showed). Returns its name.
+const char* Guns_ChestGiveGun(PlayState* play, int who, GunId id);
 
 // Pack-a-Punch: whether the gun in hand is what gets punched (it is when Link used it more
 // recently than any Zelda item, or with anyRecency when nothing else can be), its new

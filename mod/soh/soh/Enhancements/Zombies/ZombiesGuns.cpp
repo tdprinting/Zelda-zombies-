@@ -1,7 +1,9 @@
 // Zombies of Time: Black Ops guns in Link's hands.
 //
 // Guns live on one C button (C-Left by default, a setting), which the mode keeps empty
-// and reads before the game does, so OoT's item system never sees it. Hip-fire goes where
+// and reads before the game does, so OoT's item system never sees it. Player 2 in co-op
+// fires with Z, reloads with a tap of A and swaps with a hold (their buy button, as Link's
+// buy button reloads and swaps), and steps through the Armory's guns with L. Hip-fire goes where
 // Link faces (with a little aim assist, as on a Black Ops console) or at whatever Z
 // locks onto; C-Up, OoT's own first-person look, is aiming down the sights, with a
 // viewmodel and tighter spread, and Link can walk while he aims.
@@ -210,11 +212,16 @@ struct GunState {
 static PlayerGuns sGuns[kMaxPlayers];
 static GunState sState[kMaxPlayers];
 static int sFrame = 0;
-static int sRack = 0; // the Armory entry Link is looking at
+static int sRack[kMaxPlayers] = {}; // the Armory entry each player is looking at
 
 // The gun button as read this frame, before the game saw it.
-static bool sGunPressed = false;
-static bool sGunHeld = false;
+static bool sGunPressed[kMaxPlayers] = {};
+static bool sGunHeld[kMaxPlayers] = {};
+
+// Player 2's buttons: fire, reload/swap (their buy button) and the Armory's next gun.
+static constexpr CONTROLLERBUTTONS_T kP2Fire = BTN_Z;
+static constexpr CONTROLLERBUTTONS_T kP2Use = BTN_A;
+static constexpr CONTROLLERBUTTONS_T kP2Rack = BTN_L;
 // ADS walking without a right stick: the stick's forward/back, kept from pitching the view.
 static s8 sAdsStickY = 0;
 static bool sAdsActive = false;
@@ -270,6 +277,27 @@ static bool RunLive() {
     return phase == Phase::Intro || phase == Phase::Active || phase == Phase::Intermission;
 }
 
+// The actor holding player `who`'s guns: Link, or player 2's own actor in co-op.
+static Player* PlayerOf(PlayState* play, int who) {
+    if (play == nullptr) {
+        return nullptr;
+    }
+    if (who == 0) {
+        return GET_PLAYER(play);
+    }
+    return who == 1 && Coop_Active() ? reinterpret_cast<Player*>(GetRun().partner.actor) : nullptr;
+}
+
+// Which player an actor is: 0 Link, 1 player 2, -1 neither.
+static int WhoIs(PlayState* play, const Player* player) {
+    for (int who = 0; who < kMaxPlayers; who++) {
+        if (player != nullptr && player == PlayerOf(play, who)) {
+            return who;
+        }
+    }
+    return -1;
+}
+
 void Guns_NewRun(PlayState* play) {
     (void)play;
     for (int i = 0; i < kMaxPlayers; i++) {
@@ -279,7 +307,9 @@ void Guns_NewRun(PlayState* play) {
     }
     sBolts.clear();
     sPendingDeaths.clear();
-    sRack = 0;
+    for (int& rack : sRack) {
+        rack = 0;
+    }
 }
 
 void Guns_EndRun() {
@@ -392,6 +422,9 @@ static TrackedEnemy* FindTracked(Actor* actor) {
 }
 
 static void QueueDeath(Actor* actor) {
+    if (ZombieActor_Is(actor)) {
+        return; // a Black Ops zombie sees its health run out and plays its own death
+    }
     for (const PendingDeath& pending : sPendingDeaths) {
         if (pending.actor == actor) {
             return;
@@ -420,6 +453,13 @@ static void DamageEnemy(TrackedEnemy& enemy, float boDamage, int who, const Vec3
         whole = std::max(whole, static_cast<int>(actor->colChkInfo.health));
     }
     sState[who].lastHitFrame = sFrame;
+    // Kill credit: the mode reads player 2's hits from hitBy (3: their gun).
+    if (who == 1) {
+        enemy.hitBy = 3;
+        enemy.hitFrames = 0;
+    } else {
+        enemy.hitBy = 0;
+    }
     Actor_SetColorFilter(actor, 0x4000, 255, 0, 4); // the red flash OoT enemies give when hit
     PlayState* play = gPlayState;
     if (play != nullptr) {
@@ -913,26 +953,37 @@ static void KeepGunButtonFree(PlayState* play) {
     }
 }
 
-void Guns_Update(PlayState* play, Player* player) {
-    sFrame++;
-    if (!RunLive()) {
-        return;
-    }
-    UpdatePendingDeaths(play);
-    UpdateBolts(play);
-    KeepGunButtonFree(play);
+// One player's controls this frame.
+struct GunInput {
+    bool pressed = false; // the trigger
+    bool held = false;
+    bool usePressed = false; // the buy button: reload (tap) and swap (hold)
+    bool useHeld = false;
+    bool promptEmpty = true; // nothing to buy here, so the buy button is the gun's
+    bool blocked = false;
+};
 
-    PlayerGuns& guns = sGuns[0];
-    GunState& st = sState[0];
-    Run& run = GetRun();
+// Player 2 can't use a gun: down, in a cutscene or menu, mid-swing or mid-throw.
+static bool ReadPartnerInput(PlayState* play, GunInput* in) {
+    CoopPad pad;
+    bool free = Coop_Pad(play, &pad);
+    in->pressed = (pad.press & kP2Fire) != 0;
+    in->held = (pad.cur & kP2Fire) != 0;
+    in->usePressed = (pad.press & kP2Use) != 0;
+    in->useHeld = (pad.cur & kP2Use) != 0;
+    in->promptEmpty = GetRun().partner.prompt.empty();
+    in->blocked = !free || pad.busy || Pause_IsOpen() || Lobby_IsOpen();
+    return free;
+}
 
-    // A press that reached the input after the start-of-frame read (another hook's).
-    const Input& input = play->state.input[0];
-    sGunPressed = sGunPressed || CHECK_BTN_ALL(input.press.button, GunButtonMask());
-    sGunHeld = sGunHeld || CHECK_BTN_ALL(input.cur.button, GunButtonMask());
+static void UpdatePlayerGun(PlayState* play, Player* player, int who, const GunInput& in) {
+    PlayerGuns& guns = sGuns[who];
+    GunState& st = sState[who];
 
     st.sinceShot = std::min(st.sinceShot + 1, 1000);
-    st.sinceItem = HoldsSword(player) ? std::min(st.sinceItem + 1, 1000) : 0;
+    // Player 2 has no Zelda items: their gun is always the thing in hand.
+    bool sword = who != 0 || HoldsSword(player);
+    st.sinceItem = sword ? std::min(st.sinceItem + 1, 1000) : 0;
     st.recoil = std::max(0.0f, st.recoil - 0.2f);
     if (st.fireCooldown > 0.0f) {
         st.fireCooldown -= 1.0f;
@@ -943,7 +994,7 @@ void Guns_Update(PlayState* play, Player* player) {
     }
     if (st.reloadFrames > 0) {
         --st.reloadFrames;
-        ReloadNotes(player, 0);
+        ReloadNotes(player, who);
         if (st.reloadFrames == 0) {
             guns.Reload();
             GunModel* gm = Guns_ImportedModel(GunInfo(guns.Current().id).boName);
@@ -953,21 +1004,21 @@ void Guns_Update(PlayState* play, Player* player) {
         }
     }
 
-    bool blocked = GunBlocked(play, player);
+    bool blocked = in.blocked;
     bool hasGun = guns.Current().id != GunId::None;
 
     // The buy button reloads (tap) and swaps (hold) when there's nothing to buy, like
     // Black Ops' use/reload button.
-    if (run.prompt.empty() && !blocked && hasGun) {
-        if (BuyPressed(play)) {
+    if (in.promptEmpty && !blocked && hasGun) {
+        if (in.usePressed) {
             st.buyHold = 1;
-        } else if (st.buyHold > 0 && BuyHeld(play)) {
+        } else if (st.buyHold > 0 && in.useHeld) {
             if (++st.buyHold == kSwapHoldFrames) {
-                StartSwap(player, 0);
+                StartSwap(player, who);
             }
         } else if (st.buyHold > 0) {
             if (st.buyHold < kSwapHoldFrames) {
-                StartReload(player, 0);
+                StartReload(player, who);
             }
             st.buyHold = 0;
         }
@@ -980,17 +1031,17 @@ void Guns_Update(PlayState* play, Player* player) {
     }
     GunSlot& slot = guns.Current();
     const GunStats& gun = GunInfo(slot.id);
-    bool wantsFire = sGunPressed || (gun.automatic && sGunHeld && st.triggerWasDown);
-    st.triggerWasDown = sGunHeld;
+    bool wantsFire = in.pressed || (gun.automatic && in.held && st.triggerWasDown);
+    st.triggerWasDown = in.held;
     if (!wantsFire) {
         return;
     }
     if (blocked) {
         return;
     }
-    if (!HoldsSword(player)) {
+    if (!sword) {
         // A Zelda item in hand goes away first, as pressing another item's button would.
-        if (sGunPressed) {
+        if (in.pressed) {
             Player_UseItem(play, player, ITEM_NONE);
         }
         return;
@@ -1001,18 +1052,55 @@ void Guns_Update(PlayState* play, Player* player) {
     }
     if (slot.clip <= 0) {
         if (slot.reserve > 0) {
-            StartReload(player, 0);
-        } else if (sGunPressed) {
+            StartReload(player, who);
+        } else if (in.pressed) {
             PlayGunSfx(player, NA_SE_IT_HOOKSHOT_REFLECT, PITCH_SMG, VOL_SMG); // dry fire
             st.sinceShot = 0;
         }
         return;
     }
-    Fire(play, player, 0);
+    Fire(play, player, who);
     st.fireCooldown += gun.fireFrames;
     if (slot.clip == 0 && slot.reserve > 0) {
         st.fireCooldown = 0.0f;
-        StartReload(player, 0); // Black Ops reloads on its own when the clip runs dry
+        StartReload(player, who); // Black Ops reloads on its own when the clip runs dry
+    }
+}
+
+void Guns_Update(PlayState* play, Player* player) {
+    sFrame++;
+    if (!RunLive()) {
+        return;
+    }
+    UpdatePendingDeaths(play);
+    UpdateBolts(play);
+    KeepGunButtonFree(play);
+
+    // Link: the gun button as read at the start of the frame, plus a press that reached
+    // the input after that read (another hook's).
+    const Input& input = play->state.input[0];
+    sGunPressed[0] = sGunPressed[0] || CHECK_BTN_ALL(input.press.button, GunButtonMask());
+    sGunHeld[0] = sGunHeld[0] || CHECK_BTN_ALL(input.cur.button, GunButtonMask());
+    GunInput link;
+    link.pressed = sGunPressed[0];
+    link.held = sGunHeld[0];
+    link.usePressed = BuyPressed(play);
+    link.useHeld = BuyHeld(play);
+    link.promptEmpty = GetRun().prompt.empty();
+    link.blocked = GunBlocked(play, player);
+    UpdatePlayerGun(play, player, 0, link);
+
+    // Player 2, on their own controller.
+    Player* partner = PlayerOf(play, 1);
+    if (partner != nullptr) {
+        GunInput in;
+        ReadPartnerInput(play, &in);
+        sGunPressed[1] = in.pressed;
+        sGunHeld[1] = in.held;
+        UpdatePlayerGun(play, partner, 1, in);
+    } else {
+        sGunPressed[1] = false;
+        sGunHeld[1] = false;
     }
 }
 
@@ -1133,31 +1221,42 @@ static int SlotOf(const PlayerGuns& guns, GunId id) {
     return -1;
 }
 
-static GunId RackGun() {
+static int ClampWho(int who) {
+    return std::clamp(who, 0, kMaxPlayers - 1);
+}
+
+static GunId RackGun(int who) {
+    int& rack = sRack[ClampWho(who)];
     std::vector<GunId> list = WallGuns();
-    if (sRack > static_cast<int>(list.size())) {
-        sRack = 0;
+    if (rack > static_cast<int>(list.size())) {
+        rack = 0;
     }
-    return sRack == 0 ? GunId::None : list[sRack - 1];
+    return rack == 0 ? GunId::None : list[rack - 1];
 }
 
 GunId Guns_ArmoryRackGun(int who) {
-    return who == 0 ? RackGun() : GunId::None;
+    return RackGun(who);
 }
 
 const char* Guns_ArmoryBrowse(PlayState* play, int who) {
-    if (who != 0) {
-        return "";
+    who = ClampWho(who);
+    bool next;
+    if (who == 0) {
+        next = CHECK_BTN_ALL(play->state.input[0].press.button, BTN_R);
+    } else {
+        CoopPad pad;
+        next = Coop_Pad(play, &pad) && (pad.press & kP2Rack) != 0; // R is player 2's bombs
     }
-    if (CHECK_BTN_ALL(play->state.input[0].press.button, BTN_R)) {
-        sRack = (sRack + 1) % (static_cast<int>(WallGuns().size()) + 1);
+    if (next) {
+        sRack[who] = (sRack[who] + 1) % (static_cast<int>(WallGuns().size()) + 1);
         Sfx_PlaySfxCentered(NA_SE_SY_CURSOR);
     }
-    return "  R: NEXT";
+    return who == 0 ? "  R: NEXT" : "  L: NEXT";
 }
 
 bool Guns_ArmoryOffer(int who, std::string* label, int* cost, bool* available, std::string* reason) {
-    GunId id = who == 0 ? RackGun() : GunId::None;
+    who = ClampWho(who);
+    GunId id = RackGun(who);
     if (id == GunId::None) {
         return false;
     }
@@ -1180,7 +1279,8 @@ bool Guns_ArmoryOffer(int who, std::string* label, int* cost, bool* available, s
 }
 
 bool Guns_ArmoryBuy(PlayState* play, int who) {
-    GunId id = who == 0 ? RackGun() : GunId::None;
+    who = ClampWho(who);
+    GunId id = RackGun(who);
     if (id == GunId::None) {
         return false;
     }
@@ -1201,12 +1301,12 @@ bool Guns_ArmoryBuy(PlayState* play, int who) {
 }
 
 int Guns_ChestWeight(int who) {
-    return who == 0 ? GunBoxWeight(sGuns[who]) : 0;
+    return GunBoxWeight(sGuns[ClampWho(who)]);
 }
 
-const char* Guns_ChestGive(PlayState* play, int who, int roll) {
-    GunId id = GunBoxPick(sGuns[who], roll);
-    if (id == GunId::None) {
+const char* Guns_ChestGiveGun(PlayState* play, int who, GunId id) {
+    who = ClampWho(who);
+    if (id == GunId::None || id >= GunId::Count) {
         return nullptr;
     }
     sGuns[who].Give(id);
@@ -1217,10 +1317,12 @@ const char* Guns_ChestGive(PlayState* play, int who, int roll) {
     return GunName(id, false);
 }
 
+const char* Guns_ChestGive(PlayState* play, int who, int roll) {
+    return Guns_ChestGiveGun(play, who, GunBoxPick(sGuns[ClampWho(who)], roll));
+}
+
 bool Guns_PapWanted(int who, bool anyRecency) {
-    if (who != 0) {
-        return false;
-    }
+    who = ClampWho(who);
     const GunSlot& slot = sGuns[who].Current();
     if (slot.id == GunId::None || slot.pap) {
         return false;
@@ -1230,11 +1332,12 @@ bool Guns_PapWanted(int who, bool anyRecency) {
 }
 
 const char* Guns_PapName(int who) {
-    const GunSlot& slot = sGuns[who].Current();
+    const GunSlot& slot = sGuns[ClampWho(who)].Current();
     return GunName(slot.id, true);
 }
 
 void Guns_PackAPunch(PlayState* play, int who) {
+    who = ClampWho(who);
     PlayerGuns& guns = sGuns[who];
     guns.PackAPunch(guns.current);
     sState[who].swapFrames = kSwapFrames / 2;
@@ -1246,16 +1349,20 @@ void Guns_PackAPunch(PlayState* play, int who) {
 // HUD
 
 bool Guns_HudInfo(std::string* name, std::string* ammo, std::string* hint, bool* crosshair) {
-    if (!RunLive()) {
+    return Guns_HudInfoFor(0, name, ammo, hint, crosshair);
+}
+
+bool Guns_HudInfoFor(int who, std::string* name, std::string* ammo, std::string* hint, bool* crosshair) {
+    if (!RunLive() || who < 0 || who >= kMaxPlayers || (who != 0 && PlayerOf(gPlayState, who) == nullptr)) {
         return false;
     }
-    const PlayerGuns& guns = sGuns[0];
+    const PlayerGuns& guns = sGuns[who];
     const GunSlot& slot = guns.Current();
     if (slot.id == GunId::None) {
         return false;
     }
-    const GunState& st = sState[0];
-    *name = std::string(GunName(slot.id, slot.pap)) + " [" + GunButtonName() + "]";
+    const GunState& st = sState[who];
+    *name = std::string(GunName(slot.id, slot.pap)) + " [" + (who == 0 ? GunButtonName() : "Z") + "]";
     char buf[32];
     snprintf(buf, sizeof(buf), "%d | %d", slot.clip, slot.reserve);
     *ammo = buf;
@@ -1266,9 +1373,9 @@ bool Guns_HudInfo(std::string* name, std::string* ammo, std::string* hint, bool*
     } else if (slot.clip == 0 && slot.reserve == 0) {
         *hint = "NO AMMO";
     } else if (slot.reserve > 0 && slot.clip * 4 <= clipSize) {
-        *hint = std::string(BuyButtonName()) + ": RELOAD";
+        *hint = std::string(who == 0 ? BuyButtonName() : "A") + ": RELOAD";
     }
-    *crosshair = gPlayState != nullptr && InAds(GET_PLAYER(gPlayState));
+    *crosshair = who == 0 && gPlayState != nullptr && InAds(GET_PLAYER(gPlayState));
     return true;
 }
 
@@ -1428,12 +1535,12 @@ static float Smooth(float t) {
 
 // The pose for this frame from the gun's state: aim, sprint, reload and swap keyframes,
 // plus recoil.
-static ArmPose CurrentPose(Player* player, const GunStats& gun) {
+static ArmPose CurrentPose(Player* player, const GunStats& gun, int who) {
     if (!sPosesReady) {
         InitPoses();
     }
     const ClassPoses& poses = sPoses[LINK_IS_ADULT ? 0 : 1][static_cast<int>(gun.gunClass)];
-    const GunState& st = sState[0];
+    const GunState& st = sState[who];
     ArmPose pose = poses.aim;
 
     bool sprinting = player->actor.speedXZ > 6.0f && st.sinceShot > 10 && player->focusActor == nullptr;
@@ -1460,20 +1567,24 @@ static ArmPose CurrentPose(Player* player, const GunStats& gun) {
     return pose;
 }
 
-// What the draw changed, to put back afterwards.
-static Vec3s sSavedJoints[POSE_JOINTS];
-static Gfx** sSavedRightHandDLists = nullptr;
-static Gfx** sSavedLeftHandDLists = nullptr;
-static u8 sSavedRightHandType = 0;
-static u8 sSavedLeftHandType = 0;
-static bool sPosed = false;
+// What the draw changed on each player, to put back afterwards.
+struct SavedPose {
+    Player* player = nullptr;
+    Vec3s joints[POSE_JOINTS];
+    Gfx** rightHandDLists = nullptr;
+    Gfx** leftHandDLists = nullptr;
+    u8 rightHandType = 0;
+    u8 leftHandType = 0;
+    bool posed = false;
+};
+static SavedPose sSaved[kMaxPlayers];
 
 // Stand-in guns: the hookshot (adult) or slingshot (child) in Link's right hand, his left
 // fist closed round the foregrip. [adult near, child near, adult far, child far]
 static Gfx* sGunHandDLs[4];
 static Gfx* sGripHandDLs[4];
 static Gfx* sFistHandDLs[4]; // his right fist, round an imported gun's grip
-static GunModel* sHeldGun = nullptr;
+static GunModel* sHeldGun[kMaxPlayers] = {};
 static constexpr float kViewmodelDepth = 2.0f;
 static constexpr float kSightHeight = -0.4f; // the sights just under the eye when aiming (inches)
 
@@ -1492,37 +1603,49 @@ static void InitHandDLs() {
     sFistHandDLs[3] = (Gfx*)gLinkChildRightHandClosedFarDL;
 }
 
-static bool GunRaised(PlayState* play, Player* player) {
-    const GunState& st = sState[0];
-    if (sGuns[0].Current().id == GunId::None || GunBlocked(play, player) || !HoldsSword(player)) {
+static bool GunRaised(PlayState* play, Player* player, int who) {
+    const GunState& st = sState[who];
+    if (sGuns[who].Current().id == GunId::None) {
         return false;
     }
-    return sGunHeld || st.sinceShot < kRaiseFrames || st.reloadFrames > 0 || st.swapFrames > 0;
+    if (who == 0 && (GunBlocked(play, player) || !HoldsSword(player))) {
+        return false;
+    }
+    if (who != 0) {
+        CoopPad pad;
+        if (!Coop_Pad(play, &pad) || pad.busy) {
+            return false; // down, held, or swinging the sword or throwing a bomb
+        }
+    }
+    return sGunHeld[who] || st.sinceShot < kRaiseFrames || st.reloadFrames > 0 || st.swapFrames > 0;
 }
 
-static void PoseLink() {
-    sPosed = false;
-    sHeldGun = nullptr;
-    PlayState* play = gPlayState;
-    if (play == nullptr || !RunLive()) {
+// Poses one player's arms over their animation for this frame's draw (both views in
+// split screen), and swaps their hands for the gun.
+static void PosePlayer(PlayState* play, int who) {
+    SavedPose& saved = sSaved[who];
+    saved.posed = false;
+    sHeldGun[who] = nullptr;
+    Player* player = PlayerOf(play, who);
+    if (player == nullptr) {
         return;
     }
-    Player* player = GET_PLAYER(play);
-    GunState& st = sState[0];
-    bool raised = GunRaised(play, player);
+    GunState& st = sState[who];
+    bool raised = GunRaised(play, player, who);
     st.raise = raised ? std::min(1.0f, st.raise + 0.34f) : std::max(0.0f, st.raise - 0.2f);
     if (st.raise <= 0.0f || player->unk_6AD != 0) {
         return;
     }
-    const GunSlot& slot = sGuns[0].Current();
+    const GunSlot& slot = sGuns[who].Current();
     const GunStats& gun = GunInfo(slot.id);
-    ArmPose pose = CurrentPose(player, gun);
+    ArmPose pose = CurrentPose(player, gun, who);
     const ClassPoses& poses = sPoses[LINK_IS_ADULT ? 0 : 1][static_cast<int>(gun.gunClass)];
     float w = Smooth(st.raise);
 
+    saved.player = player;
     for (int j = 0; j < POSE_JOINTS; j++) {
         Vec3s& joint = player->jointTable[kPoseLimbs[j]];
-        sSavedJoints[j] = joint;
+        saved.joints[j] = joint;
         bool leftArm = j == POSE_L_SHOULDER || j == POSE_L_FOREARM || j == POSE_L_HAND;
         if (leftArm && !poses.twoHanded) {
             continue;
@@ -1536,47 +1659,67 @@ static void PoseLink() {
         joint.z = LerpAngle(joint.z, target.z, w);
     }
 
-    sSavedRightHandDLists = player->rightHandDLists;
-    sSavedLeftHandDLists = player->leftHandDLists;
-    sSavedRightHandType = player->rightHandType;
-    sSavedLeftHandType = player->leftHandType;
+    saved.rightHandDLists = player->rightHandDLists;
+    saved.leftHandDLists = player->leftHandDLists;
+    saved.rightHandType = player->rightHandType;
+    saved.leftHandType = player->leftHandType;
     GunModel* gm = Guns_ImportedModel(gun.boName);
-    sHeldGun = nullptr;
     if (w > 0.5f) {
         if (sGunHandDLs[0] == nullptr) {
             InitHandDLs();
         }
         if (gm != nullptr && gm->world != nullptr) {
-            // The imported gun goes into his closed fist as the hand is drawn (HoldGun).
+            // The imported gun goes into the closed fist as the hand is drawn (HoldGun).
             player->rightHandDLists = &sFistHandDLs[gSaveContext.linkAge];
             player->rightHandType = PLAYER_MODELTYPE_RH_CLOSED;
-            sHeldGun = gm;
+            sHeldGun[who] = gm;
         } else {
             player->rightHandDLists = &sGunHandDLs[gSaveContext.linkAge];
             player->rightHandType = LINK_IS_ADULT ? PLAYER_MODELTYPE_RH_HOOKSHOT : PLAYER_MODELTYPE_RH_BOW_SLINGSHOT;
         }
-        if (poses.twoHanded && HoldsSword(player) && player->heldItemAction == PLAYER_IA_NONE) {
+        // Link keeps a drawn sword in his left hand; player 2's sword goes away while the
+        // gun is up, as they can't swing with it raised.
+        bool leftFree = who != 0 || (HoldsSword(player) && player->heldItemAction == PLAYER_IA_NONE);
+        if (poses.twoHanded && leftFree) {
             player->leftHandDLists = &sGripHandDLs[gSaveContext.linkAge];
             player->leftHandType = PLAYER_MODELTYPE_LH_CLOSED;
         }
     }
-    sPosed = true;
+    saved.posed = true;
 }
 
-static void UnposeLink() {
-    if (!sPosed || gPlayState == nullptr) {
+static void PosePlayers() {
+    PlayState* play = gPlayState;
+    for (int who = 0; who < kMaxPlayers; who++) {
+        sSaved[who].posed = false;
+        sHeldGun[who] = nullptr;
+    }
+    if (play == nullptr || !RunLive()) {
         return;
     }
-    sPosed = false;
-    sHeldGun = nullptr;
-    Player* player = GET_PLAYER(gPlayState);
-    for (int j = 0; j < POSE_JOINTS; j++) {
-        player->jointTable[kPoseLimbs[j]] = sSavedJoints[j];
+    for (int who = 0; who < kMaxPlayers; who++) {
+        PosePlayer(play, who);
     }
-    player->rightHandDLists = sSavedRightHandDLists;
-    player->leftHandDLists = sSavedLeftHandDLists;
-    player->rightHandType = sSavedRightHandType;
-    player->leftHandType = sSavedLeftHandType;
+}
+
+static void UnposePlayers() {
+    for (int who = 0; who < kMaxPlayers; who++) {
+        SavedPose& saved = sSaved[who];
+        sHeldGun[who] = nullptr;
+        if (!saved.posed || gPlayState == nullptr || saved.player != PlayerOf(gPlayState, who)) {
+            saved.posed = false; // gone since the pose (player 2 despawned): nothing to put back
+            continue;
+        }
+        saved.posed = false;
+        Player* player = saved.player;
+        for (int j = 0; j < POSE_JOINTS; j++) {
+            player->jointTable[kPoseLimbs[j]] = saved.joints[j];
+        }
+        player->rightHandDLists = saved.rightHandDLists;
+        player->leftHandDLists = saved.leftHandDLists;
+        player->rightHandType = saved.rightHandType;
+        player->leftHandType = saved.leftHandType;
+    }
 }
 
 } // namespace Zombies
@@ -1751,15 +1894,18 @@ static constexpr HandFit kHandFit[2] = {
 
 // The limb draw: the held imported gun goes into Link's right fist.
 static void HoldGun(s32 limbIndex, Gfx** dList, Player* player, PlayState* play) {
-    if (limbIndex != PLAYER_LIMB_R_HAND || sHeldGun == nullptr || *dList == nullptr || player != GET_PLAYER(play) ||
-        player->unk_6AD != 0) {
+    if (limbIndex != PLAYER_LIMB_R_HAND || *dList == nullptr || player->unk_6AD != 0) {
         return;
     }
-    Gfx* gun = GunWorldDl(sHeldGun);
+    int who = WhoIs(play, player);
+    if (who < 0 || sHeldGun[who] == nullptr) {
+        return;
+    }
+    Gfx* gun = GunWorldDl(sHeldGun[who]);
     if (gun == nullptr) {
         return;
     }
-    Vec3f grip = GripOf(GunInfo(sGuns[0].Current().id).boName);
+    Vec3f grip = GripOf(GunInfo(sGuns[who].Current().id).boName);
     const HandFit& fit = kHandFit[LINK_IS_ADULT ? 0 : 1];
     // Black Ops inches to OoT units, times the limb's hundred.
     float scale = (64.0f / 72.0f) * 100.0f * fit.scale;
@@ -1872,6 +2018,15 @@ static void DrawViewmodel() {
     }
 }
 
+void Guns_DrawBegin() {
+    PosePlayers();
+}
+
+void Guns_DrawEnd() {
+    UnposePlayers();
+    DrawViewmodel();
+}
+
 static void InitPoses() {
     for (int c = 0; c < static_cast<int>(GunClass::Count); c++) {
         // One table for both ages for now: Link's child skeleton has the same limbs.
@@ -1887,8 +2042,8 @@ static void InitPoses() {
 
 static void OnMainStart() {
     PlayState* play = gPlayState;
-    sGunPressed = false;
-    sGunHeld = false;
+    sGunPressed[0] = false;
+    sGunHeld[0] = false;
     if (play == nullptr || !RunLive() || GET_PLAYER(play) == nullptr) {
         sAdsActive = false;
         return;
@@ -1901,12 +2056,12 @@ static void OnMainStart() {
     }
     Input& input = play->state.input[0];
     u16 mask = GunButtonMask();
-    sGunPressed = CHECK_BTN_ALL(input.press.button, mask);
-    sGunHeld = CHECK_BTN_ALL(input.cur.button, mask);
+    sGunPressed[0] = CHECK_BTN_ALL(input.press.button, mask);
+    sGunHeld[0] = CHECK_BTN_ALL(input.cur.button, mask);
     if (sGuns[0].Current().id != GunId::None) {
         // The gun's button is the mode's alone during a run.
-        input.press.button &= static_cast<u16>(~mask);
-        input.cur.button &= static_cast<u16>(~mask);
+        input.press.button &= ~static_cast<CONTROLLERBUTTONS_T>(mask);
+        input.cur.button &= ~static_cast<CONTROLLERBUTTONS_T>(mask);
     }
     sAdsActive = InAds(player);
     sAdsStickY = 0;
@@ -1954,11 +2109,9 @@ static void RegisterGuns() {
     bool enabled = CVarGetInteger(CVAR_ZOMBIES("Enabled"), 0) || CVarGetInteger(CVAR_ZOMBIES("ZombiesOnly"), 1);
 
     COND_HOOK(OnGameStateMainStart, enabled, OnMainStart);
-    COND_HOOK(OnPlayDrawBegin, enabled, PoseLink);
-    COND_HOOK(OnPlayDrawEnd, enabled, [] {
-        UnposeLink();
-        DrawViewmodel();
-    });
+    // Drawing: ZombiesMode's draw hooks call Guns_DrawBegin and Guns_DrawEnd, after
+    // player 2's view is drawn, so both views see the same poses whatever order the
+    // hooks were registered in.
 
     COND_VB_SHOULD(VB_PLAYER_OVERRIDE_LIMB_DRAW, enabled, {
         s32 limbIndex = va_arg(args, s32);

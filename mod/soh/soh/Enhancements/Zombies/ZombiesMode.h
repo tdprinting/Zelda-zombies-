@@ -92,7 +92,7 @@ struct TrackedEnemy {
     float closestDist;  // nearest it has come to Link since its last progress
     int stuckFrames;    // frames without getting closer
     int window = -1;    // barricade it is tearing through, or -1 once it is inside
-    int hitBy = 0;      // player 2's last hit on it: 0 none, 1 sword, 2 bomb
+    int hitBy = 0;      // player 2's last hit on it: 0 none, 1 sword, 2 bomb, 3 gun
     int hitFrames = 0;  // frames since player 2 last hit it
     int swipeTimer = 0; // frames until it can swipe at anyone again
     int tearTimer = 0;  // frames spent on the board it is pulling off
@@ -368,6 +368,14 @@ void Coop_Heal();
 // A down costs a cut of the player's points and all their perks (Juggernog's defense goes back).
 void LoseOnDown(int index);
 int Coop_MaxBombs();
+// Player 2's controller this frame, for their guns: false when they can't act (no co-op
+// run, down, or a cutscene or menu holds them). busy: mid-swing or mid-throw.
+struct CoopPad {
+    CONTROLLERBUTTONS_T cur = 0;
+    CONTROLLERBUTTONS_T press = 0;
+    bool busy = false;
+};
+bool Coop_Pad(PlayState* play, CoopPad* out);
 
 // HUD (ZombiesHud.cpp)
 void Hud_Draw();

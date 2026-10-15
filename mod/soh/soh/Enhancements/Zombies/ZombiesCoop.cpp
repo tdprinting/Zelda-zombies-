@@ -1032,6 +1032,13 @@ bool Coop_Buyer(PlayState* play, Buyer* out) {
     return true;
 }
 
+bool Coop_Pad(PlayState* play, CoopPad* out) {
+    out->cur = sCur;
+    out->press = sPress;
+    out->busy = sSwingFrames > 0 || sThrowFrames > 0;
+    return Coop_Active() && PartnerStanding() && !GameHeld(play);
+}
+
 // ---------------------------------------------------------------------------
 // Split screen
 
