@@ -805,6 +805,12 @@ static void UpdateEnemies(PlayState* play, Player* player) {
                     target.yaw = Math_Vec3f_Yaw(&actor->world.pos, &navTo);
                     dist = std::max(dist, navDist);
                 }
+                // Held at a stair's riser: up onto the next tread, as a Black Ops zombie steps.
+                float rise = navTo.y - actor->world.pos.y;
+                if (enemy.stuckFrames > 10 && rise > 3.0f && rise < 40.0f && actor->freezeTimer == 0) {
+                    actor->world.pos.y += std::min(rise, 4.0f);
+                    actor->velocity.y = 0.0f;
+                }
             } else if (Nav_Ready() && enemy.cameIn >= 0 && enemy.cameIn < static_cast<int>(sRun.windows.size())) {
                 // Off the walk grid just after its window opened: in through the window.
                 const Window& w = sRun.windows[enemy.cameIn];
