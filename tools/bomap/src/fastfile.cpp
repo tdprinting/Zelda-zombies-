@@ -95,6 +95,8 @@ static std::vector<uint8_t> Inflate(const uint8_t* in, size_t inSize) {
     return out;
 }
 
+static void ReadZoneHeader(Zone& zone);
+
 Zone ParseFastfile(const std::vector<uint8_t>& file) {
     if (file.size() < 12) {
         throw std::runtime_error("file is too small to be a fastfile");
@@ -114,6 +116,12 @@ Zone ParseFastfile(const std::vector<uint8_t>& file) {
     }
 
     zone.data = Inflate(file.data() + 12, file.size() - 12);
+    ReadZoneHeader(zone);
+    return zone;
+}
+
+// Reads the XFile header, script strings and asset list of zone.data.
+static void ReadZoneHeader(Zone& zone) {
     const std::vector<uint8_t>& d = zone.data;
     zone.size = ReadU32(d, 0);
     zone.externalSize = ReadU32(d, 4);
@@ -165,7 +173,6 @@ Zone ParseFastfile(const std::vector<uint8_t>& file) {
         }
     }
     zone.assetDataOffset = pos;
-    return zone;
 }
 
 Zone ReadFastfile(const std::string& path) {
@@ -174,6 +181,15 @@ Zone ReadFastfile(const std::string& path) {
         throw std::runtime_error("can't open " + path);
     }
     std::vector<uint8_t> file((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    // An already inflated zone (its first word is the size of what follows the header).
+    if (file.size() >= kXFileSize + kAssetListSize && ReadU32(file, 0) + kXFileSize == file.size()) {
+        Zone zone;
+        zone.magic = "zone";
+        zone.version = kFastfileVersion;
+        zone.data = std::move(file);
+        ReadZoneHeader(zone);
+        return zone;
+    }
     return ParseFastfile(file);
 }
 

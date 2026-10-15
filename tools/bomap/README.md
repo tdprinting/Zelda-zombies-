@@ -32,3 +32,26 @@ bomap layout zombie_cod5_prototype.ff nacht.json
 `info` is the quick check: it prints the file's version, how many assets of
 each kind it holds, and whether it found the map's entities. If it fails, the
 message says where reading stopped; paste it back in the project thread.
+
+### Models, animations and the map for the game
+
+Zombies and guns are in `zone/Common/common_zombie.ff` and the map's own zone.
+
+```
+bomap list      common_zombie.ff                     every asset, in load order
+bomap weapons   zombie_cod5_prototype.ff             each weapon's models and animations
+bomap gamemodel zombie_cod5_prototype.ff c_ger_honorguard_body1 zombie.zzmodel --attach c_ger_zombie_head1
+bomap gameanim  zombie_cod5_prototype.ff ai_zombie_walk_v1 walk.zzanim --model zombie_cod5_prototype.ff c_ger_honorguard_body1
+bomap gamemodel common_zombie.ff viewhands_usmc kar98k_view.zzmodel --attach viewmodel_zombie_kar98k_rifle \
+                --attach-zone zombie_cod5_prototype.ff --attach-tag tag_weapon
+bomap gameanim  zombie_cod5_prototype.ff viewmodel_kar98_fire kar98k_fire.zzanim --model common_zombie.ff viewhands_usmc \
+                --model zombie_cod5_prototype.ff viewmodel_zombie_kar98k_rifle --attach-tag tag_weapon
+bomap gamemodel zombie_cod5_prototype.ff '*63' board.zzmodel        a brush model of the map (a barricade board)
+bomap mapgeo    zombie_cod5_prototype.ff nacht.zzmap --main <Black Ops>/main
+```
+
+The formats are in `docs/ZZMODEL_FORMAT.md` and `docs/ZZMAP_FORMAT.md`. Black Ops
+streams character, weapon and world textures from the `.iwd` archives in `main/`,
+so pass `--main` to get them; without it materials have no image. `model`, `anim`,
+`image`, `materials` and `sounds` write readable files (OBJ, JSON, PNG, reports)
+for looking at things.
