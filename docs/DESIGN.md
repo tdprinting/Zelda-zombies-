@@ -104,9 +104,9 @@ Third person stays the main view, on OoT's own camera.
   automatics. An empty clip reloads by itself, as in Black Ops.
 - **Hip-fire** goes where Link faces, with a little aim assist (12 degrees, line of
   sight), like a Black Ops console. **Z-targeting** aims at the locked-on undead.
-- **C-Up**, OoT's own first-person look, is aiming down the sights: a viewmodel (Link's
-  gloved hand and the gun) in the lower right with walk bob, idle sway, recoil kick and
-  a reload dip, a crosshair, and a quarter of the hip-fire spread. Link can walk while
+- **C-Up**, OoT's own first-person look, is aiming down the sights: the imported Black
+  Ops viewmodel (or, without it, Link's gloved hand and a stand-in in the lower right)
+  with walk bob and idle sway, a crosshair, and a quarter of the hip-fire spread. Link can walk while
   aiming at 60% of his walk: with SoH's right-stick aiming on, the left stick moves and
   the right stick aims; without it, the stick turns the view left and right as usual and
   its forward/back walks. Movement goes through Link's normal movement, so walls stop him.
@@ -223,13 +223,31 @@ reload and swap timelines, recoil after each shot), and his hand models are swap
 the gun; right after the draw everything is put back, so his own animations and items
 are untouched, and nothing changes when the gun is down (three seconds after its last
 use, or as soon as he swings, uses an item, climbs, swims or shields). The poses are a
-table, so a converted Black Ops viewmodel animation can drive the same joints later.
+table.
 
-Until the imported models exist Link holds an OoT stand-in: the hookshot (adult) or the
-slingshot (child), with OoT sounds (a bomb blast pitched up per gun class for shots,
-the sword sheath for a reload, the hookshot click when it's done, the magic arrow for
-the Ray Gun). `Guns_ImportedModel(boName)` is the seam for the imported renderer: it gets
-each gun's Black Ops asset name (`m1911_zm`, `ray_gun_zm`, ...) and returns null for now.
+**Imported guns.** `Guns_ImportedModel(boName)` loads each gun's parts from the
+importer's manifest (`gun_<boName>_world`, `_view`, `_anim_idle`, `_anim_fire`,
+`_anim_reload`, `_anim_draw`; Black Ops' usual names when a role is missing) and keeps
+them. In third person the world model goes into Link's closed right fist: the limb draw
+(`VB_PLAYER_OVERRIDE_LIMB_DRAW`, right hand) prepends the gun, placed at its grip (a small
+per-gun table, from the gun's `tag_weapon`), to the hand's display list, so it follows
+the pose table. Aiming down the sights (C-Up) draws the Black Ops viewmodel, its arms
+tinted to Link's tunic and gauntlets, from the eye as Black Ops does (twice as far and
+twice the size, which looks the same and keeps clear of OoT's near plane, spread to Black
+Ops' 65 degree field of view). It plays the idle, fire, reload and pullout animations off
+the gun's state (pullout backwards to put a gun away); while aiming the sights
+(`tag_front_sight`, `tag_iron_sight(s)`, `tag_rear_sight`) are brought in under the
+crosshair, and reloads and swaps play at the hip. With the viewmodel imported, a reload
+lasts as long as its animation (to its `end` notetrack; the shotguns' looped reload once
+per shell), and its `reload_clipout`, `reload_clipin` and `reload_rechamber` notetracks
+play OoT's reload sounds. Surfaces for attachments the zombies guns don't have (scopes,
+silencers, grenade launchers, extended magazines, the clan tag) are left out.
+
+Without the import Link holds an OoT stand-in: the hookshot (adult) or the slingshot
+(child), and the first-person viewmodel is his gloved hand with that stand-in. The guns
+always use OoT sounds (a bomb blast pitched up per gun class for shots, the sword sheath
+for a reload, the hookshot click when it's done, the magic arrow for the Ray Gun):
+tools/bomap lists a zone's sound aliases but doesn't export their audio.
 
 Per-player gun state is kept for every player from the start; player 2's guns aren't
 wired to their controls yet (they keep their swords and bombs), and the viewmodel is off

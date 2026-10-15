@@ -94,16 +94,19 @@ static bool GunSurface(const std::string& m, bool textured, ModelTint* tint, boo
     for (const char* extra : { "scope", "reflex", "red_dot", "aimpoint", "suppressor", "silencer", "tishina",
                                "foregrip", "grip", "clan_tag", "player_icon", "rail", "mag_wrap", "acog", "elbit",
                                "lens", "ir_", "flash_hider", "extclip", "dualclip", "magazines2", "grenade_launcher",
-                               "_gl", "masterkey", "flamethrower", "flamer", "m203", "gunset_attachments",
+                               "_gl_", "masterkey", "flamethrower", "flamer", "m203", "gunset_attachments",
                                "weapon_mk", "apature", "aperture", "hkmount", "_mount", "expander", "drum_mag" }) {
         if (m.find(extra) != std::string::npos) {
             return false;
         }
     }
+    if (m.size() > 3 && m.compare(m.size() - 3, 3, "_gl") == 0) {
+        return false; // a grenade launcher ("_glove" is the arms)
+    }
     if (armsGreen && m.find("glovesleeve") != std::string::npos) {
         *tint = { 110, 190, 90 }; // Link's tunic over the sleeve
     } else if (armsGreen && m.find("glove") != std::string::npos) {
-        *tint = { 200, 160, 120 }; // his leather gauntlets
+        *tint = { 150, 112, 80 }; // his leather gauntlets
     } else if (!textured) {
         bool wood = m.find("wood") != std::string::npos || m.find("stock") != std::string::npos;
         *tint = wood ? ModelTint{ 120, 78, 44 } : ModelTint{ 74, 76, 80 };
@@ -1465,6 +1468,7 @@ static Gfx* sFistHandDLs[4]; // his right fist, round an imported gun's grip
 static GunModel* sHeldGun = nullptr;
 static GunClass sHeldClass = GunClass::Pistol;
 static constexpr float kViewmodelDepth = 2.0f;
+static constexpr float kSightHeight = -0.4f; // the sights just under the eye when aiming (inches)
 static float sHoldTune[6] = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 16384.0f }; // ZZTUNE
 
 static void InitHandDLs() {
@@ -1641,7 +1645,8 @@ static f32 BinangRad(float binang) {
 // inches to OoT units, and further out than OoT's near plane. Returns the muzzle's
 // world position in flash.
 extern "C" void ZombiesGuns_DrawImportedViewmodel(PlayState* play, Player* player, Gfx* dl, float scale,
-                                                  const Vec3f* muzzle, Vec3f* flash, float bob, float sway) {
+                                                  const Vec3f* shift, const Vec3f* muzzle, Vec3f* flash, float bob,
+                                                  float sway) {
     using namespace Zombies;
     const View& view = play->view;
     Vec3f eye = view.eye;
@@ -1663,8 +1668,12 @@ extern "C" void ZombiesGuns_DrawImportedViewmodel(PlayState* play, Player* playe
     // +Z right: a quarter turn.
     Matrix_Translate(sway, bob, 0.0f, MTXMODE_APPLY);
     Matrix_RotateY(BinangRad(-0x4000), MTXMODE_APPLY);
-    Matrix_Scale(scale, scale, scale, MTXMODE_APPLY);
+    // Black Ops draws its viewmodels at a 65 degree field of view (4:3, about 51 degrees
+    // high): spread or gather them across the view so they sit as they would there.
+    float spread = std::tan(view.fovy * (3.14159265f / 360.0f)) / std::tan(51.1f * (3.14159265f / 360.0f));
+    Matrix_Scale(scale, scale * spread, scale * spread, MTXMODE_APPLY);
     Matrix_MultVec3f(const_cast<Vec3f*>(muzzle), flash);
+    Matrix_Translate(shift->x, shift->y, shift->z, MTXMODE_APPLY);
     float vs = 1.0f / Model_VertexScale();
     Matrix_Scale(vs, vs, vs, MTXMODE_APPLY);
     gSPMatrix(POLY_OPA_DISP++, MATRIX_NEWMTX(play->state.gfxCtx), G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_MODELVIEW);
@@ -1674,11 +1683,11 @@ extern "C" void ZombiesGuns_DrawImportedViewmodel(PlayState* play, Player* playe
     FrameInterpolation_RecordCloseChild();
 }
 
-// Link's right fist with the imported gun in it: the hand's display list, then the gun
-// placed in the hand's space (where OoT's limb units are a hundredth of the world's).
+// Link's right fist with the imported gun in it: the gun placed in the hand's space,
+// then the hand's display list (where OoT's limb units are a hundredth of the world's).
 extern "C" Gfx* ZombiesGuns_FistWithGun(PlayState* play, Gfx* hand, Gfx* gun, const Vec3f* grip, float scale,
                                         const Vec3f* offset, const Vec3s* rot) {
-    Gfx* dl = static_cast<Gfx*>(Graph_Alloc(play->state.gfxCtx, 6 * sizeof(Gfx)));
+    Gfx* dl = static_cast<Gfx*>(Graph_Alloc(play->state.gfxCtx, 8 * sizeof(Gfx)));
     Mtx* mtx = static_cast<Mtx*>(Graph_Alloc(play->state.gfxCtx, sizeof(Mtx)));
     Matrix_Push();
     Matrix_Translate(offset->x, offset->y, offset->z, MTXMODE_NEW);
@@ -1691,11 +1700,14 @@ extern "C" Gfx* ZombiesGuns_FistWithGun(PlayState* play, Gfx* hand, Gfx* gun, co
     Matrix_Translate(-grip->x * vs, -grip->y * vs, -grip->z * vs, MTXMODE_APPLY);
     Matrix_ToMtx(mtx, const_cast<char*>(__FILE__), __LINE__);
     Matrix_Pop();
+    // The gun first: the limb draw has just loaded the hand's matrix, and the hand's own
+    // list loads others (its wrist is skinned to the forearm).
     Gfx* p = dl;
-    gSPDisplayList(p++, hand);
+    p = Gfx_SetupDL(p, SETUPDL_25); // Link's own state: the arm before may have left alpha testing on
     gSPMatrix(p++, mtx, G_MTX_PUSH | G_MTX_MUL | G_MTX_MODELVIEW);
     gSPDisplayList(p++, gun);
     gSPPopMatrix(p++, G_MTX_MODELVIEW);
+    gSPDisplayList(p++, hand);
     gSPEndDisplayList(p++);
     return dl;
 }
@@ -1779,15 +1791,25 @@ static void DrawImportedViewmodel(PlayState* play, Player* player, GunModel* gm,
     }
     Vec3f muzzle = { 20.0f, -6.0f, 0.0f };
     Model_BonePos(gm->view, sPose, "tag_flash", &muzzle);
+    // Aiming down the sights: the hip animations brought in to line the barrel up under
+    // the eye, the sights on the crosshair. Reloads and swaps play at the hip.
+    const GunState& st = sState[0];
+    static float sAim = 0.0f;
+    bool aiming = st.reloadFrames == 0 && st.swapFrames == 0;
+    sAim = aiming ? std::min(1.0f, sAim + 0.25f) : std::max(0.0f, sAim - 0.25f);
+    float aim = Smooth(sAim);
+    Vec3f sight = { muzzle.x, muzzle.y + 1.0f, muzzle.z };
+    for (const char* tag : { "tag_front_sight", "tag_iron_sight", "tag_iron_sights", "tag_rear_sight" }) {
+        if (Model_BonePos(gm->view, sPose, tag, &sight)) {
+            break;
+        }
+    }
+    Vec3f shift = { -2.0f * aim, (kSightHeight - sight.y) * aim, -muzzle.z * aim };
+    muzzle = { muzzle.x + shift.x, muzzle.y + shift.y, muzzle.z + shift.z };
     Vec3f flash;
     // Twice as far and twice the size looks the same, and keeps clear of the near plane.
     float scale = (64.0f / 72.0f) * kViewmodelDepth;
-    ZombiesGuns_DrawImportedViewmodel(play, player, dl, scale, &muzzle, &flash, bob * 0.5f, sway * 0.5f);
-    { // ZZTUNE
-        Vec3f w = {}, e = play->view.eye;
-        Model_BonePos(gm->view, sPose, "tag_weapon", &w);
-        printf("ZZVM f=%d muzzle=(%.1f,%.1f,%.1f) weapon=(%.1f,%.1f,%.1f) flash-eye=(%.1f,%.1f,%.1f) skin0=(%.2f %.2f %.2f)\n", sFrame, muzzle.x, muzzle.y, muzzle.z, w.x, w.y, w.z, flash.x - e.x, flash.y - e.y, flash.z - e.z, sPose.skin[0].tx, sPose.skin[0].ty, sPose.skin[0].tz); fflush(stdout);
-    }
+    ZombiesGuns_DrawImportedViewmodel(play, player, dl, scale, &shift, &muzzle, &flash, bob * 0.5f, sway * 0.5f);
     if (sState[0].recoil > 0.8f) {
         MuzzleFlash(play, flash, GunInfo(sGuns[0].Current().id).projectile);
     }
