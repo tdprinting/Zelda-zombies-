@@ -29,7 +29,7 @@ extern "C" {
 extern "C" void ZombiesModel_Submit(PlayState* play, Gfx* dl, const Vec3f* pos, s16 yaw, float scale, bool xlu) {
     OPEN_DISPS(play->state.gfxCtx);
     Matrix_Translate(pos->x, pos->y, pos->z, MTXMODE_NEW);
-    Matrix_RotateY(static_cast<f32>(BINANG_TO_RAD(yaw)), MTXMODE_APPLY);
+    Matrix_RotateY(static_cast<f32>(yaw) * (3.14159265f / 32768.0f), MTXMODE_APPLY);
     Matrix_Scale(scale, scale, scale, MTXMODE_APPLY);
     if (xlu) {
         Gfx_SetupDL_25Xlu(play->state.gfxCtx);

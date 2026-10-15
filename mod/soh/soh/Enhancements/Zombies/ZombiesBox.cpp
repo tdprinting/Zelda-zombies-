@@ -37,13 +37,18 @@ extern "C" void ZombiesBox_DrawRigid(PlayState* play, Gfx* dl, const Vec3f* pos,
                                      const Vec3f* local, float pitch, float roll, float spin) {
     OPEN_DISPS(play->state.gfxCtx);
     Matrix_Translate(pos->x, pos->y, pos->z, MTXMODE_NEW);
-    Matrix_RotateY(static_cast<f32>(BINANG_TO_RAD(yaw)), MTXMODE_APPLY);
+    Matrix_RotateY(static_cast<f32>(yaw) * (3.14159265f / 32768.0f), MTXMODE_APPLY);
     Matrix_RotateZ(roll, MTXMODE_APPLY);
     Matrix_Scale(scale, scale, scale, MTXMODE_APPLY);
     Matrix_Translate(local->x, local->y, local->z, MTXMODE_APPLY);
     Matrix_RotateX(pitch, MTXMODE_APPLY);
     Matrix_RotateY(spin, MTXMODE_APPLY);
     Gfx_SetupDL_25Opa(play->state.gfxCtx);
+    // The scene's lights where the box stands (the chest's torch keeps its light), as an
+    // actor gets them; without this the box takes whatever lights were bound last.
+    Lights* lights = LightContext_NewLights(&play->lightCtx, play->state.gfxCtx);
+    Lights_BindAll(lights, play->lightCtx.listHead, const_cast<Vec3f*>(pos));
+    Lights_Draw(lights, play->state.gfxCtx);
     gSPMatrix(POLY_OPA_DISP++, MATRIX_NEWMTX(play->state.gfxCtx), G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_MODELVIEW);
     gSPDisplayList(POLY_OPA_DISP++, dl);
     CLOSE_DISPS(play->state.gfxCtx);
@@ -414,7 +419,7 @@ static void DrawPrize(PlayState* play, const Vec3f& base, float y) {
     if (gid >= 0) {
         float h = y * kBoScale + 6.0f;
         Matrix_Translate(base.x, base.y + h, base.z, MTXMODE_NEW);
-        Matrix_RotateY(static_cast<f32>(BINANG_TO_RAD(sBox.yaw)) + sBox.t * 1.5f, MTXMODE_APPLY);
+        Matrix_RotateY(static_cast<f32>(sBox.yaw) * (3.14159265f / 32768.0f) + sBox.t * 1.5f, MTXMODE_APPLY);
         Matrix_Scale(0.9f, 0.9f, 0.9f, MTXMODE_APPLY);
         GetItem_Draw(play, gid);
     }

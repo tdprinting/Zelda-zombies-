@@ -462,11 +462,15 @@ static FxDef* Resolve(const std::string& manifestKey, const std::string& role) {
         def = FileFx(files[0]);
     }
     if (def == nullptr) {
-        auto built = BuiltIn(role);
-        if (built != nullptr) {
-            def = built.get();
-            sFiles.emplace("builtin:" + role, std::move(built));
+        // One built-in look per role, shared by every key that falls back to it (each gun
+        // without an imported flash uses the same muzzle flash). It lives in sFiles for the
+        // session, so particles can keep pointing at its emitters.
+        std::string builtKey = "builtin:" + role;
+        auto have = sFiles.find(builtKey);
+        if (have == sFiles.end()) {
+            have = sFiles.emplace(builtKey, BuiltIn(role)).first;
         }
+        def = have->second.get();
     }
     sRoles[key] = def;
     return def;
