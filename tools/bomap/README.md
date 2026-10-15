@@ -96,7 +96,7 @@ for looking at things.
 ### The zombies HUD
 
 ```
-bomap hud common_zombie.ff --main <Black Ops>/main --out <SoH folder>/zombies/hud
+bomap hud common_zombie.ff zombie_cod5_prototype.ff --main <Black Ops>/main --out <SoH folder>/zombies/hud
 ```
 
 writes Black Ops' zombies HUD images as PNGs named after their material: the chalk
@@ -105,6 +105,12 @@ power-up icons (`specialty_*_zombies`), the low health overlay (`overlay_low_hea
 and the d-pad ring (`hud_dpad`). They're streamed from `main/*.iwd`, so `--main` is
 needed. More than one zone can be given; the first with an image wins. The game uses
 whichever it finds and draws its own for the rest.
+
+It also writes an icon for every gun the game sells, `icon_<weapon>.png` (`icon_m1911_zm`,
+`icon_zombie_thompson`, ...), which the HUD shows beside the ammo count of the gun in hand.
+Each is the weapon's own Black Ops HUD icon; Nacht's World at War guns are in
+`zombie_cod5_prototype.ff`, so pass that zone too. Black Ops has no icon for the Ray Gun or
+the Olympia, so those two are drawn from the gun's world model, side on, in the same style.
 
 ### Sounds
 
