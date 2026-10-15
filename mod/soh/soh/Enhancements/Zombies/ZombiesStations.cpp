@@ -5,6 +5,7 @@
 // torches stay dark until the power is on.
 
 #include "ZombiesMode.h"
+#include "ZombiesBox.h"
 #include "ZombiesGuns.h"
 
 #include <libultraship/bridge/consolevariablebridge.h>
@@ -644,6 +645,13 @@ bool Stations_ChestPlaced() {
     return sStations[static_cast<int>(StationType::MysteryChest)].placed;
 }
 
+bool Stations_Chest(Vec3f* pos, Actor** torch) {
+    const Station& chest = sStations[static_cast<int>(StationType::MysteryChest)];
+    *pos = chest.pos;
+    *torch = chest.torch;
+    return chest.placed;
+}
+
 static bool HasPerk(int who, Perk perk) {
     if (perk == PERK_FAIRY_REVIVE && who == 0 && Solo()) {
         return Inventory_HasSpecificBottle(ITEM_FAIRY); // solo, the perk is the fairy
@@ -915,6 +923,43 @@ static bool BuyForPartner(PlayState* play, Station& station, const Offer& offer)
     }
 }
 
+// The chest's roll for the imported Mystery Box (ZombiesBox.cpp), made as its cycle ends:
+// false when the bear comes up instead (the buyer gets their points back).
+static bool RollBox(int who, int cost, BoxPrize* prize) {
+    sChestUses++;
+    if (!PowerUpActive(PowerUp::FireSale) && ChestMoves(sChestUses, sChestMoved, Rand_ZeroOne())) {
+        GetRun().players[who].points += cost; // refund, not earnings: no Double Points
+        Announce("THE CHEST MOVED", 3);
+        Sfx_PlaySfxCentered(NA_SE_VO_SK_LAUGH);
+        sChestUses = 0;
+        return false;
+    }
+    int gunWeight = Guns_ChestWeight(who);
+    int roll = static_cast<int>(Rand_ZeroOne() * static_cast<float>(gunWeight + ChestWeight()));
+    GunId gun = roll < gunWeight ? GunBoxPick(Guns_Of(who), roll) : GunId::None;
+    if (gun != GunId::None) {
+        prize->label = GunName(gun, false);
+        prize->gunBoName = GunInfo(gun).boName;
+        prize->give = [who, roll](PlayState* p) {
+            const char* name = Guns_ChestGive(p, who, roll);
+            if (name != nullptr) {
+                Announce(name, 3);
+            }
+            Sfx_PlaySfxCentered(NA_SE_SY_GET_BOXITEM);
+        };
+        return true;
+    }
+    const ChestPrize& item = RollChest();
+    prize->label = item.name;
+    prize->item = item.item;
+    prize->give = [&item](PlayState* p) {
+        GiveWeapon(p, item.item);
+        Announce(item.name, 3);
+        Sfx_PlaySfxCentered(NA_SE_SY_GET_BOXITEM);
+    };
+    return true;
+}
+
 static void Buy(PlayState* play, Station& station, const Offer& offer, int who) {
     if (!offer.available) {
         Fail();
@@ -951,6 +996,13 @@ static void Buy(PlayState* play, Station& station, const Offer& offer, int who) 
             break;
         }
         case StationType::MysteryChest: {
+            if (Box_Active()) {
+                // Black Ops' box: the prize (or the bear) comes when the cycle ends.
+                int cost = offer.cost;
+                Box_Start(play, who, [who, cost](BoxPrize* prize) { return RollBox(who, cost, prize); },
+                          [](PlayState* p) { MoveChest(p); });
+                break;
+            }
             sChestUses++;
             // The Keaton laugh is our teddy bear: after a few uses the chest may move on.
             if (!PowerUpActive(PowerUp::FireSale) && ChestMoves(sChestUses, sChestMoved, Rand_ZeroOne())) {
@@ -1031,6 +1083,14 @@ static void UpdateBuyer(PlayState* play, const Buyer& buyer) {
         }
     }
     if (nearest == nullptr) {
+        return;
+    }
+    // The Mystery Box in use: no sale, and its buyer takes the prize here.
+    if (nearest->type == StationType::MysteryChest &&
+        Box_Busy(buyer.index, buyer.index == 0 ? BuyButtonName() : "A", buyer.prompt)) {
+        if (buyer.pressed && !buyer.busy) {
+            Box_Take(play, buyer.index);
+        }
         return;
     }
 

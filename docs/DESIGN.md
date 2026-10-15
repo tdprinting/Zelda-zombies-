@@ -110,7 +110,8 @@ Third person stays the main view, on OoT's own camera.
   aiming at 60% of his walk: with SoH's right-stick aiming on, the left stick moves and
   the right stick aims; without it, the stick turns the view left and right as usual and
   its forward/back walks. Movement goes through Link's normal movement, so walls stop him.
-  A, B or R leave first person as usual.
+  A, B or R leave first person as usual. During a run Navi's C-Up hints are muted so
+  C-Up always aims (her forced calls still come through).
 - **The buy button** (L) reloads when there's nothing to buy, and holding it swaps guns,
   like Black Ops' use/reload button. At the Armory, **R** steps through the rack.
 - Pressing the gun button with a Zelda item in hand puts the item away first. While Link
@@ -214,7 +215,9 @@ item he's aiming, or the boomerang in flight. Player 2's hits keep their own dam
 
 Link's gun poses are our own keyframes: absolute rotations for his torso and arm joints
 per gun class (one hand for pistols and the Ray Gun, two for the rest), with aim, sprint,
-reload and lowered poses and a recoil kick (`kAdultPoses` in `ZombiesGuns.cpp`). Just
+reload and lowered poses and a recoil kick (`kAdultPoses` in `ZombiesGuns.cpp`). The aim
+keyframe was measured from OoT's own item-aiming pose and the others are built around
+it; both ages share the table, as Link's two skeletons have the same joints. Just
 before Link is drawn they are blended over his animated arms (sprint while running,
 reload and swap timelines, recoil after each shot), and his hand models are swapped for
 the gun; right after the draw everything is put back, so his own animations and items
@@ -250,17 +253,39 @@ stone torches are the perks and Pack-a-Punch, dark until the power is on.
 
 ## HUD
 
-Drawn with the game's own debug font in the N64 frame, so it scales with every
-SoH resolution:
+Black Ops' zombies layout, drawn with Ocarina of Time's look (`ZombiesHud.cpp`). It is
+anchored to the screen's edges, so it hugs the corners in widescreen too:
 
-- Bottom left, above the rupees: the round number in red, as tally marks for
-  rounds 1 to 5 and as a number after that, with owned perks above it.
-- Bottom right: points, with `+10` / `+60` stacking above them.
-- Bottom right, under the points: the gun in hand and its button, then `clip | reserve`, as
-  Black Ops shows ammo. A reload hint when the clip is low, and a crosshair while aiming.
-- Upper middle: round announcements and power-up names.
-- Top: active power-up and storm timers.
-- Lower middle: the prompt for the nearest station or damaged window.
+- Bottom left: the round in red chalk, as tally marks up to ten (a struck five, then
+  the rest) and as chalk numerals after; the round flashes white when it changes. Owned
+  perks sit above it as OoT's bottles (red potion Juggernog, bottled fairy Fairy Revive,
+  blue potion Double Tap, green potion Stamin-Up) on discs in the perk's colour.
+- Bottom right: a dial in place of Black Ops' d-pad ring, holding OoT's B button in the
+  middle and C-Left, C-Down and C-Right around it, with OoT's item icons and ammo digits.
+  The gun's button shows OoT's empty-button arrow. Up and left of it the points, in OoT's
+  rupee-counter digits on a red banner with the rupee icon, `+10` / `+60` flying off its
+  left end; under the banner OoT's magic as a thin green bar (when Link has magic). Left
+  of the dial the gun's name and `clip / reserve`.
+- Bottom centre: the timed power-ups (Insta-Kill as the Skull Mask, Double Points as a
+  gold rupee x2, Fire Sale as Din's Fire), blinking in their last seconds.
+- Centre: the crosshair while aiming, the reload hint, the prompt for the nearest
+  station or window, and DOWN / BLED OUT. Announcements across the top.
+- Health: Black Ops' red vignette at the screen's edges, stronger the lower Link's
+  health, in place of the hearts.
+
+During a run OoT's own HUD (buttons, hearts, magic, rupees, minimap) is faded out with
+its visibility mode; the buttons work as before, only their drawing moved. With Black Ops
+health off the hearts stay. Text uses OoT's message font, read from `oot.o2r` like every
+OoT graphic.
+
+Black Ops' own HUD images are used when the player has converted them from their
+install: `bomap hud common_zombie.ff --main <Black Ops>/main --out <SoH>/zombies/hud`
+writes the chalk marks, points bar, perk and power-up icons, the low health overlay and
+the d-pad ring as PNGs named after the Black Ops material. Any that are missing are drawn
+by the HUD's own code instead, so it never needs them.
+
+Split screen: each player gets the whole HUD in their half, scaled down, with their own
+points, perks, buttons (player 2's sword and bombs), vignette and prompts.
 
 ## Arenas
 
@@ -379,7 +404,7 @@ so it needs no edits to SoH or to OoT's actor code:
 | `RegisterMenuInitFunc` | Adds the settings to the SoH menu |
 | `OnPlayerUpdate` | Once per frame: round state machine, spawning, hit and kill tracking, stations, power-ups |
 | `OnActorDestroy` | Forget undead and drops that were unloaded |
-| `OnGameFrameUpdate` | HUD drawing with `GfxPrint` |
+| `OnGameFrameUpdate` | HUD drawing, and fading OoT's own HUD out for a run |
 | `OnPlayDrawEnd` | Drawing the barricade planks in the world |
 | `OnSceneInit` | End the run when Link leaves the arena |
 | `OnOcarinaSongAction` | Sun's Song, Song of Storms and Zelda's Lullaby |

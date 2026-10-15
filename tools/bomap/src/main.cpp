@@ -18,6 +18,9 @@
 //                   the game's animation file; the models give the bind pose
 //   bomap mapgeo <zone> <out.zzmap> [--main <dir>] [--scale s] [--large] [--no-props] [--exposure e]
 //                   the game's map file, with the lightmaps and lights baked into vertex colours
+//   bomap hud <zone>... --out <dir> [--main <dir>]   the zombies HUD images (chalk marks, points
+//                   bar, perk and power-up icons, low health overlay) as <dir>/<material>.png,
+//                   for the game's zombies/hud/ folder
 //
 // <zone> is a fastfile (.ff) or an already inflated zone. --main is the install's main/
 // folder, whose .iwd archives hold most textures.
@@ -28,8 +31,11 @@
 #include "entities.h"
 #include "game_export.h"
 #include "fastfile.h"
+#include "fx_export.h"
+#include "hud_export.h"
 #include "zone_walker.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -266,7 +272,99 @@ static int GameCommand(const std::string& command, const Zone& zone, int argc, c
     return 0;
 }
 
+// bomap fx <zone> <effect>                         what an effect holds
+// bomap gamefx <zone> <effect> <out.zzfx> [--main <dir>] [--zone <other zone>]...
+static int FxCommand(const std::string& command, const Zone& zone, int argc, char** argv) {
+    std::vector<std::string> positional;
+    std::string mainDir;
+    for (int i = 3; i < argc; i++) {
+        std::string a = argv[i];
+        if (a == "--main" && i + 1 < argc) {
+            mainDir = argv[++i];
+        } else {
+            positional.push_back(a);
+        }
+    }
+    if (positional.size() != (command == "fx" ? 1u : 2u)) {
+        fprintf(stderr, "usage: bomap fx <zone> <effect>\n       bomap gamefx <zone> <effect> <out.zzfx> [--main <dir>]\n");
+        return 2;
+    }
+    WalkResult walk = WalkZone(zone);
+    FxEffect fx;
+    if (!ReadFx(zone, walk, positional[0], fx)) {
+        fprintf(stderr, "no effect named %s\n", positional[0].c_str());
+        return 1;
+    }
+    if (command == "fx") {
+        std::string text = DescribeFx(fx);
+        fwrite(text.data(), 1, text.size(), stdout);
+        return 0;
+    }
+    TextureSource textures(zone, walk, mainDir);
+    GameFxInfo info;
+    std::vector<uint8_t> bytes = WriteGameFx(zone, walk, fx, &textures, 64, &info);
+    if (!WriteFile(positional[1], bytes)) {
+        fprintf(stderr, "can't write %s\n", positional[1].c_str());
+        return 1;
+    }
+    printf("wrote %s: %zu emitters (%zu runners inlined), %zu images, %zu soft-dot fallbacks\n", positional[1].c_str(),
+           info.emitters, info.runnersInlined, info.images, info.fallbacks);
+    for (const std::string& m : info.missingImages) {
+        printf("  no pixels for %s%s\n", m.c_str(), mainDir.empty() ? " (pass --main <install>/main)" : "");
+    }
+    return 0;
+}
+
+// bomap hud <zone>... --out <dir> [--main <dir>]: every zone is searched; the first one
+// with a material's pixels wins.
+static int HudCommand(int argc, char** argv) {
+    std::vector<std::string> zones;
+    std::string outDir, mainDir;
+    for (int i = 2; i < argc; i++) {
+        std::string arg = argv[i];
+        if (arg == "--out" && i + 1 < argc) {
+            outDir = argv[++i];
+        } else if (arg == "--main" && i + 1 < argc) {
+            mainDir = argv[++i];
+        } else {
+            zones.push_back(arg);
+        }
+    }
+    if (zones.empty() || outDir.empty()) {
+        fprintf(stderr, "usage: bomap hud <zone.ff>... --out <dir> [--main <Black Ops>/main]\n"
+                        "  common_zombie.ff (zone/Common/) holds the zombies HUD; most of its images\n"
+                        "  are streamed from main/*.iwd, so pass --main.\n");
+        return 2;
+    }
+    std::vector<std::string> written;
+    for (const std::string& path : zones) {
+        Zone zone = ReadFastfile(path);
+        HudImageResult r = ExportHudImages(zone, mainDir, outDir, written);
+        written.insert(written.end(), r.written.begin(), r.written.end());
+    }
+    for (const std::string& m : written) {
+        printf("wrote %s/%s.png\n", outDir.c_str(), m.c_str());
+    }
+    int missing = 0;
+    for (const std::string& m : HudMaterials()) {
+        if (std::find(written.begin(), written.end(), m) == written.end()) {
+            printf("  not found: %s%s\n", m.c_str(), mainDir.empty() ? " (pass --main <install>/main)" : "");
+            missing++;
+        }
+    }
+    printf("%zu HUD images written, %d not found (the game draws its own for those)\n", written.size(), missing);
+    return 0;
+}
+
 int main(int argc, char** argv) {
+    if (argc >= 2 && std::string(argv[1]) == "hud") {
+        try {
+            return HudCommand(argc, argv);
+        } catch (const std::exception& e) {
+            fprintf(stderr, "bomap: %s\n", e.what());
+            return 1;
+        }
+    }
     if (argc < 3) {
         fprintf(stderr, "usage: bomap info|ents|layout|list|model|anim|materials|image|sounds <zone.ff> ...\n"
                         "Black Ops maps are in your install's zone folder (zone/Common/ or zone/<language>/),\n"
@@ -319,6 +417,9 @@ int main(int argc, char** argv) {
         }
         if (command == "gamemodel" || command == "gameanim" || command == "mapgeo") {
             return GameCommand(command, zone, argc, argv);
+        }
+        if (command == "fx" || command == "gamefx") {
+            return FxCommand(command, zone, argc, argv);
         }
         if (command == "weapons") {
             std::string report = WeaponReport(zone, WalkZone(zone));

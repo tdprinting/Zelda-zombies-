@@ -55,3 +55,16 @@ streams character, weapon and world textures from the `.iwd` archives in `main/`
 so pass `--main` to get them; without it materials have no image. `model`, `anim`,
 `image`, `materials` and `sounds` write readable files (OBJ, JSON, PNG, reports)
 for looking at things.
+
+### The zombies HUD
+
+```
+bomap hud common_zombie.ff --main <Black Ops>/main --out <SoH folder>/zombies/hud
+```
+
+writes Black Ops' zombies HUD images as PNGs named after their material: the chalk
+tally marks (`hud_chalk_1`-`5`), the points bars (`scorebar_zom_1`, `_2`), the perk and
+power-up icons (`specialty_*_zombies`), the low health overlay (`overlay_low_health`)
+and the d-pad ring (`hud_dpad`). They're streamed from `main/*.iwd`, so `--main` is
+needed. More than one zone can be given; the first with an image wins. The game uses
+whichever it finds and draws its own for the rest.

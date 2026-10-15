@@ -3,6 +3,7 @@
 // Models and animations imported from the player's own Black Ops install
 // (ZombiesModel.cpp, formats in tools/bomap/docs/ZZMODEL_FORMAT.md).
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -57,6 +58,17 @@ void Model_Draw(PlayState* play, const ZModel* model, const ModelPose& pose, con
 // current matrix. Its vertices are in model units times Model_VertexScale().
 Gfx* Model_RigidDl(ZModel* model);
 void Model_Bounds(const ZModel* model, Vec3f* lo, Vec3f* hi);
+
+struct ModelTint {
+    u8 r, g, b;
+};
+
+// Per surface, by its material's name: return false to leave the surface out (a world
+// gun's optional scopes and silencers); tint colours it when it has no image (the
+// importer found no pixels for it).
+using ModelStyle = std::function<bool(const std::string& material, bool textured, ModelTint* tint)>;
+// Model_RigidDl with a style, built on first use and kept: one style per model.
+Gfx* Model_RigidDlStyled(ZModel* model, const ModelStyle& style);
 float Model_VertexScale();
 
 // zombies/models/manifest.txt, written by the importer: which model or animation plays

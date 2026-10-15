@@ -896,6 +896,14 @@ std::vector<WeaponInfo> ReadWeapons(const Zone& zone, const WalkResult& walk) {
                 }
             }
             w.handModel = model(def + 8);
+            auto fx = [&](size_t field) {
+                std::string n = model(field);
+                return !n.empty() && n[0] == ',' ? n.substr(1) : n;
+            };
+            w.viewFlashFx = fx(def + 116);
+            w.worldFlashFx = fx(def + 120);
+            w.projExplosionFx = fx(def + 1520);
+            w.projTrailFx = fx(def + 1624);
         }
         size_t anims = walk.Pointer(a.header + 16);
         for (int k = 0; k < 66 && anims != kNoData; k++) {
@@ -921,6 +929,12 @@ std::string WeaponReport(const Zone& zone, const WalkResult& walk) {
         }
         if (!w.handModel.empty()) {
             out << "  hands " << w.handModel << "\n";
+        }
+        for (const auto& [label, fx] : { std::make_pair("flash", w.worldFlashFx), std::make_pair("viewflash", w.viewFlashFx),
+                                         std::make_pair("explode", w.projExplosionFx), std::make_pair("trail", w.projTrailFx) }) {
+            if (!fx.empty()) {
+                out << "  fx " << label << " " << fx << "\n";
+            }
         }
         for (const auto& [slot, name] : w.anims) {
             out << "  anim " << slot << " " << name << (walk.Find(0x04, name) >= 0 ? "" : "  (not in this zone)") << "\n";

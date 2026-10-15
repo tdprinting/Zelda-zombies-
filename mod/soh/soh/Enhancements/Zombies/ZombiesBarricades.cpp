@@ -6,6 +6,8 @@
 // planks across them, placed around the start point. Undead spawn outside a window
 // and are held on the far side of it until its boards are gone.
 
+#include "ZombiesBox.h"
+#include "ZombiesFx.h"
 #include "ZombiesMode.h"
 #include "ZombiesModel.h"
 
@@ -417,6 +419,8 @@ void Barricades_Draw() {
     }
     ZombiesBarricades_Draw(gPlayState);
     Arena_DrawDebris(gPlayState);
+    Box_Draw(gPlayState);
+    Fx_Draw(gPlayState); // translucent, so after the solid things
 }
 
 } // namespace Zombies

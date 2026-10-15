@@ -100,6 +100,8 @@ struct WeaponInfo {
     std::vector<std::string> worldModels;
     std::string handModel;
     std::vector<std::pair<int, std::string>> anims; // slot in szXAnims, anim name
+    std::string viewFlashFx, worldFlashFx;          // muzzle flash effects
+    std::string projExplosionFx, projTrailFx;       // projectile weapons (Ray Gun, launchers)
 };
 std::vector<WeaponInfo> ReadWeapons(const Zone& zone, const WalkResult& walk);
 std::string WeaponReport(const Zone& zone, const WalkResult& walk);

@@ -1401,10 +1401,7 @@ static void OnGameFrameUpdate() {
     }
     BoMap_Update(gPlayState);
     Lobby_OnFrame(gPlayState);
-    if (IsRunActive() || !sRun.prompt.empty() || sRun.announcement.framesLeft > 0 ||
-        CVarOn(CVAR_ZOMBIES("ShowCoordinates"), 0)) {
-        Hud_Draw();
-    }
+    Hud_Draw(); // every frame: it also hands OoT's own HUD back when a run ends
 }
 
 void Lobby_StartRunHere(PlayState* play) {

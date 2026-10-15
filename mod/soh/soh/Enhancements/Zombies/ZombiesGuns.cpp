@@ -16,6 +16,7 @@
 // when no gun is up.
 
 #include "ZombiesGuns.h"
+#include "ZombiesFx.h"
 #include "ZombiesMode.h"
 
 #include <libultraship/bridge/consolevariablebridge.h>
@@ -587,11 +588,13 @@ static void FireHitscan(PlayState* play, Player* player, int who, const GunStats
     }
     if (hits.empty() && hitWall) {
         EffectSsHitMark_SpawnFixedScale(play, EFFECT_HITMARK_DUST, &wallHit);
+        Fx_Impact(wallHit, { -dir.x, -dir.y, -dir.z });
     }
     if (variant.splash > 0.0f && impacted) {
         // Explosive rounds (Mustang & Sally).
         Vec3f zero = { 0.0f, 0.0f, 0.0f };
         EffectSsBomb2_SpawnLayered(play, &impact, &zero, &zero, 40, 10);
+        Fx_Explosion(impact);
         SoundSource_PlaySfxAtFixedWorldPos(play, &impact, 20, NA_SE_IT_BOMB_EXPLOSION);
         Splash(play, impact, variant.splash, variant.splashRadius, who, nullptr);
     }
@@ -620,6 +623,7 @@ static void BoltImpact(PlayState* play, const Bolt& bolt, const Vec3f& pos, Trac
     Vec3f vel = { 0.0f, 1.0f, 0.0f };
     Vec3f p = pos;
     EffectSsDeadDb_Spawn(play, &p, &vel, &vel, 90, -4, 160, 255, 160, 255, 0, 220, 40, 1, 8, false);
+    Fx_RayGunImpact(p, bolt.pap);
     SoundSource_PlaySfxAtFixedWorldPos(play, &p, 20, NA_SE_IT_EXPLOSION_LIGHT);
 }
 
@@ -655,6 +659,9 @@ static void UpdateBolts(PlayState* play) {
                 }
             }
             bolt.pos = next;
+            if (step == 0) {
+                Fx_RayGunTrail(bolt.pos, dir, bolt.pap);
+            }
             Vec3f zero = { 0.0f, 0.0f, 0.0f };
             EffectSsKiraKira_SpawnDispersed(play, &bolt.pos, &zero, &zero, &sPrim, &sEnv, 1100, 4);
         }
@@ -691,6 +698,7 @@ static void Fire(PlayState* play, Player* player, int who) {
     }
     if (!ads) {
         MuzzleFlash(play, muzzle, gun.projectile);
+        Fx_GunFlash(gun.boName, slot.pap, muzzle, dir);
     }
     PlayShotSfx(player, gun.gunClass);
     if (ads) {
@@ -1139,17 +1147,84 @@ struct ClassPoses {
 };
 
 // clang-format off
-// Calibrated against Link's skeleton: limbs point down +X, and the shoulder's Z turns the
-// arm forward and up.
+// The aim keyframe is measured from OoT's own item-aiming pose (slingshot, bow and
+// hookshot share it): the right arm out at shoulder height, the left hand up by the face
+// as a two-handed grip. The rest are built around it. An all-zero torso keeps the torso
+// of whatever animation Link is playing. Both ages share the table.
+// Joints: torso, L shoulder, L forearm, L hand, R shoulder, R forearm, R hand.
+#define POSE(u, ls, lf, lh, rs, rf, rh) { { u, ls, lf, lh, rs, rf, rh } }
+#define V(x, y, z) { x, y, z }
+static constexpr Vec3s kKeepTorso = { 0, 0, 0 };
 static const ClassPoses kAdultPoses[static_cast<int>(GunClass::Count)] = {
-    // Pistol: right arm straight out, left arm free.
+    // Pistol: one arm straight out, the other left to the animation.
     { false,
-      { { { 0, 0, 0 }, { 0, 0, 0 }, { 0, 0, 0 }, { 0, 0, 0 }, { 0, 0, 0 }, { 0, 0, 0 }, { 0, 0, 0 } } },
-      { { { 0, 0, 0 }, { 0, 0, 0 }, { 0, 0, 0 }, { 0, 0, 0 }, { 0, 0, 0 }, { 0, 0, 0 }, { 0, 0, 0 } } },
-      { { { 0, 0, 0 }, { 0, 0, 0 }, { 0, 0, 0 }, { 0, 0, 0 }, { 0, 0, 0 }, { 0, 0, 0 }, { 0, 0, 0 } } },
-      { { { 0, 0, 0 }, { 0, 0, 0 }, { 0, 0, 0 }, { 0, 0, 0 }, { 0, 0, 0 }, { 0, 0, 0 }, { 0, 0, 0 } } },
-      { 0, 0, 0 } },
+      POSE(V(10725, -1772, -1637), V(0, 0, 0), V(0, 0, 0), V(0, 0, 0),
+           V(-21800, -1887, -29760), V(-11046, -9944, 7461), V(14449, 0, 0)),
+      POSE(kKeepTorso, V(0, 0, 0), V(0, 0, 0), V(0, 0, 0),
+           V(-16500, -1887, -14000), V(-12000, -6000, 12000), V(14449, 0, 0)),
+      POSE(V(9000, -1772, -1637), V(0, 0, 0), V(0, 0, 0), V(0, 0, 0),
+           V(-19000, -1887, -21000), V(-11046, -9944, 16000), V(14449, 0, 0)),
+      POSE(kKeepTorso, V(0, 0, 0), V(0, 0, 0), V(0, 0, 0),
+           V(-15000, -1887, -12000), V(-12000, -9944, 6000), V(14449, 0, 0)),
+      V(0, 0, 2400) },
+    // SMG: two hands, held at the chest.
+    { true,
+      POSE(V(10725, -1772, -1637), V(19902, 0, 0), V(0, 17724, -1705), V(10903, 0, 0),
+           V(-21800, -1887, -26000), V(-11046, -9944, 11000), V(14449, 0, 0)),
+      POSE(kKeepTorso, V(19902, 0, 0), V(0, 12000, -8000), V(10903, 0, 0),
+           V(-16500, -1887, -14000), V(-12000, -6000, 14000), V(14449, 0, 0)),
+      POSE(V(9000, -1772, -1637), V(19902, 0, 0), V(0, 9000, -9000), V(10903, 0, 0),
+           V(-19000, -1887, -21000), V(-11046, -9944, 16000), V(14449, 0, 0)),
+      POSE(kKeepTorso, V(19902, 0, 0), V(0, 9000, -6000), V(10903, 0, 0),
+           V(-15000, -1887, -12000), V(-12000, -9944, 6000), V(14449, 0, 0)),
+      V(0, 0, 1400) },
+    // Rifle: two hands, shouldered, the barrel high.
+    { true,
+      POSE(V(10725, -1772, -1637), V(19902, 0, 0), V(0, 17724, -1705), V(10903, 0, 0),
+           V(-21800, -1887, -27500), V(-11046, -9944, 9500), V(14449, 0, 0)),
+      POSE(kKeepTorso, V(19902, 0, 0), V(0, 12000, -8000), V(10903, 0, 0),
+           V(-16500, -1887, -14000), V(-12000, -6000, 14000), V(14449, 0, 0)),
+      POSE(V(9000, -1772, -1637), V(19902, 0, 0), V(0, 9000, -9000), V(10903, 0, 0),
+           V(-19000, -1887, -21000), V(-11046, -9944, 16000), V(14449, 0, 0)),
+      POSE(kKeepTorso, V(19902, 0, 0), V(0, 9000, -6000), V(10903, 0, 0),
+           V(-15000, -1887, -12000), V(-12000, -9944, 6000), V(14449, 0, 0)),
+      V(0, 0, 1800) },
+    // Shotgun: two hands, a big kick and a pump.
+    { true,
+      POSE(V(10725, -1772, -1637), V(19902, 0, 0), V(0, 17724, -1705), V(10903, 0, 0),
+           V(-21800, -1887, -27000), V(-11046, -9944, 10000), V(14449, 0, 0)),
+      POSE(kKeepTorso, V(19902, 0, 0), V(0, 12000, -8000), V(10903, 0, 0),
+           V(-16500, -1887, -14000), V(-12000, -6000, 14000), V(14449, 0, 0)),
+      POSE(V(9000, -1772, -1637), V(19902, 0, 0), V(0, 9000, -9000), V(10903, 0, 0),
+           V(-19000, -1887, -21000), V(-11046, -9944, 16000), V(14449, 0, 0)),
+      POSE(kKeepTorso, V(19902, 0, 0), V(0, 9000, -6000), V(10903, 0, 0),
+           V(-15000, -1887, -12000), V(-12000, -9944, 6000), V(14449, 0, 0)),
+      V(0, 0, 4000) },
+    // LMG: two hands, carried low at the hip.
+    { true,
+      POSE(V(8000, -1772, -1637), V(19902, 0, 0), V(0, 14000, -5000), V(10903, 0, 0),
+           V(-20000, -1887, -22000), V(-11046, -9944, 14000), V(14449, 0, 0)),
+      POSE(kKeepTorso, V(19902, 0, 0), V(0, 12000, -8000), V(10903, 0, 0),
+           V(-16500, -1887, -14000), V(-12000, -6000, 14000), V(14449, 0, 0)),
+      POSE(V(8000, -1772, -1637), V(19902, 0, 0), V(0, 9000, -9000), V(10903, 0, 0),
+           V(-18000, -1887, -18000), V(-11046, -9944, 16000), V(14449, 0, 0)),
+      POSE(kKeepTorso, V(19902, 0, 0), V(0, 9000, -6000), V(10903, 0, 0),
+           V(-15000, -1887, -12000), V(-12000, -9944, 6000), V(14449, 0, 0)),
+      V(0, 0, 1000) },
+    // Ray Gun: one hand, like the pistol, with a softer kick.
+    { false,
+      POSE(V(10725, -1772, -1637), V(0, 0, 0), V(0, 0, 0), V(0, 0, 0),
+           V(-21800, -1887, -29760), V(-11046, -9944, 7461), V(14449, 0, 0)),
+      POSE(kKeepTorso, V(0, 0, 0), V(0, 0, 0), V(0, 0, 0),
+           V(-16500, -1887, -14000), V(-12000, -6000, 12000), V(14449, 0, 0)),
+      POSE(V(9000, -1772, -1637), V(0, 0, 0), V(0, 0, 0), V(0, 0, 0),
+           V(-19000, -1887, -21000), V(-11046, -9944, 16000), V(14449, 0, 0)),
+      POSE(kKeepTorso, V(0, 0, 0), V(0, 0, 0), V(0, 0, 0),
+           V(-15000, -1887, -12000), V(-12000, -9944, 6000), V(14449, 0, 0)),
+      V(0, 0, 1600) },
 };
+#undef POSE
+#undef V
 // clang-format on
 
 static ClassPoses sPoses[2][static_cast<int>(GunClass::Count)]; // [adult, child]
@@ -1167,6 +1242,14 @@ static ArmPose BlendPose(const ArmPose& a, const ArmPose& b, float t) {
         out.rot[j].x = LerpAngle(a.rot[j].x, b.rot[j].x, t);
         out.rot[j].y = LerpAngle(a.rot[j].y, b.rot[j].y, t);
         out.rot[j].z = LerpAngle(a.rot[j].z, b.rot[j].z, t);
+    }
+    // A zero torso means "the animation's": blend to or from it by keeping the other's.
+    const Vec3s& ua = a.rot[POSE_UPPER];
+    const Vec3s& ub = b.rot[POSE_UPPER];
+    if (ub.x == 0 && ub.y == 0 && ub.z == 0) {
+        out.rot[POSE_UPPER] = ua;
+    } else if (ua.x == 0 && ua.y == 0 && ua.z == 0) {
+        out.rot[POSE_UPPER] = ub;
     }
     return out;
 }
@@ -1268,9 +1351,13 @@ static void PoseLink() {
         if (leftArm && !poses.twoHanded) {
             continue;
         }
-        joint.x = LerpAngle(joint.x, pose.rot[j].x, w);
-        joint.y = LerpAngle(joint.y, pose.rot[j].y, w);
-        joint.z = LerpAngle(joint.z, pose.rot[j].z, w);
+        const Vec3s& target = pose.rot[j];
+        if (j == POSE_UPPER && target.x == 0 && target.y == 0 && target.z == 0) {
+            continue; // keep the animation's torso
+        }
+        joint.x = LerpAngle(joint.x, target.x, w);
+        joint.y = LerpAngle(joint.y, target.y, w);
+        joint.z = LerpAngle(joint.z, target.z, w);
     }
 
     sSavedRightHandDLists = player->rightHandDLists;
@@ -1321,31 +1408,45 @@ extern "C" void ZombiesGuns_DrawViewmodel(PlayState* play, Player* player, float
     bool adult = LINK_IS_ADULT;
 
     FrameInterpolation_RecordOpenChild(&sGuns[0], 0);
+    // Light it the way Link is lit, as an actor's draw would.
+    Lights* lights = LightContext_NewLights(&play->lightCtx, play->state.gfxCtx);
+    Lights_BindAll(lights, play->lightCtx.listHead, &player->actor.world.pos);
+    Lights_Draw(lights, play->state.gfxCtx);
     OPEN_DISPS(play->state.gfxCtx);
     Gfx_SetupDL_25Opa(play->state.gfxCtx);
+    gSPSegment(POLY_OPA_DISP++, 0x0C, reinterpret_cast<uintptr_t>(gCullBackDList)); // as Link's own draw sets it
     gDPSetEnvColor(POLY_OPA_DISP++, 30, 105, 27, 0); // the tunic's green, for the sleeve
 
     Matrix_Translate(eye.x, eye.y, eye.z, MTXMODE_NEW);
     Matrix_RotateY(static_cast<f32>(BINANG_TO_RAD(yaw)), MTXMODE_APPLY);
     Matrix_RotateX(static_cast<f32>(BINANG_TO_RAD(pitch)), MTXMODE_APPLY);
     // View space from here: +Z forward, +X left, +Y up.
-    float right = adult ? -7.0f : -6.0f;
-    float down = (adult ? -6.5f : -5.5f) + bob - dip * 6.0f;
-    float forward = (adult ? 17.0f : 15.0f) - kick * 2.5f;
+    // Placement: right of and below the sights, clear of the HUD's lower-right corner.
+    float right = adult ? -4.5f : -4.0f;
+    float down = (adult ? -3.8f : -3.2f) + bob - dip * 6.0f;
+    float forward = (adult ? 20.0f : 18.0f) - kick * 2.5f;
     Matrix_Translate(right + sway, down, forward, MTXMODE_APPLY);
+    Matrix_RotateY(static_cast<f32>(BINANG_TO_RAD(0x3E8)), MTXMODE_APPLY); // angled in toward the sights
     Matrix_RotateX(static_cast<f32>(BINANG_TO_RAD(static_cast<s16>(-kick * 1800.0f + dip * 5000.0f))), MTXMODE_APPLY);
-    // The hand model: its +Y runs down the barrel. Turn it to point into the view.
+    // The hand model's +Y runs down the barrel: turn it to point into the view, then roll
+    // it upright.
     Matrix_RotateX(static_cast<f32>(BINANG_TO_RAD(0x4000)), MTXMODE_APPLY);
-    Matrix_RotateY(static_cast<f32>(BINANG_TO_RAD(static_cast<s16>(0x4000))), MTXMODE_APPLY);
-    float scale = adult ? 0.0105f : 0.0095f;
+    Matrix_RotateY(static_cast<f32>(BINANG_TO_RAD(0x4000)), MTXMODE_APPLY);
+    float scale = adult ? 0.0055f : 0.0065f;
     Matrix_Scale(scale, scale, scale, MTXMODE_APPLY);
+    // Link's hands are skinned to his forearm: their wrist vertices load the limb matrices
+    // in segment 0x0D. Every limb gets the hand's matrix, so the wrist stays on the hand.
+    Mtx* limbMtx = static_cast<Mtx*>(Graph_Alloc(play->state.gfxCtx, PLAYER_LIMB_MAX * sizeof(Mtx)));
+    for (int i = 0; i < PLAYER_LIMB_MAX; i++) {
+        Matrix_ToMtx(&limbMtx[i], const_cast<char*>(__FILE__), __LINE__);
+    }
+    gSPSegment(POLY_OPA_DISP++, 0x0D, reinterpret_cast<uintptr_t>(limbMtx));
     gSPMatrix(POLY_OPA_DISP++, MATRIX_NEWMTX(play->state.gfxCtx), G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_MODELVIEW);
     gSPDisplayList(POLY_OPA_DISP++, adult ? (Gfx*)gLinkAdultRightHandHoldingHookshotNearDL
                                           : (Gfx*)gLinkChildRightHandHoldingSlingshotNearDL);
 
     CLOSE_DISPS(play->state.gfxCtx);
     FrameInterpolation_RecordCloseChild();
-    (void)player;
 }
 
 namespace Zombies {
@@ -1376,10 +1477,13 @@ static void DrawViewmodel() {
     }
     ZombiesGuns_DrawViewmodel(play, player, bob, st.recoil, dip, sway);
     if (st.recoil > 0.8f) {
-        // Muzzle flash just past the sights.
-        Vec3f dir = DirFromAngles(player->actor.focus.rot.x, player->actor.focus.rot.y);
+        // Muzzle flash at the end of the viewmodel's barrel, right of the sights.
+        s16 yaw = player->actor.focus.rot.y;
+        Vec3f dir = DirFromAngles(player->actor.focus.rot.x, yaw);
+        Vec3f right = { -Math_CosS(yaw), 0.0f, Math_SinS(yaw) };
         Vec3f eye = play->view.eye;
-        Vec3f flash = { eye.x + dir.x * 34.0f, eye.y + dir.y * 34.0f - 5.0f, eye.z + dir.z * 34.0f };
+        Vec3f flash = { eye.x + dir.x * 34.0f + right.x * 5.0f, eye.y + dir.y * 34.0f - 1.5f,
+                        eye.z + dir.z * 34.0f + right.z * 5.0f };
         MuzzleFlash(play, flash, GunInfo(sGuns[0].Current().id).projectile);
     }
 }
@@ -1405,6 +1509,12 @@ static void OnMainStart() {
         sAdsActive = false;
         return;
     }
+    Player* player = GET_PLAYER(play);
+    if (player->naviTextId > 0) {
+        // C-Up aims during a run. Navi's hints would take it over (her forced calls, the
+        // negative ids, still come through).
+        player->naviTextId = 0;
+    }
     Input& input = play->state.input[0];
     u16 mask = GunButtonMask();
     sGunPressed = CHECK_BTN_ALL(input.press.button, mask);
@@ -1414,7 +1524,7 @@ static void OnMainStart() {
         input.press.button &= static_cast<u16>(~mask);
         input.cur.button &= static_cast<u16>(~mask);
     }
-    sAdsActive = InAds(GET_PLAYER(play));
+    sAdsActive = InAds(player);
     sAdsStickY = 0;
     if (sAdsActive && !CVarGetInteger(CVAR_SETTING("Controls.RightStickAim"), 0)) {
         // No right stick to look with: the stick turns the view left and right as usual,

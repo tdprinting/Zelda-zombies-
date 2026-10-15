@@ -172,6 +172,7 @@ struct ModelImage {
 };
 
 struct ModelMaterial {
+    std::string name;
     int image = -1;
     u8 flags = 0;
 };
@@ -201,6 +202,9 @@ struct ZModel {
     // A rigid model (a board, a gun) is drawn in its bind pose: built once.
     std::vector<Vtx> rigidVerts;
     std::vector<Gfx> rigidDl;
+    // The same with a colour per untextured surface and some surfaces left out (Model_RigidDlStyled).
+    std::vector<Vtx> styledVerts;
+    std::vector<Gfx> styledDl;
 };
 
 struct AnimBone {
@@ -238,7 +242,7 @@ static bool ReadImagesAndMaterials(Reader& r, std::vector<ModelImage>& images, s
     u32 nm = r.Count(69);
     mats.resize(nm);
     for (ModelMaterial& m : mats) {
-        r.Name(64);
+        m.name = r.Name(64);
         m.image = r.Get<s32>();
         m.flags = r.Get<u8>();
         if (m.image >= static_cast<int>(ni)) {
@@ -284,7 +288,7 @@ static std::unique_ptr<ZModel> LoadModel(const std::string& path) {
         if (s.material >= model->materials.size()) {
             return nullptr;
         }
-        u32 nv = r.Count(68);
+        u32 nv = r.Count(60); // pos, normal, uv, rgba, bones, weights
         s.verts.resize(nv);
         for (SkinVert& v : s.verts) {
             v.pos = { r.Get<float>(), r.Get<float>(), r.Get<float>() };
@@ -521,8 +525,9 @@ static Vtx MakeVtx(const ModelPose& pose, const SkinVert& v) {
 }
 
 // The posed model's display list, its vertices in verts (model units x kVertexScale).
+// style (optional): per surface, false leaves it out; tint colours an untextured surface.
 static void BuildDl(const ZModel* model, const ModelPose& pose, u8 alpha, std::vector<Vtx>& verts,
-                    std::vector<Gfx>& dl) {
+                    std::vector<Gfx>& dl, const ModelStyle* style = nullptr) {
     verts.clear();
     dl.clear();
     size_t total = 0;
@@ -534,6 +539,10 @@ static void BuildDl(const ZModel* model, const ModelPose& pose, u8 alpha, std::v
     for (const ModelSurface& s : model->surfaces) {
         const ModelMaterial& mat = model->materials[s.material];
         const ModelImage* image = mat.image >= 0 ? &model->images[mat.image] : nullptr;
+        ModelTint tint = { 255, 255, 255 };
+        if (style != nullptr && !(*style)(mat.name, image != nullptr, &tint)) {
+            continue;
+        }
         Gfx g[16];
         Gfx* p = g;
         gDPPipeSync(p++);
@@ -546,7 +555,7 @@ static void BuildDl(const ZModel* model, const ModelPose& pose, u8 alpha, std::v
                               COMBINED);
             gSPTexture(p++, 0, 0, 0, G_TX_RENDERTILE, G_OFF);
         }
-        gDPSetPrimColor(p++, 0, 0, 255, 255, 255, alpha);
+        gDPSetPrimColor(p++, 0, 0, tint.r, tint.g, tint.b, alpha);
         dl.insert(dl.end(), g, p);
         if (image != nullptr) {
             Gfx load[8];
@@ -618,6 +627,18 @@ Gfx* Model_RigidDl(ZModel* model) {
         BuildDl(model, pose, 255, model->rigidVerts, model->rigidDl);
     }
     return model->rigidDl.data();
+}
+
+Gfx* Model_RigidDlStyled(ZModel* model, const ModelStyle& style) {
+    if (model == nullptr) {
+        return nullptr;
+    }
+    if (model->styledDl.empty()) {
+        ModelPose pose;
+        Model_Pose(model, AnimLayer(), AnimLayer(), 0.0f, &pose);
+        BuildDl(model, pose, 255, model->styledVerts, model->styledDl, &style);
+    }
+    return model->styledDl.data();
 }
 
 void Model_Bounds(const ZModel* model, Vec3f* lo, Vec3f* hi) {
