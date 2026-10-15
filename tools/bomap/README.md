@@ -1,10 +1,13 @@
 # bomap
 
 Reads a Black Ops map from **your own** Black Ops install for Zombies of Time.
-It's stage 1 of the map loader in [docs/BLACK_OPS_MAPS.md](../../docs/BLACK_OPS_MAPS.md):
-it opens a map's fastfile and prints what's in it, and the map's Zombies
-layout (windows, wall buys, doors and debris, chest spots, perks) in Ocarina
-of Time coordinates. It doesn't convert geometry yet.
+It's the importer for [docs/BLACK_OPS_MAPS.md](../../docs/BLACK_OPS_MAPS.md):
+it opens a map's fastfile, prints what's in it and the map's Zombies layout
+(windows, wall buys, doors and debris, chest spots, perks) in Ocarina of Time
+coordinates, and converts the map's geometry and collision (`mapgeo`), models
+and animations (`gamemodel`, `gameanim`), particle effects (`gamefx`) and the
+zombies HUD art (`hud`) into the files the game reads from its `zombies/`
+folder.
 
 Nothing it reads is uploaded or shared. Please don't share its output either:
 it comes from Activision's map.

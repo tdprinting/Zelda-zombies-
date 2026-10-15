@@ -1,11 +1,15 @@
 # Zombies of Time: design
 
 A round-based survival mode for Ocarina of Time, built into Ship of Harkinian
-(SoH). The structure follows Call of Duty: Black Ops (2010) Zombies; every
-model, sound and item comes from Ocarina of Time. Black Ops is used only as a
-reference for how the mechanics behave. No Activision code or assets are in
-this repository, and no Nintendo data either: SoH extracts assets from the
-player's own ROM.
+(SoH). The structure follows Call of Duty: Black Ops (2010) Zombies. Out of
+the box every model, sound and item comes from Ocarina of Time. Players who
+own Black Ops can import its zombie, gun, Mystery Box and board models,
+animations, particle effects, zombies HUD art and the Nacht der Untoten map
+from their own install with `tools/bomap` (see Phase 5); the game reads the
+converted files at run time and falls back to OoT's look for anything not
+imported. Nothing from Black Ops or Nintendo ships in this repository: no
+Activision code or assets, and no Nintendo data (SoH extracts assets from the
+player's own ROM).
 
 ## The loop
 
@@ -29,7 +33,7 @@ player's own ROM.
 | --- | --- | --- |
 | Zombie | Stalchild (rounds 1+), Redead (3+), Gibdo (6+), big Stalchild (10+) | Mix shifts toward tougher undead each round |
 | Hellhound round | Wolfos round: White Wolfos only | First on round 5 to 7, then every 4 to 5 rounds. Six per player in the first two, eight per player after that, at most two per player on the field at once. Each one arrives in a lightning strike and always sprints. Their health is set by the Wolfos round (half again each time), not the round number. The last Wolfos always drops Max Ammo |
-| Round count | `ceil(24 + 3 × m) × early-round factor` | `m = max(1, round/5)`; co-op uses `6 × m` per extra player in place of solo's `3 × m`, and from round 10 `m ×= round × 0.15`. Rounds 1 to 5 use 25%, 30%, 50%, 70%, 90% |
+| Round count | `24 + ⌊3 × m⌋`, then `× early-round factor` rounded down, at least 1 | `m = max(1, round/5)`; co-op uses `⌊6 × m × (players − 1)⌋` in place of solo's `⌊3 × m⌋`, and from round 10 `m ×= round × 0.15`. Rounds 1 to 5 use 25%, 30%, 50%, 70%, 90%. Every step truncates toward zero (`ZombiesRules.cpp`) |
 | Max zombies alive (24) | Slider, default 24 | Lower it if a phone slows down |
 | Player health: two hits down, five with Juggernog, regenerates | **Black Ops Health** (on): two hits put Link or player 2 down, five with Juggernog, however many hearts they have; health comes back in full 2.5 seconds after the last hit | Off: OoT hearts and damage, refilled each round |
 | Zombie melee swipe | Undead swipe at arm's length; the Redead/Gibdo grab and scream freeze are off (the scream is a setting). Stalchildren and Wolfos keep their own attacks | Undead held at a window swipe through the boards at anyone standing just inside |
@@ -399,7 +403,7 @@ All under Enhancements > Zombies of Time, stored as
 "Zombies Only" (on by default) turns the whole game into the mode:
 
 - Loading any file skips the intro and drops Link into the chosen map at night.
-- The main menu opens over the map. Like Black Ops', it has a list on the left: Play, Map, Link's age (locked to adult for the Market Ruins), Starting round, Controls and Quit to title. The map's intel, your best round and a tip are on the right. The menu's choices are saved with SoH's settings. It is drawn in Zelda's colours, with a gold Triforce and a red title. Use the D-pad or stick with A, or tap or click an entry, so it works on Android touch controls.
+- The main menu opens over the map. Like Black Ops', it has a list on the left: Play, Map (Kakariko Graveyard, Market Ruins, Lon Lon Ranch, Hyrule Field, and Nacht der Untoten once it has been imported from the player's Black Ops; until then Play shows the import status and won't start it), Link's age (locked to adult for the Market Ruins), Starting round, Controls and Quit to title. The map's intel, your best round and a tip are on the right. The menu's choices are saved with SoH's settings. It is drawn in Zelda's colours, with a gold Triforce and a red title. Use the D-pad or stick with A, or tap or click an entry, so it works on Android touch controls.
 - Leaving a zombie map warps Link back. After a run, a results screen shows the rounds survived, kills, points and best round, then the menu returns. A death skips the Save/Continue screens.
 - START during a run opens the run menu (Resume, Items, Controls, End Run).
 - Every run starts with the same kit:
@@ -414,10 +418,21 @@ All under Enhancements > Zombies of Time, stored as
 
 ## How it is built
 
-The mode is a self-contained SoH enhancement in
-`mod/soh/soh/Enhancements/Zombies/`. SoH's CMake picks up every source file
-under `soh/soh/`, and the mode registers itself through SoH's existing hooks,
-so it needs no edits to SoH or to OoT's actor code:
+The mode is a SoH enhancement in `mod/soh/soh/Enhancements/Zombies/`. SoH's
+CMake picks up every source file under `soh/soh/`, and the mode registers
+itself through SoH's existing hooks. It also carries a few small engine
+patches in `mod/patches/`, which `scripts/apply.sh` applies to the SoH tree
+before copying the mode in:
+
+- `0001-app-name-and-data-folder.patch`: the app's name and its own data folder
+- `0002-executable-and-package-name.patch`: the executable and package names
+- `0003-collision-vertex-ids-past-8191.patch`: collision polygons keep the top
+  bits of their vertex ids in `vtxHi`, so an imported map can use up to 65535
+  collision vertices
+- `mod/patches-android/0001-android-app-id-label-and-data-folder.patch`: the
+  Android build's app id, label and data folder
+
+OoT's actor code is untouched. The hooks:
 
 | Hook | Use |
 | --- | --- |
@@ -453,8 +468,13 @@ Code layout:
 | `ZombiesGuns.h/.cpp` | Black Ops guns: firing, reloads, the Armory rack and chest guns, Pack-a-Punch, Link's gun poses, the first-person viewmodel, OoT item round scaling, the imported-model seam |
 | `ZombiesGunTable.cpp` | The gun table and the pure ammo and slot rules, unit tested |
 | `ZombiesChalk.cpp` | The Armory's chalk outline, drawn at run time from the item's or gun's own model |
-| `ZombiesHud.cpp` | HUD drawing |
+| `ZombiesHud.cpp` | HUD drawing, with Black Ops' HUD art from `zombies/hud/` when imported |
 | `ZombiesMenu.cpp` | Menu widgets |
+| `ZombiesBoMap.cpp` | Imported Black Ops map (`zombies/nacht.zzmap`): collision, display lists and the layout from its entities, played in the graveyard's slot |
+| `ZombiesModel.h/.cpp` | Imported models and animations (`zombies/models/*.zzmodel`, `*.zzanim`, `manifest.txt`): posing, skinning, drawing |
+| `ZombiesZombie.cpp` | The Black Ops zombie actor, drawn with the imported model and driven by the mode's AI |
+| `ZombiesBox.h/.cpp` | The imported Mystery Box: chest, lid, cycling guns and the bear |
+| `ZombiesFx.h/.cpp` | Particle effects from imported `.zzfx` files, with built-in OoT-coloured fallbacks |
 
 ## Phases
 
@@ -503,11 +523,22 @@ Code layout:
      barricades), so gameplay is identical with or without the loader.
    - Without the loader, everything falls back to the OoT undead and sounds.
 
-   Maps come first: [BLACK_OPS_MAPS.md](BLACK_OPS_MAPS.md) covers converting
-   Nacht der Untoten and the other maps from the player's install, with their
-   windows, wall buys and doors placed from the map's own entities. Zombie
-   models follow, with their own note on how converted models map onto OoT's
-   skeleton system.
+   As built, the import is a command-line tool, `tools/bomap`
+   ([README](../tools/bomap/README.md)), run against the player's own
+   Black Ops fastfiles (`zone/.../*.ff`, with `--main <Black Ops>/main` for the
+   `.iwd` textures). It writes into the `zombies/` folder next to the game:
+   - `bomap mapgeo` writes `zombies/nacht.zzmap`: Nacht der Untoten's
+     collision, textured geometry and entities, from which the game places
+     windows, wall buys, doors, debris, the box spots and perks
+     ([BLACK_OPS_MAPS.md](BLACK_OPS_MAPS.md)).
+   - `bomap gamemodel` / `gameanim` write `.zzmodel` / `.zzanim` files into
+     `zombies/models/` (zombie, guns and viewmodels, Mystery Box, bear,
+     barricade boards), and `bomap gamefx` writes `.zzfx` effects there.
+     `zombies/models/manifest.txt` names which file plays each role.
+   - `bomap hud` writes the zombies HUD images as PNGs into `zombies/hud/`.
+
+   The game reads these at run time; anything missing falls back to the OoT
+   look. Nothing converted is uploaded or bundled. Sounds are not imported.
    The zombie AI behaviour (round sizes, move tiers, respawning stuck
    zombies, barricades) is already ported in phase 1 from the
    decompiled scripts, as a reference only.
