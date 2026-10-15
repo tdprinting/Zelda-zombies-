@@ -39,7 +39,7 @@ player's own ROM).
 | Zombie melee swipe | Undead swipe at arm's length; the Redead/Gibdo grab and scream freeze are off (the scream is a setting). Stalchildren and Wolfos keep their own attacks | Undead held at a window swipe through the boards at anyone standing just inside |
 | Last zombie sprints (from round 3) | Same | |
 | Crawlers | A bomb blast that doesn't kill an undead takes its legs 30% of the time: it drops low and crawls at half walking speed | |
-| Moans | Each undead groans every 3 to 8 seconds and cries out when it swipes, with OoT's own Redead, Stalchild and Wolfos sounds | |
+| Moans | Each undead groans every 3 to 8 seconds and cries out when it swipes, with OoT's own Redead, Stalchild and Wolfos sounds | Black Ops' zombie and hellhound voices when imported ([Sounds](#sounds)) |
 | Spawn delay `2.0s × 0.95^(round − 1)` | Same curve, floor 0.25s | |
 | Zombie move speed (`round × 8` plus spread; walk ≤ 35, run ≤ 70, sprint above) | Same roll per undead, applied through Horde Pull at 2 / 4 / 6 units per frame | Round 1 is all walkers; from round 9 every undead sprints |
 | Zombie health +100 per round, then ×1.1 | Health multiplier on each enemy's own HP: `1 + 0.15 × (round − 1)` to round 10, then ×1.08 per round | Capped at 255 (OoT stores HP in one byte). Slider scales it |
@@ -63,7 +63,7 @@ player's own ROM).
 | Fire Sale (30s) | Mystery Chest costs 10 | Only drops once the chest has moved, as in Black Ops |
 | Barricades: 6 boards per window, zombies tear them off, players repair for 10 points each | **Barricades**: boarded windows (two posts and six planks), two or three per zone on the hand-made maps and four around the start point anywhere else. Undead spawn outside one and are held there until it is open; each one at the boards tears one off every 1.5 seconds, so two at a window open it twice as fast. Hold the buy button at a window to put a board back every 0.6 seconds for 10 points, up to 500 points of repairs per round | Wolfos rounds ignore the windows, like hellhounds. The planks are the small wooden crate's model squashed flat. The windows are not solid: Link can walk around them, the undead can't |
 | Doors and debris | **Debris** piles between the zones of an authored arena (1000 points into the second zone; 1000 or 1250 into the third) | Clearing one opens that zone's stations and windows. See [Kakariko Graveyard](#kakariko-graveyard) |
-| Round chime, Samantha's voice | OoT sound effects | Round start: Redead scream. Round end: puzzle-solved chime. Power-up: item get jingle |
+| Round chime, Samantha's voice | OoT sound effects | Round start: Redead scream. Round end: puzzle-solved chime. Power-up: item get jingle. Black Ops' power-up stings, hellhound round start and the rest when imported ([Sounds](#sounds)) |
 
 ## Zelda twists
 
@@ -246,15 +246,49 @@ the gun's state (pullout backwards to put a gun away); while aiming the sights
 (`tag_front_sight`, `tag_iron_sight(s)`, `tag_rear_sight`) are brought in under the
 crosshair, and reloads and swaps play at the hip. With the viewmodel imported, a reload
 lasts as long as its animation (to its `end` notetrack; the shotguns' looped reload once
-per shell), and its `reload_clipout`, `reload_clipin` and `reload_rechamber` notetracks
-play OoT's reload sounds. Surfaces for attachments the zombies guns don't have (scopes,
+per shell), and its sound notetracks (`sndnt#<alias>`: magazine out and in, bolt,
+rechamber) play Black Ops' own reload sounds when they are imported, or OoT's at its
+`reload_clipout`, `reload_clipin` and `reload_rechamber` notetracks when not. Surfaces for attachments the zombies guns don't have (scopes,
 silencers, grenade launchers, extended magazines, the clan tag) are left out.
 
 Without the import Link holds an OoT stand-in: the hookshot (adult) or the slingshot
-(child), and the first-person viewmodel is his gloved hand with that stand-in. The guns
-always use OoT sounds (a bomb blast pitched up per gun class for shots, the sword sheath
-for a reload, the hookshot click when it's done, the magic arrow for the Ray Gun):
-tools/bomap lists a zone's sound aliases but doesn't export their audio.
+(child), and the first-person viewmodel is his gloved hand with that stand-in. Without
+imported sounds the guns use OoT's (a bomb blast pitched up per gun class for shots, the
+sword sheath for a reload, the hookshot click when it's done, the magic arrow for the Ray
+Gun); with them each gun fires with its Black Ops weapon's own sound (the Pack-a-Punched
+weapon's when it has one, another gun of its class's when it has none), and dry fire,
+swaps and reloads are Black Ops' too ([Sounds](#sounds)).
+
+### Sounds
+
+`bomap gamesound` ([tools/bomap](../tools/bomap/README.md)) converts the zombies sounds
+from the player's own zones into `zombies/sound/`: WAV files (16-bit PCM at the sound's
+own rate; Black Ops' WMA is decoded with ffmpeg, its MS ADPCM in the tool) and
+`manifest.txt`, which gives each alias its files and settings (volume and pitch ranges,
+the distances it is heard over, looping) and names the alias for each of the game's sound
+roles. `ZombiesSound.cpp` loads a file on first use and mixes into SoH's audio output
+after OoT's synth (engine patch `0004`): each play picks one of the alias's variants and a
+volume and pitch in its range, is resampled to the output rate, fades out between the
+alias's near and far distance from the nearest player (split screen: either player's) and
+is panned by where it is against that player's camera. At most 24 sounds play at once
+(the oldest one-shot makes way), and the master and sound-effect volume settings apply.
+Every role falls back to the OoT sound it replaces when it isn't imported.
+
+| Role | Black Ops sound |
+| --- | --- |
+| Guns | Each weapon's first-person fire sound (with its layered action/ring tail), dry fire, raise and put away; reload parts from the view animation's sound notetracks |
+| Buying | `cha_ching` on every purchase, `no_cha_ching` when it can't be bought, weapon pickup and ammo |
+| Windows | Board snap and the zombie's snarl as it pulls one; repair and slam |
+| Mystery Box | Lid open, the music box while it cycles, lid close, the teddy bear's laugh, the box lifting away, the poof and the landing |
+| Power-ups | The spawn and its hum while on the floor, the grab, Max Ammo, Insta-Kill and nuke stings, Carpenter, the Insta-Kill and Double Points hums while they last, the end |
+| Perks, power, Pack-a-Punch | Machine hum once the power is on, the jingle and drinking, the switch and power on, Pack-a-Punch's hum and upgrade |
+| Zombies | Ambient groans (crawler and sprinter ones by their speed), attack and swipe, death, bullet hits and headshots, the rise, footsteps; hellhound voices for the Wolfos and the hellhound round start |
+| Players | Hit, down |
+| Nacht der Untoten | Its spooky one-shots around the players every 6 to 16 seconds and distant moans |
+
+Black Ops streams its music (round start and end stings, the perk jingles, game over) and
+most voice lines (the announcer's power-up calls, the players' quotes) from files outside
+the zones, so those aren't imported; those roles keep OoT's sounds.
 
 Every player has their own guns, ammo and gun state. Player 2 starts with the M1911 too:
 Z fires (hip-fire where they face, with the same aim assist), a tap of A reloads and a
@@ -432,6 +466,8 @@ before copying the mode in:
 - `0003-collision-vertex-ids-past-8191.patch`: collision polygons keep the top
   bits of their vertex ids in `vtxHi`, so an imported map can use up to 65535
   collision vertices
+- `0004-zombies-sound-mix.patch`: the audio thread hands each output frame to the
+  mode (`ZombiesSound_Mix`) before playing it, to mix in imported Black Ops sounds
 - `mod/patches-android/0001-android-app-id-label-and-data-folder.patch`: the
   Android build's app id, label and data folder
 
@@ -478,6 +514,7 @@ Code layout:
 | `ZombiesZombie.cpp` | The Black Ops zombie actor, drawn with the imported model and driven by the mode's AI |
 | `ZombiesBox.h/.cpp` | The imported Mystery Box: chest, lid, cycling guns and the bear |
 | `ZombiesFx.h/.cpp` | Particle effects from imported `.zzfx` files, with built-in OoT-coloured fallbacks |
+| `ZombiesSound.h/.cpp` | Imported Black Ops sounds (`zombies/sound/`): the roles, and the mixer added to SoH's audio output |
 
 ## Phases
 
@@ -540,9 +577,11 @@ Code layout:
      barricade boards), and `bomap gamefx` writes `.zzfx` effects there.
      `zombies/models/manifest.txt` names which file plays each role.
    - `bomap hud` writes the zombies HUD images as PNGs into `zombies/hud/`.
+   - `bomap gamesound` writes the sounds as WAV files and their manifest into
+     `zombies/sound/` ([Sounds](#sounds)).
 
    The game reads these at run time; anything missing falls back to the OoT
-   look. Nothing converted is uploaded or bundled. Sounds are not imported.
+   look and sounds. Nothing converted is uploaded or bundled.
    The zombie AI behaviour (round sizes, move tiers, respawning stuck
    zombies, barricades) is already ported in phase 1 from the
    decompiled scripts, as a reference only.

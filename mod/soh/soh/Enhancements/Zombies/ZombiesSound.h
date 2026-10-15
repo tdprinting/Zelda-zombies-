@@ -50,10 +50,10 @@ void Sound_StopAll(); // run over, scene change
 // makes the sound: a power-up drop, a perk machine); it stops when the calls stop.
 bool Sound_Keep(const void* key, const char* role, const Vec3f* pos, float volume = 1.0f);
 
-// Gun hooks (ZombiesGuns.cpp). boName is the gun's Black Ops weapon (m1911_zm);
-// fallbackBo another weapon of its class to borrow from. Pack-a-Punched guns use the
-// upgraded weapon's sound when there is one.
-bool Sound_GunFire(const char* boName, bool pap, const char* fallbackBo, const Vec3f* pos);
+// Gun hooks (ZombiesGuns.cpp). boName is the gun's Black Ops weapon (m1911_zm); a gun
+// without its own sound borrows one of its class's (gunClass is a GunClass).
+// Pack-a-Punched guns use the upgraded weapon's sound when there is one.
+bool Sound_GunFire(const char* boName, int gunClass, bool pap, const Vec3f* pos);
 bool Sound_GunRole(const char* boName, const char* what, const Vec3f* pos); // "dry", "raise", "putaway"
 // Plays every "sndnt#<alias>" notetrack of a view animation that falls in (from, to]
 // (reload clip out / in, bolt, rechamber). Returns whether the animation had any.

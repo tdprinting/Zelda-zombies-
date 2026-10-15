@@ -13,6 +13,7 @@
 #include "ZombiesGuns.h"
 #include "ZombiesMode.h"
 #include "ZombiesModel.h"
+#include "ZombiesSound.h"
 
 #include <libultraship/bridge/consolevariablebridge.h>
 
@@ -186,9 +187,11 @@ void Box_Start(PlayState* play, int who, std::function<bool(BoxPrize*)> roll, st
     sBox.prize = BoxPrize();
     sBox.nextSwap = 0.0f;
     sBox.cycleIndex = static_cast<int>(Rand_ZeroOne() * 8.0f);
-    if (play != nullptr) {
+    // Black Ops: the lid, then the music box while the guns cycle.
+    if (play != nullptr && !Sound_Play("box_open", &sBox.pos)) {
         SoundSource_PlaySfxAtFixedWorldPos(play, &sBox.pos, 20, NA_SE_EV_TBOX_OPEN);
     }
+    Sound_Play("box_music", &sBox.pos);
 }
 
 bool Box_Busy(int who, const std::string& button, std::string* prompt) {
@@ -213,6 +216,7 @@ void Box_Take(PlayState* play, int who) {
     sBox.prize = BoxPrize();
     sBox.state = State::Closing;
     sBox.t = 0.0f;
+    Sound_Play("box_close", &sBox.pos);
 }
 
 static void StopBeam() {
@@ -305,6 +309,7 @@ static void Update(PlayState* play) {
                 sBox.prize = BoxPrize();
                 sBox.state = State::Closing;
                 sBox.t = 0.0f;
+                Sound_Play("box_close", &sBox.pos);
             }
             break;
         case State::Closing:
@@ -319,6 +324,7 @@ static void Update(PlayState* play) {
                 sBox.state = State::Lifting;
                 sBox.t = 0.0f;
                 StopBeam();
+                Sound_Play("box_move", &sBox.pos);
             }
             break;
         case State::Lifting:
@@ -332,7 +338,9 @@ static void Update(PlayState* play) {
                 Vec3f top = sBox.pos;
                 top.y += 200.0f;
                 Fx_PlayUp("powerup_grab", top, 2.0f);
-                SoundSource_PlaySfxAtFixedWorldPos(play, &top, 20, NA_SE_EN_EXTINCT);
+                if (!Sound_Play("box_poof", &top)) {
+                    SoundSource_PlaySfxAtFixedWorldPos(play, &top, 20, NA_SE_EN_EXTINCT);
+                }
                 sBox.state = State::Gone;
                 sBox.t = 0.0f;
                 if (sBox.move) {
@@ -347,6 +355,7 @@ static void Update(PlayState* play) {
         case State::Arriving:
             if (sBox.t >= kArriveSec) {
                 Fx_PlayUp("zombie_rise", sBox.pos, 1.3f);
+                Sound_Play("box_land", &sBox.pos);
                 sBox.state = State::Idle;
                 sBox.t = 0.0f;
             }

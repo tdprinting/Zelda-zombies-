@@ -9,6 +9,7 @@
 #include "ZombiesBox.h"
 #include "ZombiesFx.h"
 #include "ZombiesMode.h"
+#include "ZombiesSound.h"
 #include "ZombiesModel.h"
 
 #include <libultraship/bridge/consolevariablebridge.h>
@@ -219,7 +220,10 @@ bool Barricades_HoldEnemy(TrackedEnemy& enemy, float speed) {
             enemy.tearTimer = 0;
             w.boards--;
             w.fallingBoard = kFallFrames;
-            if (gPlayState != nullptr) {
+            // Black Ops: the board snaps and the zombie snarls at the window.
+            bool boSound = Sound_Play("board_break", &w.pos);
+            Sound_Play("zombie_board", &actor->world.pos);
+            if (gPlayState != nullptr && !boSound) {
                 SoundSource_PlaySfxAtFixedWorldPos(gPlayState, &w.pos, 20, NA_SE_EV_WOODBOX_BREAK);
             }
         }
@@ -319,7 +323,11 @@ void Barricades_Update(PlayState* play, Player* player) {
                 run.repairPointsThisRound += points;
                 AwardPoints(repairer->index, points);
             }
-            SoundSource_PlaySfxAtFixedWorldPos(play, &nearest->pos, 20, NA_SE_EV_WOOD_HIT);
+            if (!Sound_Play("board_repair", &nearest->pos)) {
+                SoundSource_PlaySfxAtFixedWorldPos(play, &nearest->pos, 20, NA_SE_EV_WOOD_HIT);
+            } else {
+                Sound_Play("board_slam", &nearest->pos);
+            }
         }
     }
 }

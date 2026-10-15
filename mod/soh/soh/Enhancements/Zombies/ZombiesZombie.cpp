@@ -15,6 +15,7 @@
 
 #include "ZombiesMode.h"
 #include "ZombiesModel.h"
+#include "ZombiesSound.h"
 
 #include <algorithm>
 #include <cmath>
@@ -233,6 +234,7 @@ static void ZombieInit(Actor* thisx, PlayState* play) {
     self->z = new ZombieState();
     self->z->variant = static_cast<int>(Rand_ZeroOne() * 1000.0f);
     self->z->lastPos = thisx->world.pos;
+    Sound_Play("zombie_spawn", &thisx->world.pos, 0.8f); // clawing up out of the ground
     ActorShape_Init(&thisx->shape, 0.0f, ActorShadow_DrawCircle, 22.0f);
     Collider_InitCylinder(play, &self->collider);
     Collider_SetCylinder(play, &self->collider, thisx, &sCylinderInit);
@@ -271,7 +273,7 @@ static void TakeHits(ZombieActor* self, PlayState* play) {
     if (thisx->colChkInfo.damage > 0) {
         Actor_ApplyDamage(thisx);
         Actor_SetColorFilter(thisx, 0x4000, 0xFF, 0, 8);
-        if (thisx->colChkInfo.health > 0) {
+        if (thisx->colChkInfo.health > 0 && !Sound_Play("zombie_hit", &thisx->world.pos)) {
             Audio_PlayActorSound2(thisx, NA_SE_EN_STALKID_DAMAGE); // the death sound plays as it starts dying
         }
     }
@@ -288,7 +290,9 @@ static void ZombieUpdate(Actor* thisx, PlayState* play) {
             // Its own death, however the health ran out (a sword, or a gun's damage set
             // straight onto it): the death animation plays out before it goes.
             z.state = State::Dying;
-            Audio_PlayActorSound2(thisx, NA_SE_EN_STALKID_DEAD);
+            if (!Sound_Play("zombie_death", &thisx->world.pos)) {
+                Audio_PlayActorSound2(thisx, NA_SE_EN_STALKID_DEAD);
+            }
             Play(z, z.tier == MoveTier::Crawl ? Role::CrawlDeath : Role::Death);
             thisx->flags &= ~ACTOR_FLAG_ATTENTION_ENABLED;
         }
@@ -335,7 +339,9 @@ static void ZombieUpdate(Actor* thisx, PlayState* play) {
     z.prevTime += kDt;
     z.blend = std::min(1.0f, z.blend + kDt / kBlendSeconds);
     if (Anim_NoteBetween(current, "footstep", before, z.time) || Anim_NoteBetween(current, "step", before, z.time)) {
-        Audio_PlayActorSound2(thisx, NA_SE_EN_STAL_WALK);
+        if (!Sound_Play("zombie_step", &thisx->world.pos, 0.6f)) {
+            Audio_PlayActorSound2(thisx, NA_SE_EN_STAL_WALK);
+        }
     }
 
     thisx->speedXZ = 0.0f; // the mode moves it

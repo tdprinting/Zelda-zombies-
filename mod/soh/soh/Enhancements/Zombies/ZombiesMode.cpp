@@ -6,6 +6,7 @@
 
 #include "ZombiesMode.h"
 #include "ZombiesGuns.h"
+#include "ZombiesSound.h"
 
 #include <libultraship/bridge/consolevariablebridge.h>
 
@@ -585,6 +586,18 @@ static bool IsSwiper(const TrackedEnemy& enemy) {
 
 // Groans while they shamble, as Black Ops zombies do.
 static void Vocalize(TrackedEnemy& enemy, bool attack) {
+    // Black Ops' zombie (and hellhound, for the Wolfos) voices when imported.
+    const char* role;
+    if (enemy.kind == EnemyKind::WhiteWolfos) {
+        role = attack ? "dog_bite" : "dog_amb";
+    } else if (attack) {
+        role = "zombie_attack";
+    } else {
+        role = enemy.tier == MoveTier::Crawl ? "zombie_crawler" : enemy.tier == MoveTier::Sprint ? "zombie_sprint" : "zombie_amb";
+    }
+    if (Sound_Play(role, &enemy.actor->world.pos)) {
+        return;
+    }
     u16 sfx;
     switch (enemy.kind) {
         case EnemyKind::Redead:
@@ -618,6 +631,8 @@ static void TrySwipeLink(PlayState* play, Player* player, TrackedEnemy& enemy, f
     // Any damage at all: Black Ops health below turns it into one hit's worth.
     Actor_SetPlayerKnockbackSmall(play, actor, 4.0f, actor->yawTowardsPlayer, 4.0f, 8);
     Vocalize(enemy, true);
+    Sound_Play("zombie_swipe", &actor->world.pos);
+    Sound_Play("player_hit");
 }
 
 // Explosions this frame, for crawlers.
@@ -866,7 +881,9 @@ static void SpawnPowerUp(PlayState* play, const Vec3f& pos, PowerUp type) {
     }
     drop->room = -1;
     sRun.drops.push_back({ drop, drop->draw, type, kPowerUpSeconds * kFps });
-    Sfx_PlaySfxCentered(NA_SE_SY_TRE_BOX_APPEAR);
+    if (!Sound_Play("powerup_spawn", &drop->world.pos)) {
+        Sfx_PlaySfxCentered(NA_SE_SY_TRE_BOX_APPEAR);
+    }
 }
 
 void RefillAmmo() {
@@ -895,7 +912,16 @@ void RefillAmmo() {
 
 static void ActivatePowerUp(PlayState* play, PowerUp type, int who) {
     Announce(PowerUpName(type));
-    Sfx_PlaySfxCentered(NA_SE_SY_GET_ITEM);
+    // Black Ops: the grab, then each power-up's own sting.
+    static const char* const kSting[] = { "powerup_max_ammo", "powerup_insta_kill", "powerup_double_points",
+                                          "powerup_nuke", "powerup_carpenter", "powerup_fire_sale" };
+    bool grabbed = Sound_Play("powerup_grab");
+    if (static_cast<int>(type) < 6) {
+        Sound_Play(kSting[static_cast<int>(type)]);
+    }
+    if (!grabbed) {
+        Sfx_PlaySfxCentered(NA_SE_SY_GET_ITEM);
+    }
 
     switch (type) {
         case PowerUp::MaxAmmo:
@@ -907,14 +933,18 @@ static void ActivatePowerUp(PlayState* play, PowerUp type, int who) {
             break;
         case PowerUp::Nuke:
             KillAllEnemies(play, true, who);
-            Sfx_PlaySfxCentered(NA_SE_IT_BOMB_EXPLOSION);
+            if (!Sound_Play("powerup_nuke_flash")) {
+                Sfx_PlaySfxCentered(NA_SE_IT_BOMB_EXPLOSION);
+            }
             for (int i = 0; i < sRun.playerCount; i++) {
                 AwardPoints(i, kPointsNuke); // everyone gets these
             }
             break;
         case PowerUp::Carpenter:
             Barricades_RepairAll();
-            Sfx_PlaySfxCentered(NA_SE_EV_WOOD_HIT);
+            if (!Sound_Play("powerup_carpenter_end")) {
+                Sfx_PlaySfxCentered(NA_SE_EV_WOOD_HIT);
+            }
             for (int i = 0; i < sRun.playerCount; i++) {
                 AwardPoints(i, kPointsCarpenter); // everyone gets these
             }
@@ -950,6 +980,7 @@ static void UpdateDrops(PlayState* play, Player* player) {
             continue;
         }
         drop.framesLeft--;
+        Sound_Keep(drop.actor, "powerup_loop", &drop.actor->world.pos);
         // Blink for the last five seconds, like the Black Ops drops.
         if (drop.framesLeft < 5 * kFps) {
             drop.actor->draw = ((drop.framesLeft / 2) % 2 == 0) ? drop.draw : nullptr;
@@ -963,8 +994,15 @@ static void UpdateDrops(PlayState* play, Player* player) {
         i++;
     }
 
+    // Black Ops hums under Insta-Kill and Double Points while they last.
+    for (PowerUp p : { PowerUp::InstaKill, PowerUp::DoublePoints }) {
+        int& frames = sRun.powerUpFrames[static_cast<int>(p)];
+        if (frames > 0) {
+            Sound_Keep(&frames, p == PowerUp::InstaKill ? "powerup_insta_loop" : "powerup_double_loop", nullptr, 0.5f);
+        }
+    }
     for (int& frames : sRun.powerUpFrames) {
-        if (frames > 0 && --frames == 0) {
+        if (frames > 0 && --frames == 0 && !Sound_Play("powerup_end")) {
             Sfx_PlaySfxCentered(NA_SE_SY_CANCEL); // a timed power-up ran out
         }
     }
@@ -987,11 +1025,15 @@ static void StartRound(int round) {
         sRun.toSpawn = DogsForRound(sRun.dogRoundIndex, sRun.playerCount);
         sRun.nextDogRound = NextDogRound(round, Rand_ZeroOne());
         Announce("WOLFOS ROUND", 4);
-        Sfx_PlaySfxCentered(NA_SE_EN_WOLFOS_CRY);
+        if (!Sound_Play("dog_round_start")) {
+            Sfx_PlaySfxCentered(NA_SE_EN_WOLFOS_CRY);
+        }
     } else {
         sRun.toSpawn = ZombiesForRound(round, sRun.playerCount);
         Announce("ROUND " + std::to_string(round), 4);
-        Sfx_PlaySfxCentered(NA_SE_EN_REDEAD_CRY);
+        if (!Sound_Play("round_start")) {
+            Sfx_PlaySfxCentered(NA_SE_EN_REDEAD_CRY);
+        }
     }
 
     // Everyone starts the round on full health.
@@ -1020,7 +1062,9 @@ static void EndRound(PlayState* play) {
     }
     Announce("ROUND " + std::to_string(sRun.round) + " SURVIVED", 3);
     Extras_OnRoundEnd();
-    Sfx_PlaySfxCentered(NA_SE_SY_CORRECT_CHIME);
+    if (!Sound_Play("round_end")) {
+        Sfx_PlaySfxCentered(NA_SE_SY_CORRECT_CHIME);
+    }
     sRun.phase = Phase::Intermission;
     sRun.phaseTimer = 10 * kFps;
 }
@@ -1126,6 +1170,8 @@ static void EndRun(const std::string& reason, bool linkIsDead) {
     sRun.enemies.clear();
     sRun.drops.clear();
     Stations_Clear();
+    Sound_StopAll();
+    Sound_Play("game_over");
     Extras_OnRunEnd(gPlayState, linkIsDead);
     Coop_EndRun(gPlayState);
     Guns_EndRun();
@@ -1217,6 +1263,8 @@ static void OnPlayerUpdate() {
         return;
     }
     Player* player = GET_PLAYER(play);
+    // Black Ops sounds: where the players hear from, and Nacht der Untoten's ambience.
+    Sound_Update(play, IsRunActive() && BoMap_Active(play));
 
     if (sRun.announcement.framesLeft > 0) {
         sRun.announcement.framesLeft--;
@@ -1418,6 +1466,7 @@ void Run_Quit() {
 // The game was reset or another file is loading: the actors are gone with the old
 // scene, so the run is dropped without touching them and the real items go back.
 static void AbandonRun() {
+    Sound_StopAll();
     if (IsRunActive()) {
         sRun.enemies.clear();
         sRun.drops.clear();

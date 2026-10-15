@@ -7,6 +7,7 @@
 #include "ZombiesMode.h"
 #include "ZombiesBox.h"
 #include "ZombiesGuns.h"
+#include "ZombiesSound.h"
 
 #include <libultraship/bridge/consolevariablebridge.h>
 
@@ -884,7 +885,9 @@ static Offer GetOffer(const Station& station, int who) {
 }
 
 static void Fail() {
-    Sfx_PlaySfxCentered(NA_SE_SY_ERROR);
+    if (!Sound_Play("deny")) {
+        Sfx_PlaySfxCentered(NA_SE_SY_ERROR);
+    }
 }
 
 // Player 2's side of the stations that give them something of their own. Returns false
@@ -960,7 +963,9 @@ static bool RollBox(int who, int cost, BoxPrize* prize) {
     if (!PowerUpActive(PowerUp::FireSale) && ChestMoves(sChestUses, sChestMoved, Rand_ZeroOne())) {
         GetRun().players[who].points += cost; // refund, not earnings: no Double Points
         Announce("THE CHEST MOVED", 3);
-        Sfx_PlaySfxCentered(NA_SE_VO_SK_LAUGH);
+        if (!Sound_Play("box_teddy")) {
+            Sfx_PlaySfxCentered(NA_SE_VO_SK_LAUGH);
+        }
         sChestUses = 0;
         return false;
     }
@@ -1019,6 +1024,9 @@ static void Buy(PlayState* play, Station& station, const Offer& offer, int who) 
     } else if (!SpendPoints(who, offer.cost)) {
         Fail();
         return;
+    }
+    if (offer.cost > 0) {
+        Sound_Play("purchase");
     }
 
     Run& run = GetRun();
@@ -1079,14 +1087,20 @@ static void Buy(PlayState* play, Station& station, const Offer& offer, int who) 
             PerkInfo info = PerkFor(station.type);
             ApplyPerk(who, info.perk);
             Announce(info.name, 3);
-            Sfx_PlaySfxCentered(NA_SE_SY_GET_ITEM);
+            Sound_Play("perk_jingle", &station.pos);
+            if (!Sound_Play("perk_drink")) {
+                Sfx_PlaySfxCentered(NA_SE_SY_GET_ITEM);
+            }
             break;
         }
         case StationType::Power:
             run.powerOn = true;
             RelightTorches();
             Announce("THE POWER IS ON", 3);
-            Sfx_PlaySfxCentered(NA_SE_EV_DIAMOND_SWITCH);
+            Sound_Play("power_switch", &station.pos);
+            if (!Sound_Play("power_on")) {
+                Sfx_PlaySfxCentered(NA_SE_EV_DIAMOND_SWITCH);
+            }
             break;
         case StationType::PackAPunch: {
             PapUpgrade upgrade = FindPapUpgrade();
@@ -1094,7 +1108,9 @@ static void Buy(PlayState* play, Station& station, const Offer& offer, int who) 
                 upgrade.apply(play);
                 Announce(upgrade.name, 3);
             }
-            Sfx_PlaySfxCentered(NA_SE_SY_GET_ITEM);
+            if (!Sound_Play("pap_upgrade", &station.pos)) {
+                Sfx_PlaySfxCentered(NA_SE_SY_GET_ITEM);
+            }
             break;
         }
         case StationType::FairyFountain:
@@ -1182,6 +1198,15 @@ bool Stations_ArmoryWares(Vec3f* pos, ArmoryWares* wares) {
 
 void Stations_Update(PlayState* play, Player* player) {
     Run& run = GetRun();
+
+    // Black Ops' perk machines and Pack-a-Punch hum once the power is on.
+    for (const Station& st : sStations) {
+        bool perk = st.type == StationType::Juggernog || st.type == StationType::FairyRevive ||
+                    st.type == StationType::DoubleTap || st.type == StationType::StaminUp;
+        if (st.placed && run.powerOn && (perk || st.type == StationType::PackAPunch)) {
+            Sound_Keep(&st, perk ? "perk_loop" : "pap_loop", &st.pos, 0.6f);
+        }
+    }
 
     // Sun's Song can switch the power on from anywhere; keep the torches in step.
     static bool lastPowerOn = false;

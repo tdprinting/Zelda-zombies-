@@ -17,6 +17,7 @@
 // caller plays its Ocarina of Time sound.
 
 #include "ZombiesSound.h"
+#include "ZombiesGuns.h"
 #include "ZombiesMode.h"
 #include "ZombiesModel.h"
 
@@ -418,7 +419,7 @@ static std::string Upgraded(const std::string& bo) {
     return bo + "_upgraded";
 }
 
-bool Sound_GunFire(const char* boName, bool pap, const char* fallbackBo, const Vec3f* pos) {
+bool Sound_GunFire(const char* boName, int gunClass, bool pap, const Vec3f* pos) {
     if (boName != nullptr && boName[0] != '\0') {
         if (pap && Sound_Play(("gun_" + Upgraded(boName) + "_fire").c_str(), pos)) {
             return true;
@@ -427,7 +428,16 @@ bool Sound_GunFire(const char* boName, bool pap, const char* fallbackBo, const V
             return true;
         }
     }
-    return fallbackBo != nullptr && Sound_Play((std::string("gun_") + fallbackBo + "_fire").c_str(), pos);
+    // Borrowed from a gun of the same class.
+    static const char* const kClassGun[] = { "m1911_zm", "mp40_zm", "m14_zm", "ithaca_zm", "rpk_zm", "ray_gun_zm" };
+    static const GunClass kClasses[] = { GunClass::Pistol, GunClass::Smg, GunClass::Rifle,
+                                         GunClass::Shotgun, GunClass::Lmg, GunClass::Launcher };
+    for (int i = 0; i < 6; i++) {
+        if (static_cast<int>(kClasses[i]) == gunClass) {
+            return Sound_Play((std::string("gun_") + kClassGun[i] + "_fire").c_str(), pos);
+        }
+    }
+    return false;
 }
 
 bool Sound_GunRole(const char* boName, const char* what, const Vec3f* pos) {

@@ -5,8 +5,8 @@ It's the importer for [docs/BLACK_OPS_MAPS.md](../../docs/BLACK_OPS_MAPS.md):
 it opens a map's fastfile, prints what's in it and the map's Zombies layout
 (windows, wall buys, doors and debris, chest spots, perks) in Ocarina of Time
 coordinates, and converts the map's geometry and collision (`mapgeo`), models
-and animations (`gamemodel`, `gameanim`), particle effects (`gamefx`) and the
-zombies HUD art (`hud`) into the files the game reads from its `zombies/`
+and animations (`gamemodel`, `gameanim`), particle effects (`gamefx`), the
+zombies HUD art (`hud`) and sounds (`gamesound`) into the files the game reads from its `zombies/`
 folder.
 
 Nothing it reads is uploaded or shared. Please don't share its output either:
@@ -79,3 +79,27 @@ power-up icons (`specialty_*_zombies`), the low health overlay (`overlay_low_hea
 and the d-pad ring (`hud_dpad`). They're streamed from `main/*.iwd`, so `--main` is
 needed. More than one zone can be given; the first with an image wins. The game uses
 whichever it finds and draws its own for the rest.
+
+### Sounds
+
+```
+bomap gamesound zombie_cod5_prototype.ff common_zombie.ff --out <SoH folder>/zombies/sound
+```
+
+writes the sounds the game plays as WAV files, with `manifest.txt` naming each alias's
+files and settings and the alias for each of the game's sound roles: every gun's fire,
+dry fire, raise and put away sounds and the reload sounds its view animations name, the
+purchase and deny sounds, windows, the Mystery Box, power-ups, perk machines, Pack-a-Punch,
+the zombies' and hellhounds' voices, and Nacht der Untoten's ambience. Give Nacht's zone
+first so its own sounds win over the shared ones.
+
+Most of Black Ops' sounds are WMA, which is decoded by running [ffmpeg](https://ffmpeg.org);
+pass `--ffmpeg <path>` if it isn't on your PATH (without it only the few non-WMA sounds
+are written). It takes about a minute and writes about 100 MB; `--weapons m1911_zm,mp40_zm`
+keeps only those guns' sounds (and their Pack-a-Punched weapons'). `--roles <file>` adds or
+replaces roles, one per line: `<role> <alias>...`. `bomap weapons` lists each weapon's
+sound names and notetrack sounds, and `bomap sounds` every alias in a zone.
+
+Music and most voice lines (round stings, perk jingles, the announcer) are streamed from
+outside the zones in Black Ops, so they aren't written; the game keeps its own sounds for
+those.

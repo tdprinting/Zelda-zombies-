@@ -21,6 +21,7 @@
 #include "ZombiesFx.h"
 #include "ZombiesMode.h"
 #include "ZombiesModel.h"
+#include "ZombiesSound.h"
 
 #include <libultraship/bridge/consolevariablebridge.h>
 
@@ -733,6 +734,7 @@ static void FireHitscan(PlayState* play, Player* player, int who, const GunStats
         }
         damage *= pierced == 0 ? 1.0f : 0.75f;
         DamageEnemy(*hit.enemy, damage, who, hit.pos, hit.headshot);
+        Sound_Play(hit.headshot ? "zombie_headshot" : "zombie_hit", &hit.pos, 0.7f);
         if (pierced == 0) {
             impact = hit.pos;
             impacted = true;
@@ -748,7 +750,9 @@ static void FireHitscan(PlayState* play, Player* player, int who, const GunStats
         Vec3f zero = { 0.0f, 0.0f, 0.0f };
         EffectSsBomb2_SpawnLayered(play, &impact, &zero, &zero, 40, 10);
         Fx_Explosion(impact);
-        SoundSource_PlaySfxAtFixedWorldPos(play, &impact, 20, NA_SE_IT_BOMB_EXPLOSION);
+        if (!Sound_Play("explosion", &impact)) {
+            SoundSource_PlaySfxAtFixedWorldPos(play, &impact, 20, NA_SE_IT_BOMB_EXPLOSION);
+        }
         Splash(play, impact, variant.splash, variant.splashRadius, who, nullptr);
     }
     (void)player;
@@ -777,7 +781,9 @@ static void BoltImpact(PlayState* play, const Bolt& bolt, const Vec3f& pos, Trac
     Vec3f p = pos;
     EffectSsDeadDb_Spawn(play, &p, &vel, &vel, 90, -4, 160, 255, 160, 255, 0, 220, 40, 1, 8, false);
     Fx_RayGunImpact(p, bolt.pap);
-    SoundSource_PlaySfxAtFixedWorldPos(play, &p, 20, NA_SE_IT_EXPLOSION_LIGHT);
+    if (!Sound_Play("raygun_impact", &p)) {
+        SoundSource_PlaySfxAtFixedWorldPos(play, &p, 20, NA_SE_IT_EXPLOSION_LIGHT);
+    }
 }
 
 static void UpdateBolts(PlayState* play) {
@@ -853,7 +859,9 @@ static void Fire(PlayState* play, Player* player, int who) {
         MuzzleFlash(play, muzzle, gun.projectile);
         Fx_GunFlash(gun.boName, slot.pap, muzzle, dir);
     }
-    PlayShotSfx(player, gun.gunClass);
+    if (!Sound_GunFire(gun.boName, static_cast<int>(gun.gunClass), slot.pap, &muzzle)) {
+        PlayShotSfx(player, gun.gunClass);
+    }
     if (ads) {
         // A little kick up the sights; OoT's look control brings it back.
         player->actor.focus.rot.x = static_cast<s16>(player->actor.focus.rot.x - (gun.gunClass == GunClass::Shotgun ? 500 : 140));
@@ -905,6 +913,10 @@ static void ReloadNotes(Player* player, int who) {
         from = std::fmod(from, len);
         to = from + rate / kFps;
     }
+    // Black Ops' own reload sounds, named by the animation's sound notetracks.
+    if (Sound_AnimNotes(gm->reload, from, to, &player->actor.world.pos)) {
+        return;
+    }
     if (Anim_NoteBetween(gm->reload, "rmbnt#reload_clipout", from, to)) {
         PlayGunSfx(player, NA_SE_IT_SWORD_PUTAWAY, PITCH_NORMAL, VOL_FULL);
     }
@@ -926,7 +938,9 @@ static void StartSwap(Player* player, int who) {
     st.reloadFrames = 0; // swapping cancels a reload, as in Black Ops
     st.swapFrames = kSwapFrames;
     st.swapTo = next;
-    PlayGunSfx(player, NA_SE_IT_SWORD_PICKOUT, PITCH_NORMAL, VOL_FULL);
+    if (!Sound_GunRole(GunInfo(guns.Current().id).boName, "putaway", &player->actor.world.pos)) {
+        PlayGunSfx(player, NA_SE_IT_SWORD_PICKOUT, PITCH_NORMAL, VOL_FULL);
+    }
 }
 
 // The guns' C button stays empty: anything equipped onto it moves to a free button.
@@ -991,6 +1005,7 @@ static void UpdatePlayerGun(PlayState* play, Player* player, int who, const GunI
 
     if (st.swapFrames > 0 && --st.swapFrames == kSwapFrames / 2) {
         guns.current = st.swapTo; // the new gun comes up for the second half
+        Sound_GunRole(GunInfo(guns.Current().id).boName, "raise", &player->actor.world.pos);
     }
     if (st.reloadFrames > 0) {
         --st.reloadFrames;
@@ -1054,7 +1069,9 @@ static void UpdatePlayerGun(PlayState* play, Player* player, int who, const GunI
         if (slot.reserve > 0) {
             StartReload(player, who);
         } else if (in.pressed) {
-            PlayGunSfx(player, NA_SE_IT_HOOKSHOT_REFLECT, PITCH_SMG, VOL_SMG); // dry fire
+            if (!Sound_GunRole(GunInfo(slot.id).boName, "dry", &player->actor.world.pos)) {
+                PlayGunSfx(player, NA_SE_IT_HOOKSHOT_REFLECT, PITCH_SMG, VOL_SMG); // dry fire
+            }
             st.sinceShot = 0;
         }
         return;
@@ -1295,7 +1312,9 @@ bool Guns_ArmoryBuy(PlayState* play, int who) {
     } else {
         guns.Refill(slot);
     }
-    Sfx_PlaySfxCentered(NA_SE_SY_GET_ITEM);
+    if (!Sound_Play(slot < 0 ? "gun_pickup" : "ammo_buy")) {
+        Sfx_PlaySfxCentered(NA_SE_SY_GET_ITEM);
+    }
     (void)play;
     return true;
 }

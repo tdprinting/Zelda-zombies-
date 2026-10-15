@@ -4,6 +4,7 @@
 
 #include "entities.h"
 #include "fastfile.h"
+#include "sound_export.h"
 
 #include <zlib.h>
 
@@ -142,8 +143,27 @@ static void TestLayout() {
     EXPECT_TRUE(json.find("\"cost\": 1000") != std::string::npos);
 }
 
+// MS ADPCM: a block's header gives the first two samples, then each nibble predicts the
+// next from the last two; Black Ops' blocks hold 512 frames in 262 bytes per channel.
+static void TestSounds() {
+    std::vector<uint8_t> block(262, 0);
+    block[0] = 0;                      // predictor 0: next = last
+    block[1] = 16;                     // delta 16
+    block[3] = 100;                    // sample 1 = 100
+    block[5] = 50;                     // sample 2 = 50 (played first)
+    block[7] = 0x10;                   // +1 * 16, then +0
+    std::vector<int16_t> pcm = DecodeMsAdpcm(block.data(), block.size(), 1, 512);
+    EXPECT_TRUE(pcm.size() == 512);
+    EXPECT_TRUE(pcm.size() >= 4 && pcm[0] == 50 && pcm[1] == 100 && pcm[2] == 116 && pcm[3] == 116);
+    std::vector<uint8_t> wav = WavFile(pcm, 44100, 1);
+    EXPECT_TRUE(wav.size() == 44 + 1024);
+    EXPECT_TRUE(std::memcmp(wav.data(), "RIFF", 4) == 0 && std::memcmp(wav.data() + 8, "WAVEfmt ", 8) == 0);
+    EXPECT_TRUE(!DefaultSoundRoles().empty() && DefaultSoundRoles()[0].role == "purchase");
+}
+
 int main() {
     TestHeaderAndAssetList();
+    TestSounds();
     TestRejectsOtherFiles();
     TestLayout();
     if (sFailures == 0) {

@@ -16,6 +16,7 @@
 // run ends when nobody is left standing.
 
 #include "ZombiesMode.h"
+#include "ZombiesSound.h"
 
 #include <libultraship/bridge/consolevariablebridge.h>
 #include <ship/Context.h>
@@ -835,6 +836,7 @@ static void DownPartner() {
     partner.health = 0;
     sAnim = Anim::None;
     PartnerVoice(NA_SE_VO_LI_DOWN);
+    Sound_Play("player_down");
     Announce("PLAYER 2 IS DOWN", 3);
     LoseOnDown(1);
 }
@@ -868,6 +870,7 @@ bool Coop_OnLinkDeath(PlayState* play, Player* player) {
     down.reviveFrames = 0;
     LoseOnDown(0);
     Announce("PLAYER 1 IS DOWN", 3);
+    Sound_Play("player_down");
     return true;
 }
 
@@ -947,6 +950,7 @@ void Coop_Update(PlayState* play, Player* player) {
             me->world.pos.z += Math_CosS(away) * 20.0f;
             Audio_PlayActorSound2(enemy.actor, NA_SE_EN_STALKID_ATTACK);
             PartnerVoice(NA_SE_VO_LI_DAMAGE_S);
+            Sound_Play("player_hit", &P().actor->world.pos);
             if (partner.health <= 0) {
                 DownPartner();
             }
