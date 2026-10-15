@@ -224,7 +224,36 @@ static std::unique_ptr<FxDef> LoadFx(const std::string& path) {
             e.spawnB = std::min<u32>(e.spawnB, 64);
         }
     }
-    return r.Ok() ? std::move(def) : nullptr;
+    if (!r.Ok()) {
+        return nullptr;
+    }
+    // The renderer only alpha-blends. An image drawn additively (black means nothing) has
+    // its brightness turned into coverage; one drawn multiplied (white means nothing) has
+    // its darkness turned into coverage. An image shared by both kinds is left alone.
+    std::vector<u8> use(def->images.size(), 0);
+    for (const Emitter& e : def->emitters) {
+        if (e.image >= 0) {
+            use[e.image] |= e.blend == 1 ? 1 : e.blend == 2 ? 2 : 4;
+        }
+    }
+    for (size_t i = 0; i < def->images.size(); i++) {
+        if (use[i] != 1 && use[i] != 2) {
+            continue;
+        }
+        std::vector<u8>& px = def->images[i].rgba;
+        for (size_t k = 0; k + 3 < px.size(); k += 4) {
+            int m = std::max({ px[k], px[k + 1], px[k + 2] });
+            if (use[i] == 1) {
+                px[k + 3] = static_cast<u8>(px[k + 3] * m / 255);
+                for (int c = 0; c < 3; c++) {
+                    px[k + c] = static_cast<u8>(m > 0 ? px[k + c] * 255 / m : 0);
+                }
+            } else {
+                px[k + 3] = static_cast<u8>(px[k + 3] * (255 - m) / 255);
+            }
+        }
+    }
+    return std::move(def);
 }
 
 // ---------------------------------------------------------------------------
@@ -680,9 +709,9 @@ static int Start(FxDef* def, const Vec3f& pos, const Vec3f& dir, float scale) {
     for (const Emitter& em : def->emitters) {
         looping |= em.category == 0;
     }
-    bool far = CameraDistSq(pos) > kDrawRange * kDrawRange;
+    bool outOfRange = CameraDistSq(pos) > kDrawRange * kDrawRange;
     // One-shot emitters spawn everything now (each particle waits out its own delay).
-    if (!far) {
+    if (!outOfRange) {
         for (const Emitter& em : def->emitters) {
             if (em.category != 0) {
                 SpawnBurst(inst, em);
@@ -825,7 +854,7 @@ static void UpdateFx() {
         Instance& inst = sInstances[i];
         inst.age += kFrameMs;
         bool done = inst.stopped || inst.age > static_cast<float>(inst.def->loopingLife);
-        bool far = CameraDistSq(inst.pos) > kDrawRange * kDrawRange;
+        bool outOfRange = CameraDistSq(inst.pos) > kDrawRange * kDrawRange;
         if (!done) {
             for (size_t e = 0; e < inst.def->emitters.size(); e++) {
                 const Emitter& em = inst.def->emitters[e];
@@ -835,7 +864,7 @@ static void UpdateFx() {
                 int spawned = 0;
                 // At most two a frame from one emitter: a dense Black Ops emitter thins out.
                 while (inst.nextSpawn[e] <= inst.age && spawned < 2) {
-                    if (!far) {
+                    if (!outOfRange) {
                         SpawnParticle(inst, em, 0.0f);
                     }
                     inst.nextSpawn[e] += static_cast<float>(std::max<u32>(em.spawnA, 25));
