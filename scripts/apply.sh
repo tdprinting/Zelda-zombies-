@@ -58,6 +58,10 @@ patch_file() {
     fi
 }
 
+# Windows checkouts can have CRLF line endings where the patches have LF:
+# --ignore-whitespace lets the context lines match either way.
+APPLY_FLAGS="--ignore-whitespace"
+
 applied=0
 skipped=0
 while IFS= read -r rel; do
@@ -66,16 +70,16 @@ while IFS= read -r rel; do
     dir=$(dirname "$rel")
     target=$TREE
     [ "$dir" = . ] || target="$TREE/$dir"
-    if git -C "$target" apply --check "$file" 2>/dev/null; then
-        git -C "$target" apply "$file"
+    if git -C "$target" apply $APPLY_FLAGS --check "$file" 2>/dev/null; then
+        git -C "$target" apply $APPLY_FLAGS "$file"
         echo "  applied  ${file#"$ROOT"/}"
         applied=$((applied + 1))
-    elif git -C "$target" apply --reverse --check "$file" 2>/dev/null; then
+    elif git -C "$target" apply $APPLY_FLAGS --reverse --check "$file" 2>/dev/null; then
         echo "  present  ${file#"$ROOT"/}"
         skipped=$((skipped + 1))
     else
         echo "apply.sh: ${file#"$ROOT"/} does not apply to $target:" >&2
-        git -C "$target" apply --check -v "$file" >&2 || true
+        git -C "$target" apply $APPLY_FLAGS --check -v "$file" >&2 || true
         exit 1
     fi
 done < <(list_patches)

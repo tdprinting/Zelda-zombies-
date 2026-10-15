@@ -331,7 +331,7 @@ void Barricades_Update(PlayState* play, Player* player) {
 extern "C" void ZombiesDraw_Crate(PlayState* play, const Vec3f& base, s16 yaw, float x, float y, float z, float roll,
                                   float width, float height, float depth) {
     Matrix_Translate(base.x, base.y, base.z, MTXMODE_NEW);
-    Matrix_RotateY(BINANG_TO_RAD(yaw), MTXMODE_APPLY);
+    Matrix_RotateY(static_cast<f32>(BINANG_TO_RAD(yaw)), MTXMODE_APPLY);
     Matrix_Translate(x, y, z, MTXMODE_APPLY);
     Matrix_RotateZ(roll, MTXMODE_APPLY);
     // The crate sits on its base, so drop half the plank height to centre it on y.
@@ -347,7 +347,7 @@ extern "C" void ZombiesDraw_Crate(PlayState* play, const Vec3f& base, s16 yaw, f
 extern "C" void ZombiesDraw_Board(PlayState* play, Gfx* dl, const Vec3f& lo, const Vec3f& hi, float vtxScale,
                                   const Vec3f& base, s16 yaw, float x, float y, float z, float roll, float width) {
     Matrix_Translate(base.x, base.y, base.z, MTXMODE_NEW);
-    Matrix_RotateY(BINANG_TO_RAD(yaw), MTXMODE_APPLY);
+    Matrix_RotateY(static_cast<f32>(BINANG_TO_RAD(yaw)), MTXMODE_APPLY);
     Matrix_Translate(x, y, z, MTXMODE_APPLY);
     Matrix_RotateZ(roll, MTXMODE_APPLY);
     float lenX = hi.x - lo.x;

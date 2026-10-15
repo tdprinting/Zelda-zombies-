@@ -1326,17 +1326,17 @@ extern "C" void ZombiesGuns_DrawViewmodel(PlayState* play, Player* player, float
     gDPSetEnvColor(POLY_OPA_DISP++, 30, 105, 27, 0); // the tunic's green, for the sleeve
 
     Matrix_Translate(eye.x, eye.y, eye.z, MTXMODE_NEW);
-    Matrix_RotateY(BINANG_TO_RAD(yaw), MTXMODE_APPLY);
-    Matrix_RotateX(BINANG_TO_RAD(pitch), MTXMODE_APPLY);
+    Matrix_RotateY(static_cast<f32>(BINANG_TO_RAD(yaw)), MTXMODE_APPLY);
+    Matrix_RotateX(static_cast<f32>(BINANG_TO_RAD(pitch)), MTXMODE_APPLY);
     // View space from here: +Z forward, +X left, +Y up.
     float right = adult ? -7.0f : -6.0f;
     float down = (adult ? -6.5f : -5.5f) + bob - dip * 6.0f;
     float forward = (adult ? 17.0f : 15.0f) - kick * 2.5f;
     Matrix_Translate(right + sway, down, forward, MTXMODE_APPLY);
-    Matrix_RotateX(BINANG_TO_RAD(static_cast<s16>(-kick * 1800.0f + dip * 5000.0f)), MTXMODE_APPLY);
+    Matrix_RotateX(static_cast<f32>(BINANG_TO_RAD(static_cast<s16>(-kick * 1800.0f + dip * 5000.0f))), MTXMODE_APPLY);
     // The hand model: its +Y runs down the barrel. Turn it to point into the view.
-    Matrix_RotateX(BINANG_TO_RAD(0x4000), MTXMODE_APPLY);
-    Matrix_RotateY(BINANG_TO_RAD(static_cast<s16>(0x4000)), MTXMODE_APPLY);
+    Matrix_RotateX(static_cast<f32>(BINANG_TO_RAD(0x4000)), MTXMODE_APPLY);
+    Matrix_RotateY(static_cast<f32>(BINANG_TO_RAD(static_cast<s16>(0x4000))), MTXMODE_APPLY);
     float scale = adult ? 0.0105f : 0.0095f;
     Matrix_Scale(scale, scale, scale, MTXMODE_APPLY);
     gSPMatrix(POLY_OPA_DISP++, MATRIX_NEWMTX(play->state.gfxCtx), G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_MODELVIEW);
