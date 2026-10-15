@@ -37,7 +37,7 @@ extern "C" void ZombiesBox_DrawRigid(PlayState* play, Gfx* dl, const Vec3f* pos,
                                      const Vec3f* local, float pitch, float roll, float spin) {
     OPEN_DISPS(play->state.gfxCtx);
     Matrix_Translate(pos->x, pos->y, pos->z, MTXMODE_NEW);
-    Matrix_RotateY(BINANG_TO_RAD(yaw), MTXMODE_APPLY);
+    Matrix_RotateY(static_cast<f32>(BINANG_TO_RAD(yaw)), MTXMODE_APPLY);
     Matrix_RotateZ(roll, MTXMODE_APPLY);
     Matrix_Scale(scale, scale, scale, MTXMODE_APPLY);
     Matrix_Translate(local->x, local->y, local->z, MTXMODE_APPLY);
