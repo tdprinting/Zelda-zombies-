@@ -1735,6 +1735,20 @@ static Vec3f GripOf(const char* boName) {
     return { -5.5f, -2.5f, 0.0f }; // most rifles and SMGs
 }
 
+// How each Link's right fist takes the gun (limb units: a hundredth of OoT's). The child's
+// fist is small and bare, so the gun's grip sits at the wrist and the gun is shrunk to
+// his size. The adult's gauntleted fist is half again as big: at true size the gun would
+// vanish into it, so it is a little over size and sits forward and above the knuckles,
+// its grip in the fingers and its frame clear of the gauntlet. [adult, child]
+struct HandFit {
+    float scale;
+    Vec3f offset;
+};
+static constexpr HandFit kHandFit[2] = {
+    { 1.1f, { 0.0f, 80.0f, -110.0f } },
+    { 0.8f, { 0.0f, 0.0f, 0.0f } },
+};
+
 // The limb draw: the held imported gun goes into Link's right fist.
 static void HoldGun(s32 limbIndex, Gfx** dList, Player* player, PlayState* play) {
     if (limbIndex != PLAYER_LIMB_R_HAND || sHeldGun == nullptr || *dList == nullptr || player != GET_PLAYER(play) ||
@@ -1746,10 +1760,11 @@ static void HoldGun(s32 limbIndex, Gfx** dList, Player* player, PlayState* play)
         return;
     }
     Vec3f grip = GripOf(GunInfo(sGuns[0].Current().id).boName);
-    // Black Ops inches to OoT units, times the limb's hundred; Link the child is smaller.
-    float scale = (64.0f / 72.0f) * 100.0f * (LINK_IS_ADULT ? 1.0f : 0.8f);
+    const HandFit& fit = kHandFit[LINK_IS_ADULT ? 0 : 1];
+    // Black Ops inches to OoT units, times the limb's hundred.
+    float scale = (64.0f / 72.0f) * 100.0f * fit.scale;
     // The fist's +Y runs along the barrel (as the hookshot's does) and its -Z is the top.
-    Vec3f offset = { 0.0f, 0.0f, 0.0f };
+    Vec3f offset = fit.offset;
     Vec3s rot = { -0x4000, 0, 0x4000 };
     *dList = ZombiesGuns_FistWithGun(play, *dList, gun, &grip, scale, &offset, &rot);
 }

@@ -42,7 +42,7 @@ player's own ROM.
 | Points: 10 per hit, 60 kill, 100 headshot, 130 knife | 10 per hit, 60 kill, 100 kill with a gun, arrow, seed or hookshot, 130 kill with a sword | A gun hit too small to show on an undead's health still pays its 10 |
 | Start with 500 points | 500 | |
 | Starting pistol | **M1911** on the guns' C button | See [Guns](#guns) |
-| Wall buys | **Armory** station, a rack: **R** steps through it. First the next Zelda item for Link's age he doesn't have (an ammo refill, 500, once he has them all), then the wall guns at Black Ops prices, and their ammo at half price (4500 once Pack-a-Punched) | Child: Slingshot, Boomerang, Bombs. Adult: Bow, Bombs, Hookshot, Megaton Hammer. Guns: Olympia and M14 (500), MP5K and MP40 (1000) once the second zone is open, AK74u (1200) and Stakeout (1500) once the third is |
+| Wall buys | **Armory** station, a rack: **R** steps through it. First the next Zelda item for Link's age he doesn't have (an ammo refill, 500, once he has them all), then the wall guns at Black Ops prices, and their ammo at half price (4500 once Pack-a-Punched) | Child: Slingshot, Boomerang, Bombs. Adult: Bow, Bombs, Hookshot, Megaton Hammer. Guns: Olympia and M14 (500), MP5K and MP40 (1000) once the second zone is open, AK74u (1200) and Stakeout (1500) once the third is. The rack's current entry is chalked on the wall behind the torch, a white outline drawn at run time from the item's own GetItem model or the gun's imported world model, with its price chalked under it when Link is near |
 | Mystery Box (950) | **Mystery Chest** (950): random weapon | Pool: Bombchus (Monkey Bomb), Fire/Ice Arrows, Din's Fire (Thundergun), Light Arrows (rare), Biggoron Sword (rare), Longshot, Hammer, and the box guns (Spectre, Galil, Commando, FAMAS, HK21, RPK, and the Ray Gun, rarest). Child pool swaps in Slingshot, Boomerang, Bombs. Never a gun Link already holds. About half of all prizes are guns (weights: Zelda items 1 to 4 each, box guns 3, Ray Gun 1, so the Ray Gun is about 1 in 38). Skull Kid laughing is the teddy bear: the points come back and the chest moves. As in Black Ops it never happens in the first four uses since the last move, is a 15% chance on uses 5 to 8, is certain from the ninth if the chest has never moved, and otherwise is 30% (50% from the 14th use) |
 | Juggernog | **Juggernog Milk** (2500): Double Defense | |
 | Quick Revive | **Fairy Revive**. Solo (500, no power needed): a bottled fairy. Co-op (1500): revives take half as long | Solo: a fairy in a bottle is OoT's own self-revive. Fills an empty bottle, else adds a bottle, else replaces the first bottle's contents. Using it counts as a down (5% of points and the perks go), and it sells out after three buys. Co-op has no self-revive |
@@ -231,7 +231,10 @@ importer's manifest (`gun_<boName>_world`, `_view`, `_anim_idle`, `_anim_fire`,
 them. In third person the world model goes into Link's closed right fist: the limb draw
 (`VB_PLAYER_OVERRIDE_LIMB_DRAW`, right hand) prepends the gun, placed at its grip (a small
 per-gun table, from the gun's `tag_weapon`), to the hand's display list, so it follows
-the pose table. Aiming down the sights (C-Up) draws the Black Ops viewmodel, its arms
+the pose table. The two Links' fists take it differently (`kHandFit`): the child's small
+bare fist holds the grip at the wrist with the gun shrunk to his size; the adult's
+gauntlet is half again as big, so his gun is a little over true size and sits forward of
+the knuckles and above the gauntlet, or a pistol would vanish into his fist. Aiming down the sights (C-Up) draws the Black Ops viewmodel, its arms
 tinted to Link's tunic and gauntlets, from the eye as Black Ops does (twice as far and
 twice the size, which looks the same and keeps clear of OoT's near plane, spread to Black
 Ops' 65 degree field of view). It plays the idle, fire, reload and pullout animations off
@@ -449,6 +452,7 @@ Code layout:
 | `ZombiesCoop.cpp` | Split-screen co-op: player 2, second view, downs and revives |
 | `ZombiesGuns.h/.cpp` | Black Ops guns: firing, reloads, the Armory rack and chest guns, Pack-a-Punch, Link's gun poses, the first-person viewmodel, OoT item round scaling, the imported-model seam |
 | `ZombiesGunTable.cpp` | The gun table and the pure ammo and slot rules, unit tested |
+| `ZombiesChalk.cpp` | The Armory's chalk outline, drawn at run time from the item's or gun's own model |
 | `ZombiesHud.cpp` | HUD drawing |
 | `ZombiesMenu.cpp` | Menu widgets |
 

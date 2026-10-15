@@ -707,6 +707,7 @@ static void FindWall(PlayState* play, const Vec3f& at) {
     sWall.scene = play->sceneNum;
     float best = 1e9f;
     Vec3f n = {};
+    Vec3f wallHit = {};
     float front = 0.0f;
     const float height = at.y + 50.0f;
     for (int i = 0; i < 16; i++) {
@@ -736,6 +737,7 @@ static void FindWall(PlayState* play, const Vec3f& at) {
         best = std::fabs(f);
         n = pn;
         front = f;
+        wallHit = hit;
     }
     if (best > 1e8f) {
         // Open ground: chalk it on the floor in front of the torch, facing the run's start.
@@ -746,15 +748,15 @@ static void FindWall(PlayState* play, const Vec3f& at) {
         sWall.centre = { at.x + sWall.normal.x * 40.0f, at.y + 1.0f, at.z + sWall.normal.z * 40.0f };
         return;
     }
-    // The point of the wall straight behind the torch, and the drawing beside it so the
-    // torch doesn't stand in front of it, where the wall goes on far enough.
+    // The point of the wall's plane straight behind the torch, and the drawing beside it
+    // so the torch doesn't stand in front of it, where the wall goes on far enough.
     Vec3f base = { at.x - n.x * front, height, at.z - n.z * front };
     Vec3f along = { n.z, 0.0f, -n.x };
-    Vec3f place = base;
+    Vec3f place = { wallHit.x, height, wallHit.z }; // failing that, where the ray met it
     // The further out the torch stands, the further aside the drawing goes to clear it.
     float aside = 48.0f + std::max(front, 0.0f);
     // First where the wall runs flat under the whole drawing, else where there is wall
-    // facing the same way behind its middle (a tree trunk), else straight behind the torch.
+    // facing the same way behind its middle (a tree trunk).
     float depth = 0.0f; // a curved wall: the chosen spot's surface, out of the plane through base
     bool curved = false;
     bool placed = false;
