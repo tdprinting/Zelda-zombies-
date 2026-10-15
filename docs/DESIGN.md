@@ -380,10 +380,15 @@ health off the hearts stay. Text uses OoT's message font, read from `oot.o2r` li
 OoT graphic.
 
 Black Ops' own HUD images are used when the player has converted them from their
-install: `bomap hud common_zombie.ff --main <Black Ops>/main --out <SoH>/zombies/hud`
+install: `bomap hud common_zombie.ff zombie_cod5_prototype.ff --main <Black Ops>/main --out <SoH>/zombies/hud`
 writes the chalk marks, points bar, perk and power-up icons, the low health overlay and
 the d-pad ring as PNGs named after the Black Ops material. Any that are missing are drawn
 by the HUD's own code instead, so it never needs them.
+
+It also writes each gun's Black Ops HUD icon as `icon_<weapon>.png`, and the HUD draws
+the icon of the gun in hand left of its ammo count (the timed power-ups move left to keep
+clear of it). Black Ops has no icon for the Ray Gun or the Olympia; `bomap` draws those
+from the gun's world model instead. With no icon the HUD shows the name and ammo only.
 
 Split screen: each player gets the whole HUD in their half, scaled down, with their own
 points, perks, buttons (player 2's sword and bombs), gun and ammo, vignette and prompts.
@@ -668,7 +673,7 @@ Code layout:
      `zombies/models/` (zombie, guns and viewmodels, Mystery Box, bear,
      barricade boards), and `bomap gamefx` writes `.zzfx` effects there.
      `zombies/models/manifest.txt` names which file plays each role.
-   - `bomap hud` writes the zombies HUD images as PNGs into `zombies/hud/`.
+   - `bomap hud` writes the zombies HUD images and gun icons as PNGs into `zombies/hud/`.
    - `bomap gamesound` writes the sounds as WAV files and their manifest into
      `zombies/sound/` ([Sounds](#sounds)).
 

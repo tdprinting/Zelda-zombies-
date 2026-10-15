@@ -351,13 +351,12 @@ static int HudCommand(int argc, char** argv) {
         return 2;
     }
     std::vector<std::string> written;
+    std::vector<Zone> loaded;
+    loaded.reserve(zones.size());
     for (const std::string& path : zones) {
-        Zone zone = ReadFastfile(path);
-        HudImageResult r = ExportHudImages(zone, mainDir, outDir, written);
+        loaded.push_back(ReadFastfile(path));
+        HudImageResult r = ExportHudImages(loaded.back(), mainDir, outDir, written);
         written.insert(written.end(), r.written.begin(), r.written.end());
-    }
-    for (const std::string& m : written) {
-        printf("wrote %s/%s.png\n", outDir.c_str(), m.c_str());
     }
     int missing = 0;
     for (const std::string& m : HudMaterials()) {
@@ -365,6 +364,20 @@ static int HudCommand(int argc, char** argv) {
             printf("  not found: %s%s\n", m.c_str(), mainDir.empty() ? " (pass --main <install>/main)" : "");
             missing++;
         }
+    }
+    // The gun icons, from every zone at once: a gun's icon and model can be in different ones.
+    std::vector<const Zone*> zonePtrs;
+    for (const Zone& z : loaded) {
+        zonePtrs.push_back(&z);
+    }
+    HudImageResult icons = ExportWeaponIcons(zonePtrs, mainDir, outDir);
+    written.insert(written.end(), icons.written.begin(), icons.written.end());
+    for (const std::string& m : icons.missing) {
+        printf("  not found: %s (the HUD shows the gun's name only)\n", m.c_str());
+        missing++;
+    }
+    for (const std::string& m : written) {
+        printf("wrote %s/%s.png\n", outDir.c_str(), m.c_str());
     }
     printf("%zu HUD images written, %d not found (the game draws its own for those)\n", written.size(), missing);
     return 0;

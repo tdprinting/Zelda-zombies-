@@ -15,7 +15,9 @@
 // install with `bomap hud` (tools/bomap): PNGs in zombies/hud/, named after the Black Ops
 // material (hud_chalk_1, scorebar_zom_1, specialty_juggernaut_zombies, overlay_low_health,
 // ...). Each one that's missing is drawn by the code below instead, so the HUD works
-// without them. Nothing from either game is in this file.
+// without them. The gun in hand shows its Black Ops icon beside the ammo count when
+// `bomap hud` wrote one (zombies/hud/icon_<weapon>.png, by the gun table's boName).
+// Nothing from either game is in this file.
 //
 // Split screen: each player gets the same HUD in their half, scaled down.
 
@@ -154,6 +156,18 @@ void Image(Gfx*& g, const Tex& t, float x, float y, float w, float h, Color c) {
     Quad(g, x, y, w, h, t.w, t.h, c);
 }
 
+// An image larger than one load (4096 texels), drawn as bands of whole rows.
+void ImageBands(Gfx*& g, const Tex& t, float x, float y, float w, float h, Color c) {
+    int rows = std::max(1, 4096 / std::max(t.w, 1));
+    for (int top = 0; top < t.h; top += rows) {
+        int n = std::min(rows, t.h - top);
+        Load(g, t.px.data() + static_cast<size_t>(top) * t.w * 4, Fmt::Rgba32, t.w, n);
+        float y0 = y + h * static_cast<float>(top) / static_cast<float>(t.h);
+        float y1 = y + h * static_cast<float>(top + n) / static_cast<float>(t.h);
+        Quad(g, x, y0, w, y1 - y0, t.w, n, c);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Textures drawn by code: our own simple shapes, made once.
 
@@ -271,10 +285,11 @@ const char* const kBoImageNames[BO_IMAGE_COUNT] = {
 };
 
 Tex sBoImages[BO_IMAGE_COUNT];
+Tex sGunIcons[static_cast<int>(GunId::Count)];
 
-// The renderer loads a texture in one block: keep it to 4096 texels by halving.
-void Shrink(Tex& t) {
-    while (t.w * t.h > 4096 && t.w > 1 && t.h > 1) {
+// Halves an image until it has at most `maxTexels`.
+void Shrink(Tex& t, int maxTexels = 4096) {
+    while (t.w * t.h > maxTexels && t.w > 1 && t.h > 1) {
         int w = t.w / 2;
         int h = t.h / 2;
         std::vector<u8> px(static_cast<size_t>(w) * h * 4);
@@ -297,28 +312,45 @@ void Shrink(Tex& t) {
     }
 }
 
+// Reads a PNG into `out` unless it already holds one (it's on the GPU under this
+// address then, and is never replaced).
+void LoadPng(const std::string& path, Tex& out, int maxTexels) {
+    if (out.Ok()) {
+        return;
+    }
+    int w = 0, h = 0, n = 0;
+    stbi_uc* data = stbi_load(path.c_str(), &w, &h, &n, 4);
+    if (data == nullptr) {
+        return;
+    }
+    if (w > 0 && h > 0 && w <= 2048 && h <= 2048) {
+        Tex t;
+        t.w = w;
+        t.h = h;
+        t.px.assign(data, data + static_cast<size_t>(w) * h * 4);
+        Shrink(t, maxTexels);
+        out = std::move(t);
+    }
+    stbi_image_free(data);
+}
+
 void LoadBoImages() {
     std::string dir = Ship::Context::GetPathRelativeToAppDirectory("zombies/hud");
     for (int i = 0; i < BO_IMAGE_COUNT; i++) {
-        if (sBoImages[i].Ok()) {
-            continue; // already on the GPU under this address: never replaced
-        }
-        std::string path = dir + "/" + kBoImageNames[i] + ".png";
-        int w = 0, h = 0, n = 0;
-        stbi_uc* data = stbi_load(path.c_str(), &w, &h, &n, 4);
-        if (data == nullptr) {
-            continue;
-        }
-        if (w > 0 && h > 0 && w <= 2048 && h <= 2048) {
-            Tex t;
-            t.w = w;
-            t.h = h;
-            t.px.assign(data, data + static_cast<size_t>(w) * h * 4);
-            Shrink(t);
-            sBoImages[i] = std::move(t);
-        }
-        stbi_image_free(data);
+        LoadPng(dir + "/" + kBoImageNames[i] + ".png", sBoImages[i], 4096);
     }
+    // Gun icons are drawn in bands (ImageBands), so they keep Black Ops' 128x64.
+    for (int i = 1; i < static_cast<int>(GunId::Count); i++) {
+        const char* boName = GunInfo(static_cast<GunId>(i)).boName;
+        if (boName != nullptr && boName[0] != '\0') {
+            LoadPng(dir + "/icon_" + boName + ".png", sGunIcons[i], 128 * 64);
+        }
+    }
+}
+
+const Tex* GunIcon(GunId id) {
+    int i = static_cast<int>(id);
+    return i > 0 && i < static_cast<int>(GunId::Count) && sGunIcons[i].Ok() ? &sGunIcons[i] : nullptr;
 }
 
 const Tex* Bo(int image) {
@@ -595,6 +627,7 @@ struct PlayerView {
     std::string status;  // DOWN / BLED OUT
     std::string prompt;
     bool gun = false;
+    GunId gunId = GunId::None;
     std::string gunName, gunAmmo, gunHint;
     bool crosshair = false;
     float magic = -1.0f; // 0-1, or -1 with no magic meter
@@ -771,26 +804,44 @@ bool ParseAmmo(const std::string& text, int* clip, int* reserve) {
     return true;
 }
 
-// The gun's name and "clip / reserve", left of the dial as in Black Ops.
-void Gun(Gfx*& g, const Region& r, const PlayerView& v) {
+// The gun's name and "clip / reserve", left of the dial as in Black Ops, with the gun's
+// Black Ops icon left of the ammo count when it was imported. Returns the left edge of
+// the ammo row, which the power-ups keep clear of.
+float Gun(Gfx*& g, const Region& r, const PlayerView& v) {
     float right = r.Right(80.0f);
     float y = r.Up(45.0f);
+    float rowLeft = right;
     if (v.gun) {
         TextAt(g, v.gunName, right, y, r.S(13.0f), Color{ 235, 235, 235, 255 }, Align::Right);
         int clip = 0, reserve = 0;
         float h = r.S(14.0f);
+        float ammoLeft = right;
         if (ParseAmmo(v.gunAmmo, &clip, &reserve)) {
             std::string reserveText = " / " + std::to_string(reserve);
             float rh = r.S(11.0f);
             float rw = NumberWidth(reserveText, rh);
             std::string clipText = std::to_string(clip);
             Color clipColor = clip == 0 ? Color{ 235, 60, 50, 255 } : Color{ 255, 255, 255, 255 };
-            Number(g, clipText, right - rw - NumberWidth(clipText, h), r.Up(34.0f), h, clipColor);
+            ammoLeft = right - rw - NumberWidth(clipText, h);
+            Number(g, clipText, ammoLeft, r.Up(34.0f), h, clipColor);
             Number(g, reserveText, right - rw, r.Up(34.0f) + (h - rh), rh, Color{ 210, 210, 210, 255 });
         } else {
+            ammoLeft = right - TextWidth(v.gunAmmo, r.S(14.0f));
             TextAt(g, v.gunAmmo, right, r.Up(34.0f), r.S(14.0f), Color{ 255, 255, 255, 255 }, Align::Right);
         }
+        if (const Tex* icon = GunIcon(v.gunId)) {
+            // Black Ops' icons are 2:1 (a pistol's 1:1, a long rifle's 4:1): the same
+            // scale for all, so a rifle reads longer than a pistol.
+            float scale = r.S(36.0f) / 128.0f;
+            float iw = static_cast<float>(icon->w) * scale;
+            float ih = static_cast<float>(icon->h) * scale;
+            float midY = r.Up(34.0f) + h * 0.5f;
+            ImageBands(g, *icon, ammoLeft - r.S(4.0f) - iw, midY - ih * 0.5f, iw, ih, Color{ 255, 255, 255, 235 });
+            ammoLeft -= r.S(4.0f) + iw;
+        }
+        rowLeft = ammoLeft;
     }
+    return rowLeft;
 }
 
 // OoT's magic as a thin green bar under the points banner, when Link has magic.
@@ -819,7 +870,8 @@ void Crosshair(Gfx*& g, const Region& r) {
 }
 
 // Timed power-ups along the bottom centre, blinking in their last seconds.
-void PowerUps(Gfx*& g, const Region& r, int frame) {
+// Centred along the bottom, moved left when the gun's ammo row would cover them.
+void PowerUps(Gfx*& g, const Region& r, int frame, float maxRight) {
     const Run& run = GetRun();
     struct Shown {
         int bo;
@@ -856,7 +908,8 @@ void PowerUps(Gfx*& g, const Region& r, int frame) {
     }
     float size = r.S(21.0f);
     float spacing = r.S(26.0f);
-    float x = kCentreX - (static_cast<float>(shown.size()) * spacing - (spacing - size)) / 2.0f;
+    float rowW = static_cast<float>(shown.size()) * spacing - (spacing - size);
+    float x = std::min(kCentreX - rowW / 2.0f, maxRight - r.S(4.0f) - rowW);
     float y = r.Up(29.0f);
     for (const Shown& s : shown) {
         bool blinkOff = s.frames < 100 && (frame / (s.frames < 40 ? 2 : 4)) % 2 == 0;
@@ -894,9 +947,9 @@ void PlayerHud(Gfx*& g, const Region& r, const PlayerView& v, int round, float f
 
     Points(g, r, v.index, run.players[v.index].points);
     Magic(g, r, v);
-    Gun(g, r, v);
+    float gunLeft = Gun(g, r, v);
     Dial(g, r, v);
-    PowerUps(g, r, frame);
+    PowerUps(g, r, frame, gunLeft);
 
     if (v.crosshair) {
         Crosshair(g, r);
@@ -945,6 +998,7 @@ PlayerView LinkView() {
     if (Guns_HudInfo(&name, &ammo, &hint, &crosshair)) {
         size_t bracket = name.find(" [");
         v.gun = true;
+        v.gunId = Guns_Of(v.index).Current().id;
         v.gunName = bracket == std::string::npos ? name : name.substr(0, bracket);
         v.gunAmmo = ammo;
         v.gunHint = hint;
@@ -981,6 +1035,7 @@ PlayerView PartnerView() {
     if (Guns_HudInfoFor(1, &name, &ammo, &hint, &crosshair)) {
         size_t bracket = name.find(" [");
         v.gun = true;
+        v.gunId = Guns_Of(v.index).Current().id;
         v.gunName = bracket == std::string::npos ? name : name.substr(0, bracket);
         v.gunAmmo = ammo;
         v.gunHint = hint;
