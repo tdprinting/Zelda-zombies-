@@ -624,8 +624,8 @@ bool Stations_ChestPlaced() {
 }
 
 static bool HasPerk(int who, Perk perk) {
-    if (perk == PERK_FAIRY_REVIVE && who == 0) {
-        return Inventory_HasSpecificBottle(ITEM_FAIRY);
+    if (perk == PERK_FAIRY_REVIVE && who == 0 && Solo()) {
+        return Inventory_HasSpecificBottle(ITEM_FAIRY); // solo, the perk is the fairy
     }
     return GetRun().players[who].perks[perk];
 }

@@ -69,7 +69,7 @@ static const char* kTips[] = {
     "Hold the buy button at a window to nail the boards back up.",
     "Three Gold Skulltulas hide on every map. Find them all.",
     "Sword kills are worth the most points.",
-    "A bottled fairy is your Quick Revive.",
+    "Solo, a bottled fairy is your Quick Revive.",
     "Press START during a run for the run menu and your items.",
 };
 static constexpr int kTipCount = sizeof(kTips) / sizeof(kTips[0]);

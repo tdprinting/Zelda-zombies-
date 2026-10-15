@@ -481,6 +481,32 @@ static Target TargetFor(Actor* actor, Player* player) {
     return target;
 }
 
+// Solo Fairy Revive is the bottled fairy, however Link got it. When it saves him from
+// dying, that's a down as in Black Ops: points and perks go. Drinking it to heal just
+// uses it up.
+static bool sLinkFell = false;
+
+static void UpdateSoloFairy() {
+    if (sRun.playerCount >= 2) {
+        return;
+    }
+    bool& perk = sRun.players[0].perks[PERK_FAIRY_REVIVE];
+    if (gSaveContext.health <= 0) {
+        sLinkFell = true;
+    }
+    if (Inventory_HasSpecificBottle(ITEM_FAIRY)) {
+        perk = true;
+    } else if (perk) {
+        if (sLinkFell) {
+            LoseOnDown(0);
+        }
+        perk = false;
+    }
+    if (gSaveContext.health > 0) {
+        sLinkFell = false;
+    }
+}
+
 static void OnEnemyKilled(PlayState* play, Player* player, TrackedEnemy& enemy, int who) {
     enemy.killCounted = true;
     enemy.stuckFrames = 0; // now counts the death animation
@@ -858,6 +884,7 @@ static void ForceNight() {
 }
 
 static void StartRun(PlayState* play, Player* player) {
+    sLinkFell = false;
     sRun = Run();
     sRun.phase = Phase::Intro;
     sRun.zombiesOnly = ZombiesOnly();
@@ -1070,10 +1097,7 @@ static void OnPlayerUpdate() {
     Coop_Update(play, player);
     UpdateEnemies(play, player);
     UpdateDrops(play, player);
-    if (sRun.playerCount < 2 && sRun.players[0].perks[PERK_FAIRY_REVIVE] && !Inventory_HasSpecificBottle(ITEM_FAIRY)) {
-        // The fairy was used: a self-revive is still a down, so the perks go with it.
-        LoseOnDown(0);
-    }
+    UpdateSoloFairy();
     Stations_Update(play, player);
     Arena_Update(play, player);
     Barricades_Update(play, player);

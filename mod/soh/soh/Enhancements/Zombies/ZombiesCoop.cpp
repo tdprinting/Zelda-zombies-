@@ -11,7 +11,7 @@
 // the bottom half.
 //
 // Downs work like Black Ops co-op: a player who loses all their health goes down and
-// bleeds out after 30 seconds unless the other holds the buy button next to them for
+// bleeds out after 45 seconds unless the other holds the buy button next to them for
 // 3 seconds. A player who bleeds out comes back at the start of the next round. The
 // run ends when nobody is left standing.
 
@@ -173,6 +173,17 @@ static void AssignSecondPad(bool coop) {
             sMovedPad = -1;
         }
         return;
+    }
+    // A pad connecting or dropping out makes the engine shut every pad out of port 2 again.
+    // The pad already moved keeps its place if it's still here.
+    if (sMovedPad >= 0 && pads.contains(sMovedPad)) {
+        devices->IgnoreInstanceIdForPort(0, sMovedPad);
+        devices->UnignoreInstanceIdForPort(1, sMovedPad);
+        return;
+    }
+    if (sMovedPad >= 0) {
+        devices->UnignoreInstanceIdForPort(0, sMovedPad); // gone; don't leave it shut out if it returns
+        sMovedPad = -1;
     }
     if (pads.size() < 2) {
         return;
