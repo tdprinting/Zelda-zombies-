@@ -748,18 +748,57 @@ const ArenaLayout* BoMap_Layout() {
 // OoT sizes collision memory per scene; a whole Black Ops map needs much more. This is
 // BgCheck_Allocate with the map's own budget: up to 64K lookup nodes and a cell grid
 // sized to the map.
+// An upper bound on the static lookup nodes BgCheck_InitializeStaticLookup will use.
+static size_t LookupNodesNeeded(const CollisionHeader* header, const Vec3i& amount) {
+    const s16 lo[3] = { header->minBounds.x, header->minBounds.y, header->minBounds.z };
+    const s16 hi[3] = { header->maxBounds.x, header->maxBounds.y, header->maxBounds.z };
+    const int n[3] = { amount.x, amount.y, amount.z };
+    float len[3];
+    for (int a = 0; a < 3; a++) {
+        len[a] = std::max(static_cast<float>(hi[a] - lo[a]) / static_cast<float>(n[a]), 1.0f) + 1.0f;
+    }
+    size_t total = 0;
+    for (int i = 0; i < header->numPolygons; i++) {
+        const CollisionPoly* poly = &header->polyList[i];
+        const Vec3s* v[3] = { &header->vtxList[COLPOLY_VTX_A(poly)], &header->vtxList[COLPOLY_VTX_B(poly)],
+                              &header->vtxList[poly->vIC] };
+        size_t count = 1;
+        for (int a = 0; a < 3; a++) {
+            float mn = 32767.0f, mx = -32768.0f;
+            for (const Vec3s* p : v) {
+                float c = static_cast<float>(a == 0 ? p->x : a == 1 ? p->y : p->z);
+                mn = std::min(mn, c);
+                mx = std::max(mx, c);
+            }
+            int c0 = std::clamp(static_cast<int>((mn - BGCHECK_SUBDIV_OVERLAP - lo[a]) / len[a]), 0, n[a] - 1);
+            int c1 = std::clamp(static_cast<int>((mx + BGCHECK_SUBDIV_OVERLAP - lo[a]) / len[a]), 0, n[a] - 1);
+            count *= static_cast<size_t>(c1 - c0 + 1);
+        }
+        total += count;
+    }
+    return total;
+}
+
 static void AllocateCollision(PlayState* play, CollisionHeader* header) {
     CollisionContext* colCtx = &play->colCtx;
     colCtx->colHeader = header;
     colCtx->dyna.polyNodesMax = 1000;
     colCtx->dyna.polyListMax = 1024;
     colCtx->dyna.vtxListMax = 1024;
-    auto cells = [](s16 lo, s16 hi, int minCells, int maxCells) {
-        return std::clamp(static_cast<int>((hi - lo) / kCellSize) + 1, minCells, maxCells);
-    };
-    colCtx->subdivAmount.x = cells(header->minBounds.x, header->maxBounds.x, 4, 64);
-    colCtx->subdivAmount.y = cells(header->minBounds.y, header->maxBounds.y, 2, 16);
-    colCtx->subdivAmount.z = cells(header->minBounds.z, header->maxBounds.z, 4, 64);
+    // Each polygon takes a lookup node in every cell its box (plus OoT's 50 unit overlap)
+    // reaches. Cells start at kCellSize and grow until the worst case fits the u16 node ids.
+    float cellSize = kCellSize;
+    for (int tries = 0; tries < 32; tries++, cellSize *= 1.25f) {
+        auto cells = [&](s16 lo, s16 hi, int minCells, int maxCells) {
+            return std::clamp(static_cast<int>(static_cast<float>(hi - lo) / cellSize) + 1, minCells, maxCells);
+        };
+        colCtx->subdivAmount.x = cells(header->minBounds.x, header->maxBounds.x, 4, 64);
+        colCtx->subdivAmount.y = cells(header->minBounds.y, header->maxBounds.y, 2, 16);
+        colCtx->subdivAmount.z = cells(header->minBounds.z, header->maxBounds.z, 4, 64);
+        if (LookupNodesNeeded(header, colCtx->subdivAmount) <= kMaxNodes) {
+            break;
+        }
+    }
     size_t lookupSize =
         colCtx->subdivAmount.x * sizeof(StaticLookup) * colCtx->subdivAmount.y * colCtx->subdivAmount.z;
     colCtx->lookupTbl = static_cast<StaticLookup*>(THA_AllocEndAlign(&play->state.tha, lookupSize, ~1));
