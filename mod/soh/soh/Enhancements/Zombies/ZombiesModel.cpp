@@ -208,10 +208,16 @@ struct ZModel {
 };
 
 struct AnimBone {
-    int modelBone = -1; // resolved per model on use
     std::string name;
     std::vector<Quat> rot;
     std::vector<Vec3f> pos;
+};
+
+// Which animation bone drives each of a model's bones (-1: none, the bind pose), matched
+// by name once per model and animation pair rather than on every pose.
+struct AnimBinding {
+    const ZModel* model = nullptr;
+    std::vector<int> animBone;
 };
 
 struct ZAnim {
@@ -220,6 +226,7 @@ struct ZAnim {
     bool looping = false;
     std::vector<AnimBone> bones;
     std::vector<std::pair<u32, std::string>> notes;
+    std::vector<AnimBinding> bindings; // a few models at most
 };
 
 static std::string ModelDir() {
@@ -391,7 +398,7 @@ ZAnim* Anim_Get(const std::string& name) {
 }
 
 float Anim_Length(const ZAnim* anim) {
-    return anim != nullptr ? anim->frameCount / anim->framerate : 0.0f;
+    return anim != nullptr ? static_cast<float>(anim->frameCount) / anim->framerate : 0.0f;
 }
 
 bool Anim_Looping(const ZAnim* anim) {
@@ -403,7 +410,7 @@ bool Anim_NoteBetween(const ZAnim* anim, const char* note, float fromSec, float 
         return false;
     }
     for (const auto& n : anim->notes) {
-        float t = n.first / anim->framerate;
+        float t = static_cast<float>(n.first) / anim->framerate;
         if (t > fromSec && t <= toSec && n.second == note) {
             return true;
         }
@@ -418,11 +425,38 @@ float Model_Height(const ZModel* model) {
 // ---------------------------------------------------------------------------
 // Posing
 
-static void SampleLocal(const ZAnim* anim, const ModelBone& bone, float sec, Xform* out) {
-    *out = bone.bind;
-    if (anim == nullptr) {
-        return;
+static const std::vector<int>& BindingFor(const ZAnim* anim, const ZModel* model) {
+    ZAnim* a = const_cast<ZAnim*>(anim); // the cache only: the animation itself is unchanged
+    for (const AnimBinding& b : a->bindings) {
+        if (b.model == model) {
+            return b.animBone;
+        }
     }
+    AnimBinding binding;
+    binding.model = model;
+    binding.animBone.assign(model->bones.size(), -1);
+    std::map<std::string, int> byName;
+    for (size_t i = 0; i < anim->bones.size(); i++) {
+        byName.emplace(anim->bones[i].name, static_cast<int>(i)); // the first of a name, as before
+    }
+    for (size_t i = 0; i < model->bones.size(); i++) {
+        auto it = byName.find(model->bones[i].name);
+        if (it != byName.end()) {
+            binding.animBone[i] = it->second;
+        }
+    }
+    a->bindings.push_back(std::move(binding));
+    return a->bindings.back().animBone;
+}
+
+// Where an animation is at a time: the two frames either side and how far between.
+struct AnimFrame {
+    u32 f0 = 0, f1 = 0;
+    float t = 0.0f;
+};
+
+static AnimFrame FrameAt(const ZAnim* anim, float sec) {
+    AnimFrame out;
     float frame = sec * anim->framerate;
     float last = static_cast<float>(anim->frameCount - 1);
     if (anim->looping && anim->frameCount > 1) {
@@ -433,21 +467,28 @@ static void SampleLocal(const ZAnim* anim, const ModelBone& bone, float sec, Xfo
     } else {
         frame = std::clamp(frame, 0.0f, last);
     }
-    u32 f0 = static_cast<u32>(frame);
-    u32 f1 = anim->looping ? (f0 + 1) % anim->frameCount : std::min(f0 + 1, anim->frameCount - 1);
-    float t = frame - static_cast<float>(f0);
-    for (const AnimBone& b : anim->bones) {
-        if (b.name != bone.name) {
-            continue;
-        }
-        if (!b.rot.empty()) {
-            out->rot = Nlerp(b.rot[f0], b.rot[f1], t);
-        }
-        if (!b.pos.empty()) {
-            out->pos = { b.pos[f0].x + (b.pos[f1].x - b.pos[f0].x) * t, b.pos[f0].y + (b.pos[f1].y - b.pos[f0].y) * t,
-                         b.pos[f0].z + (b.pos[f1].z - b.pos[f0].z) * t };
-        }
+    out.f0 = std::min(static_cast<u32>(frame), anim->frameCount - 1);
+    out.f1 = anim->looping ? (out.f0 + 1) % anim->frameCount : std::min(out.f0 + 1, anim->frameCount - 1);
+    out.t = frame - static_cast<float>(out.f0);
+    return out;
+}
+
+// One bone's local transform: the animation's where it has the bone, else the bind pose.
+static void SampleLocal(const ZAnim* anim, const ModelBone& bone, int animBone, const AnimFrame& at, Xform* out) {
+    *out = bone.bind;
+    if (anim == nullptr || animBone < 0) {
         return;
+    }
+    const AnimBone& b = anim->bones[animBone];
+    u32 f0 = at.f0;
+    u32 f1 = at.f1;
+    float t = at.t;
+    if (!b.rot.empty()) {
+        out->rot = Nlerp(b.rot[f0], b.rot[f1], t);
+    }
+    if (!b.pos.empty()) {
+        out->pos = { b.pos[f0].x + (b.pos[f1].x - b.pos[f0].x) * t, b.pos[f0].y + (b.pos[f1].y - b.pos[f0].y) * t,
+                     b.pos[f0].z + (b.pos[f1].z - b.pos[f0].z) * t };
     }
 }
 
@@ -456,14 +497,21 @@ void Model_Pose(const ZModel* model, const AnimLayer& a, const AnimLayer& b, flo
     if (model == nullptr) {
         return;
     }
-    std::vector<Xform> world(model->bones.size());
+    static std::vector<Xform> world; // scratch, reused: posing runs on the game thread only
+    world.resize(model->bones.size());
+    bool useB = b.anim != nullptr && blend > 0.0f;
+    static const std::vector<int> kNone;
+    const std::vector<int>& bindA = a.anim != nullptr ? BindingFor(a.anim, model) : kNone;
+    const std::vector<int>& bindB = useB ? BindingFor(b.anim, model) : kNone;
+    AnimFrame atA = a.anim != nullptr ? FrameAt(a.anim, a.time) : AnimFrame();
+    AnimFrame atB = useB ? FrameAt(b.anim, b.time) : AnimFrame();
     for (size_t i = 0; i < model->bones.size(); i++) {
         const ModelBone& bone = model->bones[i];
         Xform la, lb;
-        SampleLocal(a.anim, bone, a.time, &la);
+        SampleLocal(a.anim, bone, a.anim != nullptr ? bindA[i] : -1, atA, &la);
         Xform local = la;
-        if (b.anim != nullptr && blend > 0.0f) {
-            SampleLocal(b.anim, bone, b.time, &lb);
+        if (useB) {
+            SampleLocal(b.anim, bone, bindB[i], atB, &lb);
             local.rot = Nlerp(la.rot, lb.rot, blend);
             local.pos = { la.pos.x + (lb.pos.x - la.pos.x) * blend, la.pos.y + (lb.pos.y - la.pos.y) * blend,
                           la.pos.z + (lb.pos.z - la.pos.z) * blend };
@@ -488,24 +536,47 @@ static int Log2(int n) {
     return l;
 }
 
-static Vtx MakeVtx(const ModelPose& pose, const SkinVert& v) {
+// A bone's skinning transform as a 3x4 matrix: cheaper than a quaternion per vertex.
+struct SkinMtx {
+    float m[3][4];
+};
+
+static void SkinMatrices(const ModelPose& pose, std::vector<SkinMtx>& out) {
+    out.resize(pose.skin.size());
+    for (size_t i = 0; i < pose.skin.size(); i++) {
+        const ModelPose::Skin& s = pose.skin[i];
+        float x = s.qx, y = s.qy, z = s.qz, w = s.qw;
+        float (*m)[4] = out[i].m;
+        m[0][0] = 1.0f - 2.0f * (y * y + z * z);
+        m[0][1] = 2.0f * (x * y - w * z);
+        m[0][2] = 2.0f * (x * z + w * y);
+        m[0][3] = s.tx;
+        m[1][0] = 2.0f * (x * y + w * z);
+        m[1][1] = 1.0f - 2.0f * (x * x + z * z);
+        m[1][2] = 2.0f * (y * z - w * x);
+        m[1][3] = s.ty;
+        m[2][0] = 2.0f * (x * z - w * y);
+        m[2][1] = 2.0f * (y * z + w * x);
+        m[2][2] = 1.0f - 2.0f * (x * x + y * y);
+        m[2][3] = s.tz;
+    }
+}
+
+static Vtx MakeVtx(const std::vector<SkinMtx>& bones, const SkinVert& v) {
     Vec3f p = {};
     Vec3f n = {};
     for (int k = 0; k < 4; k++) {
         float w = v.weight[k];
-        if (w <= 0.0f || v.bone[k] >= pose.skin.size()) {
+        if (w <= 0.0f || v.bone[k] >= bones.size()) {
             continue;
         }
-        const ModelPose::Skin& s = pose.skin[v.bone[k]];
-        Quat q = { s.qx, s.qy, s.qz, s.qw };
-        Vec3f rp = Rotate(q, v.pos);
-        Vec3f rn = Rotate(q, v.normal);
-        p.x += (rp.x + s.tx) * w;
-        p.y += (rp.y + s.ty) * w;
-        p.z += (rp.z + s.tz) * w;
-        n.x += rn.x * w;
-        n.y += rn.y * w;
-        n.z += rn.z * w;
+        const float (*m)[4] = bones[v.bone[k]].m;
+        p.x += (m[0][0] * v.pos.x + m[0][1] * v.pos.y + m[0][2] * v.pos.z + m[0][3]) * w;
+        p.y += (m[1][0] * v.pos.x + m[1][1] * v.pos.y + m[1][2] * v.pos.z + m[1][3]) * w;
+        p.z += (m[2][0] * v.pos.x + m[2][1] * v.pos.y + m[2][2] * v.pos.z + m[2][3]) * w;
+        n.x += (m[0][0] * v.normal.x + m[0][1] * v.normal.y + m[0][2] * v.normal.z) * w;
+        n.y += (m[1][0] * v.normal.x + m[1][1] * v.normal.y + m[1][2] * v.normal.z) * w;
+        n.z += (m[2][0] * v.normal.x + m[2][1] * v.normal.y + m[2][2] * v.normal.z) * w;
     }
     float nl = sqrtf(n.x * n.x + n.y * n.y + n.z * n.z);
     if (nl > 1e-5f) {
@@ -535,6 +606,11 @@ static void BuildDl(const ZModel* model, const ModelPose& pose, u8 alpha, std::v
         total += s.indices.size();
     }
     verts.reserve(total); // pointers into it go into the display list: no reallocation from here
+    // Each vertex is skinned once per surface; the triangles then copy it (they each own
+    // their three corners, so a shared vertex would otherwise be skinned for every one).
+    static std::vector<SkinMtx> bones;
+    static std::vector<Vtx> skinned;
+    SkinMatrices(pose, bones);
 
     for (const ModelSurface& s : model->surfaces) {
         const ModelMaterial& mat = model->materials[s.material];
@@ -567,19 +643,24 @@ static void BuildDl(const ZModel* model, const ModelPose& pose, u8 alpha, std::v
         }
         int tw = image != nullptr ? image->w : 32;
         int th = image != nullptr ? image->h : 32;
+        skinned.resize(s.verts.size());
+        for (size_t k = 0; k < s.verts.size(); k++) {
+            skinned[k] = MakeVtx(bones, s.verts[k]);
+        }
         // 30 vertices a load: ten triangles that each own their three.
         for (size_t t = 0; t + 2 < s.indices.size(); t += 30) {
             size_t n = std::min<size_t>(30, s.indices.size() - t) / 3 * 3;
             size_t base = verts.size();
             for (size_t k = 0; k < n; k += 3) {
-                const SkinVert* tri[3] = { &s.verts[s.indices[t + k]], &s.verts[s.indices[t + k + 1]],
-                                           &s.verts[s.indices[t + k + 2]] };
+                const u16 idx[3] = { s.indices[t + k], s.indices[t + k + 1], s.indices[t + k + 2] };
+                const SkinVert* tri[3] = { &s.verts[idx[0]], &s.verts[idx[1]], &s.verts[idx[2]] };
                 float offU = std::floor(std::min({ tri[0]->uv[0], tri[1]->uv[0], tri[2]->uv[0] }));
                 float offV = std::floor(std::min({ tri[0]->uv[1], tri[1]->uv[1], tri[2]->uv[1] }));
-                for (const SkinVert* sv : tri) {
-                    Vtx v = MakeVtx(pose, *sv);
-                    v.n.tc[0] = static_cast<s16>(std::clamp((sv->uv[0] - offU) * tw * 32.0f, -32768.0f, 32767.0f));
-                    v.n.tc[1] = static_cast<s16>(std::clamp((sv->uv[1] - offV) * th * 32.0f, -32768.0f, 32767.0f));
+                for (int c = 0; c < 3; c++) {
+                    const SkinVert* sv = tri[c];
+                    Vtx v = skinned[idx[c]];
+                    v.n.tc[0] = static_cast<s16>(std::clamp((sv->uv[0] - offU) * static_cast<float>(tw) * 32.0f, -32768.0f, 32767.0f));
+                    v.n.tc[1] = static_cast<s16>(std::clamp((sv->uv[1] - offV) * static_cast<float>(th) * 32.0f, -32768.0f, 32767.0f));
                     verts.push_back(v);
                 }
             }
@@ -611,10 +692,15 @@ void Model_Draw(PlayState* play, const ZModel* model, const ModelPose& pose, con
     std::vector<Gfx>& dl = buffers->dl[buffers->flip];
     buffers->flip ^= 1;
     BuildDl(model, pose, alpha, verts, dl);
-    bool xlu = alpha < 255;
+    Model_Submit(play, model, dl.data(), pos, yaw, height, alpha);
+}
 
+void Model_Submit(PlayState* play, const ZModel* model, Gfx* dl, const Vec3f& pos, s16 yaw, float height, u8 alpha) {
+    if (model == nullptr || dl == nullptr) {
+        return;
+    }
     float scale = height / (model->height * kVertexScale);
-    ZombiesModel_Submit(play, dl.data(), &pos, yaw, scale, xlu);
+    ZombiesModel_Submit(play, dl, &pos, yaw, scale, alpha < 255);
 }
 
 Gfx* Model_RigidDl(ZModel* model) {

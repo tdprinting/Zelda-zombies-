@@ -54,6 +54,12 @@ struct ModelDrawBuffers {
 void Model_Draw(PlayState* play, const ZModel* model, const ModelPose& pose, const Vec3f& pos, s16 yaw, float height,
                 ModelDrawBuffers* buffers, u8 alpha = 255);
 
+// Model_Draw in two steps, so one skinned result can be drawn in several views (split
+// screen) without skinning it again: Model_PosedDl builds the display list, Model_Submit
+// draws it standing at pos.
+void Model_Submit(PlayState* play, const ZModel* model, Gfx* dl, const Vec3f& pos, s16 yaw, float height,
+                  u8 alpha = 255);
+
 // A model in its bind pose, for rigid things (boards, guns): built once, drawn with the
 // current matrix. Its vertices are in model units times Model_VertexScale().
 Gfx* Model_RigidDl(ZModel* model);

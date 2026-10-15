@@ -109,6 +109,11 @@ struct ZombieState {
     Vec3f lastPos = {};
     ModelPose pose;
     ModelDrawBuffers buffers;
+    // Posed and skinned once per update: split screen draws the zombie twice a frame, and
+    // the second view (or a paused frame) reuses the display list.
+    u32 updates = 0;
+    u32 builtAt = 0;
+    Gfx* dl = nullptr;
 };
 
 struct ZombieActor {
@@ -266,18 +271,24 @@ static void TakeHits(ZombieActor* self, PlayState* play) {
     if (thisx->colChkInfo.damage > 0) {
         Actor_ApplyDamage(thisx);
         Actor_SetColorFilter(thisx, 0x4000, 0xFF, 0, 8);
-        Audio_PlayActorSound2(thisx, thisx->colChkInfo.health > 0 ? NA_SE_EN_STALKID_DAMAGE : NA_SE_EN_STALKID_DEAD);
+        if (thisx->colChkInfo.health > 0) {
+            Audio_PlayActorSound2(thisx, NA_SE_EN_STALKID_DAMAGE); // the death sound plays as it starts dying
+        }
     }
 }
 
 static void ZombieUpdate(Actor* thisx, PlayState* play) {
     ZombieActor* self = reinterpret_cast<ZombieActor*>(thisx);
     ZombieState& z = *self->z;
+    z.updates++;
 
     if (z.state != State::Dying) {
         TakeHits(self, play);
         if (thisx->colChkInfo.health == 0) {
+            // Its own death, however the health ran out (a sword, or a gun's damage set
+            // straight onto it): the death animation plays out before it goes.
             z.state = State::Dying;
+            Audio_PlayActorSound2(thisx, NA_SE_EN_STALKID_DEAD);
             Play(z, z.tier == MoveTier::Crawl ? Role::CrawlDeath : Role::Death);
             thisx->flags &= ~ACTOR_FLAG_ATTENTION_ENABLED;
         }
@@ -351,11 +362,15 @@ static void ZombieDraw(Actor* thisx, PlayState* play) {
     if (model == nullptr) {
         return;
     }
-    AnimLayer cur = { AnimFor(z, z.role), z.time };
-    AnimLayer prev = { AnimFor(z, z.prevRole), z.prevTime };
-    // Blend from the last animation into this one, so changes of pace don't pop.
-    Model_Pose(model, prev, cur, z.blend, &z.pose);
-    Model_Draw(play, model, z.pose, thisx->world.pos, thisx->shape.rot.y, kZombieHeight, &z.buffers);
+    if (z.dl == nullptr || z.builtAt != z.updates) {
+        AnimLayer cur = { AnimFor(z, z.role), z.time };
+        AnimLayer prev = { AnimFor(z, z.prevRole), z.prevTime };
+        // Blend from the last animation into this one, so changes of pace don't pop.
+        Model_Pose(model, prev, cur, z.blend, &z.pose);
+        z.dl = Model_PosedDl(model, z.pose, &z.buffers);
+        z.builtAt = z.updates;
+    }
+    Model_Submit(play, model, z.dl, thisx->world.pos, thisx->shape.rot.y, kZombieHeight);
 }
 
 static void RegisterActor() {
