@@ -558,7 +558,8 @@ static bool PapNeedsLullaby() {
 // ---------------------------------------------------------------------------
 // Perks
 
-static void GiveFairyBottle() {
+// The bottle slot Fairy Revive fills, or -1 if every bottle holds a quest item.
+static int FairyBottleSlot() {
     static constexpr int bottleSlots[] = { SLOT_BOTTLE_1, SLOT_BOTTLE_2, SLOT_BOTTLE_3, SLOT_BOTTLE_4 };
     int target = -1;
     for (int slot : bottleSlots) {
@@ -585,6 +586,11 @@ static void GiveFairyBottle() {
             }
         }
     }
+    return target;
+}
+
+static void GiveFairyBottle() {
+    int target = FairyBottleSlot();
     if (target < 0) {
         return;
     }
@@ -691,6 +697,9 @@ static Offer GetOffer(const Station& station) {
             if (HasPerk(info.perk)) {
                 offer.available = false;
                 offer.unavailableReason = "OWNED";
+            } else if (info.perk == PERK_FAIRY_REVIVE && FairyBottleSlot() < 0) {
+                offer.available = false;
+                offer.unavailableReason = "NO BOTTLE FREE";
             }
             break;
         }
