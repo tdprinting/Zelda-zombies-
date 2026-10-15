@@ -32,6 +32,7 @@
 #include <iterator>
 #include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 extern "C" {
@@ -403,13 +404,31 @@ const ZAnim* RoleAnim(const std::string& role) {
     return anim;
 }
 
+// The lookups below run every frame: each (kind, state) is resolved once, keyed by the
+// state's string literal, so no role name is built after the first time.
+using RoleKey = std::pair<int, const char*>;
+
 // A body role for the gun's family.
 const ZAnim* BodyAnim(PlayerAnimKind k, const char* state) {
-    return RoleAnim(std::string("player_") + Family(k) + "_" + state);
+    static std::map<RoleKey, const ZAnim*> sBody;
+    RoleKey key = { static_cast<int>(k), state };
+    auto it = sBody.find(key);
+    if (it != sBody.end()) {
+        return it->second;
+    }
+    const ZAnim* a = RoleAnim(std::string("player_") + Family(k) + "_" + state);
+    sBody.emplace(key, a);
+    return a;
 }
 
 // A torso role for the gun's kind, else its family's, else the rifle's.
 const ZAnim* TorsoAnim(PlayerAnimKind k, const char* state) {
+    static std::map<RoleKey, const ZAnim*> sTorso;
+    RoleKey key = { static_cast<int>(k), state };
+    auto it = sTorso.find(key);
+    if (it != sTorso.end()) {
+        return it->second;
+    }
     const ZAnim* a = RoleAnim(std::string("player_") + KindName(k) + "_" + state);
     if (a == nullptr) {
         a = RoleAnim(std::string("player_") + Family(k) + "_" + state);
@@ -417,6 +436,7 @@ const ZAnim* TorsoAnim(PlayerAnimKind k, const char* state) {
     if (a == nullptr && k != PlayerAnimKind::Pistol) {
         a = RoleAnim(std::string("player_rifle_") + state);
     }
+    sTorso.emplace(key, a);
     return a;
 }
 
@@ -502,16 +522,18 @@ void PlayerAnim_Update(int who, Player* player, const PlayerAnimGun& gun) {
     float rate = 1.0f;
     if (ps.legs && speed > 0.5f) {
         s16 rel = static_cast<s16>(player->actor.world.rot.y - player->actor.shape.rot.y);
-        const char* dir = "f";
+        static const char* const kWalk[] = { "walk_f", "walk_l", "walk_r", "walk_b" };
+        static const char* const kRun[] = { "run_f", "run_l", "run_r", "run_b" };
+        int dir = 0; // forward
         if (rel > 0x2000 && rel < 0x6000) {
-            dir = "l";
+            dir = 1; // left
         } else if (rel < -0x2000 && rel > -0x6000) {
-            dir = "r";
+            dir = 2; // right
         } else if (rel >= 0x6000 || rel <= -0x6000) {
-            dir = "b";
+            dir = 3; // back
         }
-        const ZAnim* walk = BodyAnim(gun.kind, (std::string("walk_") + dir).c_str());
-        const ZAnim* run = BodyAnim(gun.kind, (std::string("run_") + dir).c_str());
+        const ZAnim* walk = BodyAnim(gun.kind, kWalk[dir]);
+        const ZAnim* run = BodyAnim(gun.kind, kRun[dir]);
         const ZAnim* sprint = BodyAnim(gun.kind, "sprint");
         // Black Ops inches a second to Link's units a frame.
         float toLink = skel->legUnits * 0.01f * kDt;
@@ -519,7 +541,7 @@ void PlayerAnim_Update(int who, Player* player, const PlayerAnimGun& gun) {
         float runSpeed = AnimSpeed(run) * toLink;
         const ZAnim* pick = walk;
         float natural = walkSpeed;
-        if (gun.sprint && sprint != nullptr && *dir == 'f') {
+        if (gun.sprint && sprint != nullptr && dir == 0) {
             pick = sprint;
             natural = AnimSpeed(sprint) * toLink;
         } else if (run != nullptr && (walk == nullptr || speed > (walkSpeed + runSpeed) * 0.5f)) {

@@ -130,10 +130,6 @@ bool DecodeWma(const std::string& ffmpeg, const std::string& tmpDir, const uint8
         std::vector<uint8_t> errText = ReadFileBytes(err);
         std::vector<uint8_t> bytes = ReadFileBytes(out);
         size_t frames = bytes.size() / (2 * std::max<uint32_t>(1, info.channels));
-        if (std::getenv("BOMAP_SOUND_DEBUG") != nullptr) {
-            printf("    rate %u: status %d, %zu of %u frames, %s\n", rate, status, frames, info.frames,
-                   std::string(errText.begin(), errText.end()).c_str());
-        }
         // The last frame of a sound can come up short (the encoder's delay): up to one
         // WMA frame (2048) is padded with silence.
         if (status == 0 && errText.empty() && frames + 2048 >= info.frames) {
@@ -632,7 +628,7 @@ int SoundCommand(int argc, char** argv) {
         manifest << "role " << role << " " << list << "\n";
     }
     std::ofstream(outDir + "/manifest.txt") << manifest.str();
-    printf("wrote %d sound files (%.1f MB) for %d aliases and %zu roles to %s\n", files, totalBytes / 1048576.0,
+    printf("wrote %d sound files (%.1f MB) for %d aliases and %zu roles to %s\n", files, static_cast<double>(totalBytes) / 1048576.0,
            aliasCount, roleLines.size(), outDir.c_str());
     if (failed > 0) {
         printf("%d sounds could not be decoded\n", failed);

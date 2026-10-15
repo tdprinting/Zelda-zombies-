@@ -867,7 +867,7 @@ static Offer GetOffer(const Station& station, int who) {
             break;
         }
         case StationType::MysteryChest:
-            offer.label = PowerUpActive(PowerUp::FireSale) ? "MYSTERY CHEST (FIRE SALE)" : "MYSTERY CHEST";
+            offer.label = PowerUpActive(PowerUp::FireSale) ? "MYSTERY BOX (FIRE SALE)" : "MYSTERY BOX";
             offer.cost = Stations_BoxCost();
             break;
         case StationType::Juggernog:
@@ -926,8 +926,9 @@ static Offer GetOffer(const Station& station, int who) {
         }
         case StationType::FairyFountain:
             offer.label = "FAIRY FOUNTAIN";
-            if (who == 1) {
-                offer.cost = kPartnerFountainCost; // player 2 has no rupees
+            // Player 2 has no rupees, and on a Black Ops map every price is in points.
+            if (who == 1 || (run.layout != nullptr && run.layout->blackOps)) {
+                offer.cost = kPartnerFountainCost;
             } else {
                 offer.rupeeCost = kFountainRupees;
             }

@@ -252,7 +252,7 @@ int Guns_Button() {
     return std::clamp(CVarGetInteger(CVAR_ZOMBIES("GunButton"), 1), 1, 3);
 }
 
-static u16 GunButtonMask() {
+static CONTROLLERBUTTONS_T GunButtonMask() {
     switch (Guns_Button()) {
         case 2:
             return BTN_CDOWN;
@@ -2161,7 +2161,7 @@ static void OnMainStart() {
         player->naviTextId = 0;
     }
     Input& input = play->state.input[0];
-    u16 mask = GunButtonMask();
+    CONTROLLERBUTTONS_T mask = GunButtonMask();
     sGunPressed[0] = CHECK_BTN_ALL(input.press.button, mask);
     sGunHeld[0] = CHECK_BTN_ALL(input.cur.button, mask);
     if (sGuns[0].Current().id != GunId::None) {

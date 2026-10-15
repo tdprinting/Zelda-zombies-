@@ -340,7 +340,7 @@ the ranged 100. The first-person viewmodel is off in split screen.
 
 In the zombies-only game, runs start from the main menu. With Zombies Only off
 and the mode enabled, press **L** anywhere to start a run there. Each station
-is a torch; walk up to one and the HUD shows `L: MYSTERY CHEST [950]`.
+is a torch; walk up to one and the HUD shows `L: MYSTERY BOX [950]`.
 Press **L** to buy, and hold it at a broken window to repair it. During a run
 the mode takes the L press, so buying no longer toggles the minimap. The
 button can be switched to D-pad Down in the settings.
@@ -448,7 +448,7 @@ map's own entities when the run starts (`BuildLayout` in
 
 | Zone (from the map's zone volumes) | Opens with | Windows | Stations |
 | --- | --- | --- | --- |
-| Start room (the player starts) | | 4 | Armory and Fairy Fountain on the two starts farthest apart, Fairy Revive |
+| Start room (the player starts) | | 4 | Armory and Fairy Fountain (500 points here, not rupees) on the two starts farthest apart, Fairy Revive |
 | Help Room (upstairs) | Either staircase's debris, 1000; buying one clears both | 4 | Power, Juggernog, Stamin-Up |
 | Box Room | The door, 1000 | 4 | Mystery Box, Pack-a-Punch, Double Tap |
 
@@ -466,7 +466,7 @@ map's own entities when the run starts (`BuildLayout` in
   grenades (OoT bombs) for 250. Ammo is half the gun's price. On Nacht the
   Armory rack sells only the Zelda items, since the walls sell the guns.
 - **The Mystery Box** stands at the map's box spot. Nacht has only one, so
-  the box never moves (the bear still takes the prize). The Ray Gun is in it.
+  the box never moves and the bear never comes up. The Ray Gun is in it.
 - **Perks and Pack-a-Punch are kept on Nacht**, although Black Ops' Nacht
   had none. They are part of how this mode plays (Fairy Revive, Zelda's
   Lullaby at Pack-a-Punch), and leaving them out would leave Nacht the one
@@ -541,7 +541,7 @@ All under Enhancements > Zombies of Time, stored as
   - three hearts and 0 rupees
 - Each round from 2 onwards adds two bombs, like Black Ops' grenades.
 - Your real save inventory comes back when the run ends.
-- Music: the Shadow Temple plays during rounds and the mini-boss theme during Wolfos rounds. Navi calls out low health. Kill all three hidden Gold Skulltulas to hear the easter-egg song.
+- Music: the Shadow Temple plays during rounds and the mini-boss theme during Wolfos rounds. Kill all three hidden Gold Skulltulas to hear the easter-egg song.
 
 ## How it is built
 
@@ -592,7 +592,7 @@ Code layout:
 | `ZombiesArena.cpp` | Authored layouts (graveyard, Market Ruins, Lon Lon Ranch, Hyrule Field), zones and debris (solid on Black Ops maps) |
 | `ZombiesNav.cpp` | The walk grid the undead follow on a Black Ops map, built from its collision |
 | `ZombiesLobby.cpp` | Main menu, run (pause) menu, results screen, map warps |
-| `ZombiesExtras.cpp` | Navi callouts, low-health warning and other touches |
+| `ZombiesExtras.cpp` | Navi callouts, music and the Gold Skulltula easter egg |
 | `ZombiesBounds.cpp` | Keeps Link off the scene's exits during a run |
 | `ZombiesCoop.cpp` | Split-screen co-op: player 2, second view, downs and revives |
 | `ZombiesGuns.h/.cpp` | Black Ops guns: firing, reloads, the Armory rack and chest guns, Pack-a-Punch, Link's gun poses, the first-person viewmodel, OoT item round scaling, the imported-model seam |

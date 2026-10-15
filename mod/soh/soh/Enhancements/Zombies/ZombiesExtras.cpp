@@ -25,7 +25,6 @@ namespace Zombies {
 
 static constexpr int kSkullCount = 3;
 static constexpr int kPointsPerSkull = 100;
-static constexpr int kLowHealthCooldown = 30 * 20;
 // Gold Skulltula, ground-walking type (1). Its token flag is 0, so it never touches the
 // save file's Skulltula flags, and it is killed before it can drop a token.
 static constexpr s16 kGoldSkulltulaParams = (1 << 13) | (1 << 8);
@@ -38,7 +37,6 @@ struct Skull {
 static std::vector<Skull> sSkulls;
 static int sSkullsFound = 0;
 static bool sSongPlayed = false;
-static int sLowHealthTimer = 0;
 static bool sMusicPlaying = false;
 
 static bool MusicOn() {
@@ -190,7 +188,6 @@ void Extras_OnActorDestroy(Actor* actor) {
 void Extras_OnRunStart(PlayState* play) {
     sSkullsFound = 0;
     sSongPlayed = false;
-    sLowHealthTimer = 0;
     PlaceSkulls(play);
 }
 
@@ -213,13 +210,8 @@ void Extras_OnSceneReload() {
 void Extras_Update(PlayState* play, Player* player) {
     UpdateSkulls(play);
 
-    // Navi's low-health warning, like Black Ops' "you're down" callouts, but before it happens.
-    if (sLowHealthTimer > 0) {
-        sLowHealthTimer--;
-    } else if (gSaveContext.health > 0 && gSaveContext.health <= 0x10 && gSaveContext.healthCapacity >= 0x30) {
-        Navi("LISTEN! YOU NEED HEARTS!", NA_SE_VO_NAVY_CALL);
-        sLowHealthTimer = kLowHealthCooldown;
-    }
+    // No low-health callout: Black Ops health leaves Link on a heart between hits, so
+    // "LISTEN! YOU NEED HEARTS!" would nag through the whole run and over the game over.
     (void)player;
 }
 

@@ -174,7 +174,8 @@ std::shared_ptr<const Pcm> ReadWav(const std::string& path) {
                 pcm->samples[i] = static_cast<int16_t>(Le16(d, body + i * 2));
             }
             pcm->frames = static_cast<uint32_t>(count / static_cast<size_t>(pcm->channels));
-            return pcm->frames > 0 ? pcm : nullptr;
+            // Two frames at least: the mixer interpolates between a frame and the next.
+            return pcm->frames > 1 ? pcm : nullptr;
         }
         at = body + size + (size & 1);
     }
@@ -620,7 +621,8 @@ static void Mix(int16_t* out, uint32_t frames, uint32_t rate) {
                     v.pos = end;
                     break;
                 }
-                v.pos -= end - 1.0;
+                // Wrapped, however far a high pitch stepped past the end.
+                v.pos = std::fmod(v.pos - (end - 1.0), end - 1.0);
             }
             uint32_t i0 = static_cast<uint32_t>(v.pos);
             float t = static_cast<float>(v.pos - static_cast<double>(i0));

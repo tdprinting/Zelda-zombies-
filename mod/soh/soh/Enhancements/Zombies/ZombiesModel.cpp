@@ -346,6 +346,9 @@ static std::unique_ptr<ZAnim> LoadAnim(const std::string& path) {
     auto anim = std::make_unique<ZAnim>();
     anim->framerate = std::max(r.Get<float>(), 1.0f);
     anim->frameCount = std::max<u32>(r.Get<u32>(), 1);
+    if (!(anim->framerate < 10000.0f) || anim->frameCount > (1u << 20)) {
+        return nullptr; // NaN or absurd: not a file the importer wrote
+    }
     anim->looping = r.Get<u8>() != 0;
     u32 nb = r.Count(34);
     anim->bones.resize(nb);
