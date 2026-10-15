@@ -167,6 +167,13 @@ hand-made maps.
 | HK21 | LMG | 130 | ×2 | 125 + 500 | 1.8 | 100 | chest 3 | H115 Oscillator: 200, 150 + 750 |
 | RPK | LMG | 130 | ×2 | 100 + 400 | 1.6 | 90 | chest 3 | R115 Resonator: 200, 125 + 500 |
 | Ray Gun | Launcher | 1000 + 300 splash | | 20 + 160 | 5 | 60 | chest 1 | Porter's X2 Ray Gun: 1500 + 500 splash, 40 + 200 |
+| Kar98k | Rifle | 100 | ×4 | 5 + 50 | 22 | 50 | Nacht wall 200 | Armageddon 98: 600, 8 + 60 |
+| M1A1 Carbine | Rifle | 120 | ×2.5 | 15 + 150 | 2.5 | 40 | Nacht wall 600 | Widdershins RC-1: 160, 30 + 180 |
+| Thompson | SMG | 120 | ×2 | 20 + 200 | 1.6 | 52 | Nacht wall 1200 | Gibs-O-Matic: 200, 40 + 250 |
+| Double-barrel | Shotgun | 80 ×8 | ×1.5 | 2 + 60 | 5 | 60 | Nacht wall 1200 | 24 Bore Long Range: 160 ×8 |
+| Sawed-off | Shotgun | 100 ×8 | ×1.5 | 2 + 60 | 5 | 55 | Nacht wall 1200 | Snuff Box: 200 ×8 |
+| Trench gun | Shotgun | 100 ×8 | ×1.5 | 6 + 60 | 8 | 70 | Nacht wall 1500 | Gut Shot: 200 ×8, 10 + 60 |
+| BAR | LMG | 140 | ×2 | 20 + 180 | 2.6 | 56 | Nacht wall 1800 | The Widow Maker: 260, 30 + 300 |
 
 The Thundergun is Din's Fire (below), so it isn't a gun here. Wall ammo costs half the
 gun's price, 4500 once it's Pack-a-Punched; box guns only refill from Max Ammo, as in
@@ -397,6 +404,57 @@ screen, so the spots can be tuned in game. The debris piles are crates, not
 walls: they mark the way and hold the zone's stations and windows back, but
 Link can walk around them.
 
+### Nacht der Untoten
+
+Once the player has imported Nacht der Untoten from their own Black Ops
+(`tools/bomap`, see [Phases](#phases)), the menu's Nacht entry plays the
+real map: its collision, textured geometry and entities from
+`zombies/nacht.zzmap`. Until then, Play shows the import status and won't
+start it. No spot is written into the code. Everything below comes from the
+map's own entities when the run starts (`BuildLayout` in
+`ZombiesBoMap.cpp`):
+
+| Zone (from the map's zone volumes) | Opens with | Windows | Stations |
+| --- | --- | --- | --- |
+| Start room (the player starts) | | 4 | Armory and Fairy Fountain on the two starts farthest apart, Fairy Revive |
+| Help Room (upstairs) | Either staircase's debris, 1000; buying one clears both | 4 | Power, Juggernog, Stamin-Up |
+| Box Room | The door, 1000 | 4 | Mystery Box, Pack-a-Punch, Double Tap |
+
+- **Windows** sit where the map's barricades are, and face the way the map
+  faces them. Undead come up outside, tear the boards (six, as everywhere),
+  then climb through the opening over the sill, as in Black Ops. The opening
+  has the map's player clip across it, so Link can't leave the building.
+- **Debris and the door** are solid until bought. Each one is fitted to the
+  narrowest crossing around its spot, so it fills the doorway or stair and
+  nothing, Link, player 2 or the undead, gets past it.
+- **Wall buys** are the map's own chalk spots, each selling the gun its
+  entity names, with the gun's chalk outline drawn on the wall. Prices are
+  Black Ops' for Nacht: Kar98k 200, M1A1 Carbine 600, Thompson,
+  double-barrel and sawed-off 1200, trench gun 1500, BAR 1800, and four
+  grenades (OoT bombs) for 250. Ammo is half the gun's price. On Nacht the
+  Armory rack sells only the Zelda items, since the walls sell the guns.
+- **The Mystery Box** stands at the map's box spot. Nacht has only one, so
+  the box never moves (the bear still takes the prize). The Ray Gun is in it.
+- **Perks and Pack-a-Punch are kept on Nacht**, although Black Ops' Nacht
+  had none. They are part of how this mode plays (Fairy Revive, Zelda's
+  Lullaby at Pack-a-Punch), and leaving them out would leave Nacht the one
+  map without them. They stand on the zone volume farthest from the other
+  spots, so they never block a wall buy, a window or the box.
+- **No Wolfos rounds**, as Nacht had no hellhounds. Power-ups are Black
+  Ops' five (Max Ammo, Insta-Kill, Double Points, Nuke, Carpenter). There is
+  no Fire Sale, since the box never moves.
+- **Pathing.** A building needs more than "Horde Pull" walking straight at
+  Link. On Nacht the undead follow a walk grid made from the map's collision
+  (`ZombiesNav.cpp`): 20-unit cells, a node for every floor with room to
+  stand, joined where floors are a step apart and no wall stands between.
+  Several times a second every node gets its walking distance to the nearest
+  player, with closed debris blocking. Each undead heads a few nodes down that
+  slope: across rooms, round corners and up the stairs.
+- **A partial import** still plays. Missing wall buys fall back to the
+  Armory's guns, and with too few usable windows they go around the start
+  point. A station with no spot is placed around Link, and a zone with no
+  debris spot starts open.
+
 ## Your save file
 
 Purchases put real items into the loaded file. The mode snapshots the
@@ -499,7 +557,8 @@ Code layout:
 | `ZombiesMode.h/.cpp` | Run state, round state machine, spawning, tracking, power-ups, save snapshot |
 | `ZombiesStations.cpp` | Station placement, prompts and purchases |
 | `ZombiesBarricades.cpp` | Windows: placement, holding undead outside, tearing, repairs, drawing |
-| `ZombiesArena.cpp` | Authored layouts (graveyard, Market Ruins, Lon Lon Ranch, Hyrule Field), zones and debris |
+| `ZombiesArena.cpp` | Authored layouts (graveyard, Market Ruins, Lon Lon Ranch, Hyrule Field), zones and debris (solid on Black Ops maps) |
+| `ZombiesNav.cpp` | The walk grid the undead follow on a Black Ops map, built from its collision |
 | `ZombiesLobby.cpp` | Main menu, run (pause) menu, results screen, map warps |
 | `ZombiesExtras.cpp` | Navi callouts, low-health warning and other touches |
 | `ZombiesBounds.cpp` | Keeps Link off the scene's exits during a run |

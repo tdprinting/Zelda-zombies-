@@ -374,8 +374,7 @@ void Nav_Update(PlayState* play) {
     }
 }
 
-bool Nav_Steer(PlayState* play, const Vec3f& from, Vec3f* toward, float* pathDist) {
-    (void)play;
+bool Nav_Steer(PlayState* play, const Vec3f& from, Vec3f* toward, float* pathDist, int lookAhead) {
     if (!Nav_Ready()) {
         return false;
     }
@@ -384,9 +383,11 @@ bool Nav_Steer(PlayState* play, const Vec3f& from, Vec3f* toward, float* pathDis
         return false;
     }
     *pathDist = sNav.dist[n] * kCell;
-    // A few nodes down the slope, so the walk is smooth rather than cell by cell.
+    // A few nodes down the slope, so the walk is smooth rather than cell by cell, but never
+    // past one it can't see: a straight line to it would cut a corner into the wall.
     int at = n;
-    for (int step = 0; step < kLookAhead; step++) {
+    lookAhead = std::clamp(lookAhead, 1, kLookAhead);
+    for (int step = 0; step < lookAhead; step++) {
         int best = -1;
         float bestDist = sNav.dist[at];
         const NavNode& node = sNav.nodes[at];
@@ -399,6 +400,17 @@ bool Nav_Steer(PlayState* play, const Vec3f& from, Vec3f* toward, float* pathDis
         }
         if (best < 0) {
             break;
+        }
+        if (step > 0 && play != nullptr) {
+            const NavNode& next = sNav.nodes[best];
+            Vec3f a = { from.x, std::max(from.y, next.y) + kWallProbe, from.z };
+            Vec3f b = { NodeX(next), a.y, NodeZ(next) };
+            Vec3f hit;
+            CollisionPoly* poly = nullptr;
+            s32 bgId = 0;
+            if (BgCheck_EntityLineTest1(&play->colCtx, &a, &b, &hit, &poly, true, false, false, true, &bgId)) {
+                break;
+            }
         }
         at = best;
     }

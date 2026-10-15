@@ -797,7 +797,8 @@ static void UpdateEnemies(PlayState* play, Player* player) {
             // Close by on the same floor they go straight in.
             Vec3f navTo;
             float navDist;
-            if (Nav_Ready() && Nav_Steer(play, actor->world.pos, &navTo, &navDist)) {
+            // Caught on something: one node at a time round it.
+            if (Nav_Ready() && Nav_Steer(play, actor->world.pos, &navTo, &navDist, enemy.stuckFrames > 20 ? 1 : 4)) {
                 bool sameFloor = fabsf(target.pos.y - actor->world.pos.y) < 45.0f;
                 enemy.cameIn = -1;
                 if (navDist > 80.0f || !sameFloor) {

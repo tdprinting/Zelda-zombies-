@@ -337,7 +337,7 @@ void Nav_Stats(int* nodes, int* links, int* reached);
 void Nav_Update(PlayState* play);
 // Where an undead at from should head next to reach the nearest player, and how far it
 // has to walk. False when from isn't on the grid or nothing leads there.
-bool Nav_Steer(PlayState* play, const Vec3f& from, Vec3f* toward, float* pathDist);
+bool Nav_Steer(PlayState* play, const Vec3f& from, Vec3f* toward, float* pathDist, int lookAhead = 4);
 void Arena_Start(PlayState* play);
 void Arena_Update(PlayState* play, Player* player);
 void Arena_DrawDebris(PlayState* play);
