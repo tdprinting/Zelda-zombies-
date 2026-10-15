@@ -280,13 +280,25 @@ void Barricades_Update(PlayState* play, Player* player) {
         }
     }
     for (int b = 0; b < count; b++) {
-        Window* nearest = repairing[b];
-        const Buyer& buyer = buyers[b];
-        if (nearest == nullptr || (b == 1 && nearest == repairing[0])) {
-            continue; // both at one window: it goes up at one player's pace
+        if (repairing[b] != nullptr) {
+            *buyers[b].prompt =
+                std::string("HOLD ") + (buyers[b].index == 0 ? BuyButtonName() : "A") + ": REPAIR BARRIER";
         }
-        *buyer.prompt = std::string("HOLD ") + (buyer.index == 0 ? BuyButtonName() : "A") + ": REPAIR BARRIER";
-        if (!buyer.held || buyer.busy) {
+    }
+    for (int b = 0; b < count; b++) {
+        Window* nearest = repairing[b];
+        if (nearest == nullptr || (b == 1 && nearest == repairing[0])) {
+            continue; // each window once: both players at one window put it up at one pace
+        }
+        // Whoever at this window is holding the button does the repair.
+        const Buyer* repairer = nullptr;
+        for (int other = b; other < count; other++) {
+            if (repairing[other] == nearest && buyers[other].held && !buyers[other].busy) {
+                repairer = &buyers[other];
+                break;
+            }
+        }
+        if (repairer == nullptr) {
             nearest->repairTimer = 0;
             continue;
         }
@@ -296,7 +308,7 @@ void Barricades_Update(PlayState* play, Player* player) {
             int points = RepairPoints(run.repairPointsThisRound);
             if (points > 0) {
                 run.repairPointsThisRound += points;
-                AwardPoints(buyer.index, points);
+                AwardPoints(repairer->index, points);
             }
             SoundSource_PlaySfxAtFixedWorldPos(play, &nearest->pos, 20, NA_SE_EV_WOOD_HIT);
         }

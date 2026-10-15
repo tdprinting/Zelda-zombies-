@@ -48,15 +48,23 @@ static Station sStations[static_cast<int>(StationType::Count)];
 static int sChestUses = 0; // prizes since the chest last moved
 static bool sChestMoved = false;
 static bool sPapSword = false;
+static int sFairyBuys = 0; // solo Fairy Revive sells out after three, as Quick Revive does
+static constexpr int kSoloFairyBuys = 3;
+
+static bool Solo() {
+    return GetRun().playerCount < 2;
+}
 
 static bool NeedsPower(StationType type) {
     switch (type) {
         case StationType::Juggernog:
-        case StationType::FairyRevive:
         case StationType::DoubleTap:
         case StationType::StaminUp:
         case StationType::PackAPunch:
             return true;
+        case StationType::FairyRevive:
+            return !Solo(); // Quick Revive sells without power in solo
+
         default:
             return false;
     }
@@ -72,7 +80,7 @@ static s16 TorchParams(StationType type) {
         case StationType::Power:
             return GetRun().powerOn ? (kTorchWooden | kTorchLit) : kTorchWooden;
         default:
-            return GetRun().powerOn ? (kTorchStone | kTorchLit) : kTorchStone;
+            return (GetRun().powerOn || !NeedsPower(type)) ? (kTorchStone | kTorchLit) : kTorchStone;
     }
 }
 
@@ -223,6 +231,7 @@ void Stations_NewRun() {
     sChestUses = 0;
     sChestMoved = false;
     sPapSword = false;
+    sFairyBuys = 0;
 }
 
 static void MoveChest(PlayState* play) {
@@ -632,7 +641,8 @@ static PerkInfo PerkFor(StationType type) {
         case StationType::Juggernog:
             return { PERK_JUGGERNOG, "JUGGERNOG MILK", 2500 };
         case StationType::FairyRevive:
-            return { PERK_FAIRY_REVIVE, "FAIRY REVIVE", 500 };
+            // Solo it's a self-revive for 500; in co-op it revives others faster, for 1500.
+            return { PERK_FAIRY_REVIVE, "FAIRY REVIVE", Solo() ? 500 : 1500 };
         case StationType::DoubleTap:
             return { PERK_DOUBLE_TAP, "DOUBLE TAP", 2000 };
         case StationType::StaminUp:
@@ -647,8 +657,8 @@ static void ApplyPerk(int who, Perk perk) {
     PlayerState& ps = GetRun().players[who];
     ps.perks[perk] = true;
     if (who == 1) {
-        // Player 2's perks live in their own state: Juggernog adds two hearts, Fairy Revive
-        // is a self-revive, the rest are read where they act.
+        // Player 2's perks live in their own state: Juggernog adds two hearts, the rest are
+        // read where they act.
         Partner& partner = GetRun().partner;
         if (perk == PERK_JUGGERNOG) {
             partner.healthCapacity = kPartnerJuggernogHealth;
@@ -663,7 +673,10 @@ static void ApplyPerk(int who, Perk perk) {
             gSaveContext.health = gSaveContext.healthCapacity;
             break;
         case PERK_FAIRY_REVIVE:
-            GiveFairyBottle();
+            if (Solo()) {
+                GiveFairyBottle(); // the fairy is the self-revive
+                sFairyBuys++;
+            }
             break;
         default:
             break;
@@ -772,7 +785,10 @@ static Offer GetOffer(const Station& station, int who) {
             if (HasPerk(who, info.perk)) {
                 offer.available = false;
                 offer.unavailableReason = "OWNED";
-            } else if (who == 0 && info.perk == PERK_FAIRY_REVIVE && FairyBottleSlot() < 0) {
+            } else if (info.perk == PERK_FAIRY_REVIVE && Solo() && sFairyBuys >= kSoloFairyBuys) {
+                offer.available = false;
+                offer.unavailableReason = "SOLD OUT";
+            } else if (info.perk == PERK_FAIRY_REVIVE && Solo() && FairyBottleSlot() < 0) {
                 offer.available = false;
                 offer.unavailableReason = "NO BOTTLE FREE";
             }
@@ -846,7 +862,7 @@ static bool BuyForPartner(PlayState* play, Station& station, const Offer& offer)
             return true;
         case StationType::MysteryChest: {
             sChestUses++;
-            if (sChestUses > 8 && !PowerUpActive(PowerUp::FireSale) && Rand_ZeroOne() < 1.0f / 6.0f) {
+            if (!PowerUpActive(PowerUp::FireSale) && ChestMoves(sChestUses, sChestMoved, Rand_ZeroOne())) {
                 GetRun().players[1].points += offer.cost; // refund, not earnings
                 Announce("THE CHEST MOVED", 3);
                 Sfx_PlaySfxCentered(NA_SE_VO_SK_LAUGH);
@@ -909,7 +925,7 @@ static void Buy(PlayState* play, Station& station, const Offer& offer, int who) 
         case StationType::MysteryChest: {
             sChestUses++;
             // The Keaton laugh is our teddy bear: after a few uses the chest may move on.
-            if (sChestUses > 8 && !PowerUpActive(PowerUp::FireSale) && Rand_ZeroOne() < 1.0f / 6.0f) {
+            if (!PowerUpActive(PowerUp::FireSale) && ChestMoves(sChestUses, sChestMoved, Rand_ZeroOne())) {
                 run.players[who].points += offer.cost; // refund, not earnings: no Double Points
                 Announce("THE CHEST MOVED", 3);
                 Sfx_PlaySfxCentered(NA_SE_VO_SK_LAUGH);

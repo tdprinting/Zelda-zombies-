@@ -141,7 +141,7 @@ static void DrawPartner(GfxPrint* printer) {
     if (partner.bledOut) {
         status = "BLED OUT: BACK NEXT ROUND";
     } else if (partner.downed) {
-        status = partner.reviveFrames < 0 ? "FAIRY REVIVE..." : "DOWN! " + std::to_string(partner.downFrames / 20 + 1);
+        status = "DOWN! " + std::to_string(partner.downFrames / 20 + 1);
     }
     if (!status.empty()) {
         GfxPrint_SetColor(printer, 230, 60, 60, 255);

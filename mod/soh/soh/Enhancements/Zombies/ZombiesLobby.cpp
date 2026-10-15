@@ -798,7 +798,7 @@ class LobbyWindow final : public Ship::GuiWindow {
             { "SONG OF STORMS", "Slows the horde for 20 seconds." },
             { "GOLD TORCH", "Mystery Chest. Wooden torches: Armory, Fairy Fountain, power." },
             { "STONE TORCHES", "Perks and Pack-a-Punch. Dark until the power is on." },
-            { "PLAYER 2", "Controller 2. Stick: move. B: sword. R: bomb. A: buy, repair, revive." },
+            { "PLAYER 2", "Second gamepad. Stick: move. B: sword. R: bomb. A: buy, repair, revive." },
             { "PLAYER 2 CAMERA", "Right stick or C-left/C-right turns it. Z: behind you." },
         };
         ImGui::SetWindowFontScale(1.15f * scale);

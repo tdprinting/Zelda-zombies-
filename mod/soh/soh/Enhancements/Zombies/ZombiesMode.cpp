@@ -490,10 +490,15 @@ static void OnEnemyKilled(PlayState* play, Player* player, TrackedEnemy& enemy, 
     AwardPoints(who, PointsForKill(type));
     sRun.lastKillPos = enemy.actor->world.pos;
 
-    if (sRun.dropTracker.OnKill(ps.totalEarned, Rand_ZeroOne())) {
-        SpawnPowerUp(
-            play, enemy.actor->world.pos,
-            PickPowerUp(Rand_ZeroOne(), Stations_ChestPlaced() && Stations_ChestMoved(), Barricades_AnyBroken()));
+    // The drop threshold counts the whole team's points, as in Black Ops.
+    int teamEarned = 0;
+    for (int i = 0; i < sRun.playerCount; i++) {
+        teamEarned += sRun.players[i].totalEarned;
+    }
+    if (sRun.dropTracker.OnKill(teamEarned, Rand_ZeroOne())) {
+        SpawnPowerUp(play, enemy.actor->world.pos,
+                     sRun.powerUpDeck.Draw(Rand_ZeroOne, Stations_ChestPlaced() && Stations_ChestMoved(),
+                                           Barricades_AnyBroken()));
     }
 }
 
@@ -702,12 +707,16 @@ static void ActivatePowerUp(PlayState* play, PowerUp type, int who) {
         case PowerUp::Nuke:
             KillAllEnemies(play, true, who);
             Sfx_PlaySfxCentered(NA_SE_IT_BOMB_EXPLOSION);
-            AwardPoints(who, kPointsNuke);
+            for (int i = 0; i < sRun.playerCount; i++) {
+                AwardPoints(i, kPointsNuke); // everyone gets these
+            }
             break;
         case PowerUp::Carpenter:
             Barricades_RepairAll();
             Sfx_PlaySfxCentered(NA_SE_EV_WOOD_HIT);
-            AwardPoints(who, kPointsCarpenter);
+            for (int i = 0; i < sRun.playerCount; i++) {
+                AwardPoints(i, kPointsCarpenter); // everyone gets these
+            }
             break;
         default:
             sRun.powerUpFrames[static_cast<int>(type)] = kPowerUpSeconds * kFps;
@@ -1061,8 +1070,9 @@ static void OnPlayerUpdate() {
     Coop_Update(play, player);
     UpdateEnemies(play, player);
     UpdateDrops(play, player);
-    if (sRun.players[0].perks[PERK_FAIRY_REVIVE] && !Inventory_HasSpecificBottle(ITEM_FAIRY)) {
-        sRun.players[0].perks[PERK_FAIRY_REVIVE] = false; // the fairy was used
+    if (sRun.playerCount < 2 && sRun.players[0].perks[PERK_FAIRY_REVIVE] && !Inventory_HasSpecificBottle(ITEM_FAIRY)) {
+        // The fairy was used: a self-revive is still a down, so the perks go with it.
+        LoseOnDown(0);
     }
     Stations_Update(play, player);
     Arena_Update(play, player);

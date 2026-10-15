@@ -59,7 +59,10 @@ lists everything.
 
 ### Two players (split screen)
 
-Set **Players** to **2** in the main menu and plug in a second controller.
+Set **Players** to **2** in the main menu and connect two gamepads. During a
+co-op run the second gamepad plays player 2 automatically (with the default
+layout if its port has none) and goes back to Link when the run ends. If port 2
+in SoH's controller settings already has a gamepad, that setup is used as is.
 The screen splits top and bottom like Black Ops: player 1 is Link on top,
 player 2 is a second Link in a red tunic below, with their own camera.
 
@@ -71,10 +74,10 @@ blade, and every perk. Player 2's controls: stick to move, **B** sword,
 C-right) to turn the camera, **Z** to put it behind you.
 
 Co-op follows Black Ops' rules. A player who runs out of hearts goes down
-and loses some points and their perks. The other has 30 seconds to hold the
-buy button next to them for 3 seconds to revive them; otherwise they bleed
-out and come back at the start of the next round. Fairy Revive lets player 2
-get up on their own. When nobody is left standing, the run is over. Rounds
+and loses some points and their perks. The other has 45 seconds to hold the
+buy button next to them for 3 seconds to revive them (half that with Fairy
+Revive); otherwise they bleed out and come back at the start of the next
+round. When nobody is left standing, the run is over. Rounds
 have more undead with two players, as in Black Ops.
 
 After a run, a results screen shows the rounds survived, kills and points

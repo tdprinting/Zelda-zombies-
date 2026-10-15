@@ -18,6 +18,8 @@
 #include "ZombiesMode.h"
 
 #include <libultraship/bridge/consolevariablebridge.h>
+#include <ship/Context.h>
+#include <ship/controller/controldeck/ControlDeck.h>
 
 #include <algorithm>
 #include <cmath>
@@ -53,7 +55,7 @@ extern "C" void ZombiesCoop_SetLinkSegments(PlayState* play, void* linkObject) {
 namespace Zombies {
 
 static constexpr int kFps = 20;
-static constexpr int kBleedOutFrames = 30 * kFps;
+static constexpr int kBleedOutFrames = 45 * kFps;
 static constexpr int kReviveFrames = 3 * kFps;
 static constexpr float kReviveRange = 80.0f;
 static constexpr int kBaseHealth = 48;      // three hearts, like Link's starting life
@@ -151,7 +153,50 @@ static void FreezeSceneryOnDeath(bool freeze) {
     }
 }
 
+// Controllers: SoH sends every gamepad to port 1 (Link) and none to port 2 unless the
+// player sets that up in the controller settings, which is awkward on a phone. When a
+// co-op run is on, two pads are connected and port 2 has none, the newest pad moves to
+// port 2 (with the default layout if it has none), and goes back when the run ends.
+static int32_t sMovedPad = -1;
+
+static void AssignSecondPad(bool coop) {
+    auto deck = Ship::Context::GetRawInstance()->GetControlDeck();
+    if (deck == nullptr) {
+        return;
+    }
+    auto devices = deck->GetConnectedPhysicalDeviceManager();
+    auto pads = devices->GetConnectedSDLGamepadNames();
+    if (!coop) {
+        if (sMovedPad >= 0) {
+            devices->UnignoreInstanceIdForPort(0, sMovedPad);
+            devices->IgnoreInstanceIdForPort(1, sMovedPad);
+            sMovedPad = -1;
+        }
+        return;
+    }
+    if (pads.size() < 2) {
+        return;
+    }
+    int32_t newest = -1;
+    for (const auto& [id, name] : pads) {
+        if (!devices->PortIsIgnoringInstanceId(1, id)) {
+            return; // port 2 already has a pad
+        }
+        newest = std::max(newest, id);
+    }
+    devices->IgnoreInstanceIdForPort(0, newest);
+    devices->UnignoreInstanceIdForPort(1, newest);
+    sMovedPad = newest;
+    auto controller = deck->GetControllerByPort(1);
+    if (controller != nullptr && !controller->HasMappingsForPhysicalDeviceType(Ship::PhysicalDeviceType::SDLGamepad)) {
+        controller->AddDefaultMappings(Ship::PhysicalDeviceType::SDLGamepad);
+    }
+}
+
 void Coop_OnMainStart(PlayState* play) {
+    if (play->gameplayFrames % 10 == 0) {
+        AssignSecondPad(Coop_Active());
+    }
     if (sRestoreDead) {
         sRestoreDead = false;
         Player* player = GET_PLAYER(play);
@@ -584,6 +629,7 @@ static void SpawnPartner(PlayState* play, Player* link) {
 }
 
 void Coop_Reset() {
+    AssignSecondPad(false);
     FreezeSceneryOnDeath(true);
     sRestoreDead = false;
     sLinkRising = false;
@@ -609,6 +655,7 @@ void Coop_StartRun(PlayState* play, Player* player) {
 }
 
 void Coop_EndRun(PlayState* play) {
+    AssignSecondPad(false);
     Partner& partner = P();
     if (partner.actor != nullptr) {
         Actor_Kill(partner.actor);
@@ -741,7 +788,11 @@ void Coop_Heal() {
 // ---------------------------------------------------------------------------
 // Downs and revives
 
-static void LoseOnDown(int index) {
+static int ReviveFramesFor(int reviver) {
+    return GetRun().players[reviver].perks[PERK_FAIRY_REVIVE] ? kReviveFrames / 2 : kReviveFrames;
+}
+
+void LoseOnDown(int index) {
     Run& run = GetRun();
     PlayerState& ps = run.players[index];
     // Black Ops takes a cut of a downed player's points and all their perks.
@@ -769,13 +820,7 @@ static void DownPartner() {
     sAnim = Anim::None;
     PartnerVoice(NA_SE_VO_LI_DOWN);
     Announce("PLAYER 2 IS DOWN", 3);
-    // Fairy Revive brings them straight back, like Quick Revive.
-    bool selfRevive = GetRun().players[1].perks[PERK_FAIRY_REVIVE];
     LoseOnDown(1);
-    if (selfRevive) {
-        partner.downFrames = 3 * kFps;
-        partner.reviveFrames = -1; // marks the self-revive
-    }
 }
 
 static void RevivePartner() {
@@ -887,17 +932,11 @@ void Coop_Update(PlayState* play, Player* player) {
         }
     }
 
-    // Player 2 bleeding out, or getting up by themselves with Fairy Revive.
-    if (partner.downed) {
-        if (--partner.downFrames <= 0) {
-            if (partner.reviveFrames < 0) {
-                RevivePartner();
-            } else {
-                partner.downed = false;
-                partner.bledOut = true;
-                Announce("PLAYER 2 BLED OUT", 3);
-            }
-        }
+    // Player 2 bleeding out.
+    if (partner.downed && --partner.downFrames <= 0) {
+        partner.downed = false;
+        partner.bledOut = true;
+        Announce("PLAYER 2 BLED OUT", 3);
     }
 
     // Link bleeding out.
@@ -910,12 +949,13 @@ void Coop_Update(PlayState* play, Player* player) {
 
     // Revives: hold the buy button next to the downed player.
     Buyer linkBuyer;
-    if (partner.downed && partner.reviveFrames >= 0 && LinkStanding()) {
+    // In co-op, Fairy Revive halves the time it takes to pick a teammate up.
+    if (partner.downed && LinkStanding()) {
         float dist = Math_Vec3f_DistXZ(&player->actor.world.pos, &partner.actor->world.pos);
         if (dist < kReviveRange) {
             run.prompt = std::string("HOLD ") + BuyButtonName() + ": REVIVE PLAYER 2";
             if (BuyHeld(play)) {
-                if (++partner.reviveFrames >= kReviveFrames) {
+                if (++partner.reviveFrames >= ReviveFramesFor(0)) {
                     RevivePartner();
                 }
             } else {
@@ -930,7 +970,7 @@ void Coop_Update(PlayState* play, Player* player) {
         if (dist < kReviveRange) {
             partner.prompt = "HOLD A: REVIVE PLAYER 1";
             if (Held(BTN_A)) {
-                if (++down.reviveFrames >= kReviveFrames) {
+                if (++down.reviveFrames >= ReviveFramesFor(1)) {
                     ReviveLink(player);
                 }
             } else {
@@ -942,10 +982,7 @@ void Coop_Update(PlayState* play, Player* player) {
     }
 
     // Nobody left standing.
-    bool linkUp = LinkStanding();
-    // Player 2 getting up on their own with Fairy Revive still counts.
-    bool partnerUp = PartnerStanding() || (P().downed && P().reviveFrames < 0);
-    if (!linkUp && !partnerUp) {
+    if (!LinkStanding() && !PartnerStanding()) {
         EveryoneDown(play, player);
     }
 }
@@ -994,6 +1031,10 @@ void Coop_DrawBegin() {
 // recorded under its own key, and only counts as a cut when it really jumps.
 static Vec3f sLastEye;
 static Vec3f sLastAt;
+
+static bool ZombiesCoop_Mirrored() {
+    return R_PAUSE_MENU_MODE <= 1 && CVarGetInteger(CVAR_ENHANCEMENT("MirroredWorld"), 0);
+}
 static int sViewEpoch;
 
 extern "C" void ZombiesCoop_ApplySecondView(View* view, const Vec3f& eye, const Vec3f& at) {
@@ -1016,9 +1057,10 @@ extern "C" void ZombiesCoop_ApplySecondView(View* view, const Vec3f& eye, const 
     gSPViewport(POLY_XLU_DISP++, vp);
 
     Mtx* projection = (Mtx*)Graph_Alloc(gfxCtx, sizeof(Mtx));
+    Mtx* projectionFlipped = (Mtx*)Graph_Alloc(gfxCtx, sizeof(Mtx));
     Mtx* viewing = (Mtx*)Graph_Alloc(gfxCtx, sizeof(Mtx));
     view->projectionPtr = projection;
-    view->projectionFlippedPtr = projection;
+    view->projectionFlippedPtr = projectionFlipped;
     view->viewingPtr = viewing;
 
     f32 aspect = (f32)(view->viewport.rightX - view->viewport.leftX) /
@@ -1035,10 +1077,23 @@ extern "C" void ZombiesCoop_ApplySecondView(View* view, const Vec3f& eye, const 
     guPerspective(projection, &view->normal, view->fovy, aspect, view->zNear, view->zFar, view->scale);
     view->projection = *projection;
     View_StepDistortion(view, projection);
+    // Mirrored World: the game has already turned culling inside out for the frame, so
+    // this view needs its projection flipped too.
+    Mtx* load = projection;
+    if (ZombiesCoop_Mirrored()) {
+        MtxF flipF;
+        SkinMatrix_Clear(&flipF);
+        flipF.xx = -1.0f;
+        MtxF projectionF;
+        Matrix_MtxToMtxF(projection, &projectionF);
+        SkinMatrix_MtxFMtxFMult(&projectionF, &flipF, &projectionF);
+        Matrix_MtxFToMtx(&projectionF, projectionFlipped);
+        load = projectionFlipped;
+    }
     gSPPerspNormalize(POLY_OPA_DISP++, view->normal);
-    gSPMatrix(POLY_OPA_DISP++, projection, G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_PROJECTION);
+    gSPMatrix(POLY_OPA_DISP++, load, G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_PROJECTION);
     gSPPerspNormalize(POLY_XLU_DISP++, view->normal);
-    gSPMatrix(POLY_XLU_DISP++, projection, G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_PROJECTION);
+    gSPMatrix(POLY_XLU_DISP++, load, G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_PROJECTION);
     Matrix_MtxFToMtx(&viewingF, viewing);
     view->viewing = *viewing;
     gSPMatrix(POLY_OPA_DISP++, viewing, G_MTX_NOPUSH | G_MTX_MUL | G_MTX_PROJECTION);
@@ -1114,8 +1169,21 @@ extern "C" void ZombiesCoop_DrawSecondView(PlayState* play, const Vec3f& eye, co
     play->billboardMtxF = savedBillboard;
     play->viewProjectionMtxF = savedViewProjection;
     play->billboardMtx = savedBillboardMtx;
-    func_800AAA50(&play->view, 15);
+    // Put player 1's viewport and matrices back as the game built them this frame. Not by
+    // building them again: that would step screen distortion (underwater, Jabu) twice.
     OPEN_DISPS(gfxCtx);
+    Vp* vp = (Vp*)Graph_Alloc(gfxCtx, sizeof(Vp));
+    *vp = play->view.vp;
+    func_800AA550(&play->view);
+    gSPViewport(POLY_OPA_DISP++, vp);
+    gSPViewport(POLY_XLU_DISP++, vp);
+    Mtx* projection = ZombiesCoop_Mirrored() ? play->view.projectionFlippedPtr : play->view.projectionPtr;
+    gSPPerspNormalize(POLY_OPA_DISP++, play->view.normal);
+    gSPMatrix(POLY_OPA_DISP++, projection, G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_PROJECTION);
+    gSPMatrix(POLY_OPA_DISP++, play->view.viewingPtr, G_MTX_NOPUSH | G_MTX_MUL | G_MTX_PROJECTION);
+    gSPPerspNormalize(POLY_XLU_DISP++, play->view.normal);
+    gSPMatrix(POLY_XLU_DISP++, projection, G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_PROJECTION);
+    gSPMatrix(POLY_XLU_DISP++, play->view.viewingPtr, G_MTX_NOPUSH | G_MTX_MUL | G_MTX_PROJECTION);
     gSPSegment(POLY_OPA_DISP++, 0x01, (uintptr_t)play->billboardMtx);
     gSPSegment(POLY_XLU_DISP++, 0x01, (uintptr_t)play->billboardMtx);
     CLOSE_DISPS(gfxCtx);

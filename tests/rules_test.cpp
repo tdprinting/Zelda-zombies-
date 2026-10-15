@@ -67,11 +67,13 @@ static void TestDogRounds() {
     EXPECT_EQ(FirstDogRound(0.0f), 5);
     EXPECT_EQ(FirstDogRound(0.99f), 7);
     EXPECT_EQ(NextDogRound(5, 0.0f), 9);
-    EXPECT_EQ(NextDogRound(5, 0.99f), 11);
+    EXPECT_EQ(NextDogRound(5, 0.99f), 10);
     EXPECT_EQ(DogsForRound(1, 1), 6);
-    EXPECT_EQ(DogsForRound(2, 1), 8);
-    EXPECT_EQ(DogsForRound(10, 1), 12);
+    EXPECT_EQ(DogsForRound(2, 1), 6);
+    EXPECT_EQ(DogsForRound(3, 1), 8);
+    EXPECT_EQ(DogsForRound(10, 1), 8);
     EXPECT_EQ(DogsForRound(1, 2), 12);
+    EXPECT_EQ(DogsForRound(3, 2), 16);
 }
 
 static void TestEnemyMix() {
@@ -106,9 +108,10 @@ static void TestPoints() {
 
 static void TestDrops() {
     DropTracker tracker;
-    // Below the threshold, only the 2% roll drops.
+    // Below the threshold, only the 3% roll drops.
     EXPECT_TRUE(!tracker.OnKill(500, 0.5f));
-    EXPECT_TRUE(tracker.OnKill(500, 0.01f));
+    EXPECT_TRUE(!tracker.OnKill(500, 0.035f));
+    EXPECT_TRUE(tracker.OnKill(500, 0.025f));
     // Crossing 2000 points drops, and the next threshold moves 14% further out.
     EXPECT_TRUE(tracker.OnKill(2010, 0.5f));
     EXPECT_EQ(tracker.threshold, 2010 + 2280);
@@ -121,16 +124,45 @@ static void TestDrops() {
     EXPECT_TRUE(tracker.OnKill(3000, 0.0f));
 }
 
-static void TestPowerUpPick() {
-    EXPECT_TRUE(PickPowerUp(0.0f, true, true) == PowerUp::MaxAmmo);
-    EXPECT_TRUE(PickPowerUp(0.999f, true, true) == PowerUp::FireSale);
-    EXPECT_TRUE(PickPowerUp(0.999f, false, true) == PowerUp::Carpenter);
-    EXPECT_TRUE(PickPowerUp(0.999f, false, false) == PowerUp::Nuke);
-    EXPECT_TRUE(PickPowerUp(0.999f, true, false) == PowerUp::FireSale);
-    for (int i = 0; i < 100; i++) {
-        EXPECT_TRUE(PickPowerUp(i / 100.0f, false, false) != PowerUp::Carpenter);
-        EXPECT_TRUE(PickPowerUp(i / 100.0f, false, false) != PowerUp::FireSale);
+static float sRolls[] = { 0.1f, 0.7f, 0.3f, 0.9f, 0.5f, 0.2f, 0.8f, 0.4f, 0.6f, 0.0f };
+static int sRollIndex = 0;
+static float NextRoll() {
+    float r = sRolls[sRollIndex % 10];
+    sRollIndex++;
+    return r;
+}
+
+static void TestPowerUpDeck() {
+    // Every full deck holds each power-up once.
+    PowerUpDeck deck;
+    for (int round = 0; round < 3; round++) {
+        int seen[static_cast<int>(PowerUp::Count)] = {};
+        for (int i = 0; i < static_cast<int>(PowerUp::Count); i++) {
+            seen[static_cast<int>(deck.Draw(NextRoll, true, true))]++;
+        }
+        for (int count : seen) {
+            EXPECT_EQ(count, 1);
+        }
     }
+    // Fire Sale and Carpenter never come out when they can't drop.
+    PowerUpDeck limited;
+    for (int i = 0; i < 60; i++) {
+        PowerUp p = limited.Draw(NextRoll, false, false);
+        EXPECT_TRUE(p != PowerUp::FireSale && p != PowerUp::Carpenter);
+    }
+}
+
+static void TestChestMoves() {
+    for (int uses = 1; uses <= 4; uses++) {
+        EXPECT_TRUE(!ChestMoves(uses, false, 0.0f));
+    }
+    EXPECT_TRUE(ChestMoves(5, true, 0.1f));
+    EXPECT_TRUE(!ChestMoves(8, true, 0.2f));
+    EXPECT_TRUE(ChestMoves(9, false, 0.99f)); // a chest that never moved always does now
+    EXPECT_TRUE(ChestMoves(9, true, 0.25f));
+    EXPECT_TRUE(!ChestMoves(13, true, 0.35f));
+    EXPECT_TRUE(ChestMoves(14, true, 0.45f));
+    EXPECT_TRUE(!ChestMoves(14, true, 0.55f));
 }
 
 static void TestRepairPoints() {
@@ -150,7 +182,8 @@ int main() {
     TestMoveTiers();
     TestPoints();
     TestDrops();
-    TestPowerUpPick();
+    TestPowerUpDeck();
+    TestChestMoves();
     TestRepairPoints();
     if (sFailures == 0) {
         std::printf("All rules tests passed\n");

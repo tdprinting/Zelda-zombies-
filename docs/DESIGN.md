@@ -28,28 +28,28 @@ player's own ROM.
 | Black Ops Zombies | Zombies of Time | Notes |
 | --- | --- | --- |
 | Zombie | Stalchild (rounds 1+), Redead (3+), Gibdo (6+), big Stalchild (10+) | Mix shifts toward tougher undead each round |
-| Hellhound round | Wolfos round: White Wolfos only | First on round 5 to 7, then every 4 to 6 rounds. The last Wolfos always drops Max Ammo |
-| Round count | `ceil(24 + 3 × m) × early-round factor`, solo formula | `m = max(1, round/5)`, and from round 10 `m ×= round × 0.15`. Rounds 1 to 5 use 25%, 30%, 50%, 70%, 90% |
+| Hellhound round | Wolfos round: White Wolfos only | First on round 5 to 7, then every 4 to 5 rounds. Six per player in the first two, eight per player after that. The last Wolfos always drops Max Ammo |
+| Round count | `ceil(24 + 3 × m) × early-round factor` | `m = max(1, round/5)`; co-op uses `6 × m` per extra player in place of solo's `3 × m`, and from round 10 `m ×= round × 0.15`. Rounds 1 to 5 use 25%, 30%, 50%, 70%, 90% |
 | Max zombies alive (24) | Slider, default 8 | OoT's actor budget and arena sizes are smaller |
-| Spawn delay `2.0s × 0.95^round` | Same curve, floor 0.25s | |
-| Zombie move speed (`round × 8` plus spread; walk ≤ 35, run ≤ 70, sprint above) | Same roll per undead, applied through Horde Pull at 2 / 4 / 6 units per frame | Round 1 is all walkers; by round 11 every undead sprints |
+| Spawn delay `2.0s × 0.95^(round − 1)` | Same curve, floor 0.25s | |
+| Zombie move speed (`round × 8` plus spread; walk ≤ 35, run ≤ 70, sprint above) | Same roll per undead, applied through Horde Pull at 2 / 4 / 6 units per frame | Round 1 is all walkers; from round 9 every undead sprints |
 | Zombie health +100 per round, then ×1.1 | Health multiplier on each enemy's own HP: `1 + 0.15 × (round − 1)` to round 10, then ×1.08 per round | Capped at 255 (OoT stores HP in one byte). Slider scales it |
 | Points: 10 per hit, 60 kill, 100 headshot, 130 knife | 10 per hit, 60 kill, 100 kill with an arrow, seed or hookshot, 130 kill with a sword | |
 | Start with 500 points | 500 | |
 | Wall buys | **Armory** station: the next item for Link's age he doesn't have, then an ammo refill (500) once he has them all | Child: Slingshot, Boomerang, Bombs. Adult: Bow, Bombs, Hookshot, Megaton Hammer |
-| Mystery Box (950) | **Mystery Chest** (950): random weapon | Pool: Bombchus (Monkey Bomb), Fire/Ice Arrows, Din's Fire (Thundergun), Light Arrows (Ray Gun, rare), Biggoron Sword (rare), Longshot, Hammer. Child pool swaps in Slingshot, Boomerang, Bombs. After eight prizes, each roll has a 1 in 6 chance of Skull Kid laughing (the teddy bear): the points come back and the chest moves |
+| Mystery Box (950) | **Mystery Chest** (950): random weapon | Pool: Bombchus (Monkey Bomb), Fire/Ice Arrows, Din's Fire (Thundergun), Light Arrows (Ray Gun, rare), Biggoron Sword (rare), Longshot, Hammer. Child pool swaps in Slingshot, Boomerang, Bombs. Skull Kid laughing is the teddy bear: the points come back and the chest moves. As in Black Ops it never happens in the first four uses since the last move, is a 15% chance on uses 5 to 8, is certain from the ninth if the chest has never moved, and otherwise is 30% (50% from the 14th use) |
 | Juggernog | **Juggernog Milk** (2500): Double Defense | |
-| Quick Revive | **Fairy Revive** (500 solo): a bottled fairy | A fairy in a bottle is OoT's own self-revive. Fills an empty bottle, else adds a bottle, else replaces the first bottle's contents. Can be bought again once the fairy is used |
+| Quick Revive | **Fairy Revive**. Solo (500, no power needed): a bottled fairy. Co-op (1500): revives take half as long | Solo: a fairy in a bottle is OoT's own self-revive. Fills an empty bottle, else adds a bottle, else replaces the first bottle's contents. Using it costs the perks, like any down, and it sells out after three buys. Co-op has no self-revive |
 | Double Tap | **Double Tap** (2000): every third hit lands twice, about the third more damage Black Ops' faster fire gives | |
 | Stamin-Up | **Stamin-Up** (2000): Link runs 25% faster | |
 | Power switch | **Power** station: free, lights the perk and Pack-a-Punch torches | Playing the Sun's Song anywhere also turns the power on |
 | Pack-a-Punch (5000) | **Pack-a-Punch** (5000): upgrades one item | Checks the C buttons first. Bow: bigger quiver, then Light Arrows. Slingshot: bigger seed bag. Bombs: bigger bag. Hookshot: Longshot. Then the sword: Biggoron Sword (adult), then a Punched Blade whose hits land twice. Then the Mirror Shield (adult) |
-| Power-ups (2% plus point-based drops, 4 per round max) | Same drop logic; each power-up is a floating drop | Max Ammo = big magic jar, Insta-Kill = red rupee, Double Points = gold rupee, Nuke = bomb drop, Fire Sale = purple rupee |
+| Power-ups (3% plus point-based drops on the team's points, 4 per round max) | Same drop logic; each power-up is a floating drop, dealt from a shuffled deck as in Black Ops | Max Ammo = big magic jar, Insta-Kill = red rupee, Double Points = gold rupee, Nuke = bomb drop, Fire Sale = purple rupee |
 | Max Ammo | Refills sticks, nuts, seeds, arrows, bombs, bombchus and magic | |
-| Carpenter | Deku Stick drop: every window gets all six boards back, +200 points | Only drops while a window is missing boards |
+| Carpenter | Deku Stick drop: every window gets all six boards back, +200 points for every player | Only drops while a window is missing boards |
 | Insta-Kill (30s) | Every undead dies in one hit | |
 | Double Points (30s) | All points ×2 | |
-| Nuke | Every undead on the map explodes, +400 points | |
+| Nuke | Every undead on the map explodes, +400 points for every player | |
 | Fire Sale (30s) | Mystery Chest costs 10 | Only drops once the chest has moved, as in Black Ops |
 | Barricades: 6 boards per window, zombies tear them off, players repair for 10 points each | **Barricades**: boarded windows (two posts and six planks), two or three per zone on the hand-made maps and four around the start point anywhere else. Undead spawn outside one and are held there, tearing a board every 1.5 seconds, until it is open. Hold the buy button at a window to put a board back every 0.6 seconds for 10 points, up to 500 points of repairs per round | Wolfos rounds ignore the windows, like hellhounds. The planks are the small wooden crate's model squashed flat. The windows are not solid: Link can walk around them, the undead can't |
 | Doors and debris | **Debris** piles between the zones of an authored arena (1000 points into the second zone; 1000 or 1250 into the third) | Clearing one opens that zone's stations and windows. See [Kakariko Graveyard](#kakariko-graveyard) |
@@ -277,7 +277,7 @@ Code layout:
      with A); player 2's purchases go to their own sword level, bombs, health
      and perks, never to the save file.
    - **Downs**: a downed player loses 5% of their points and their perks,
-     bleeds out after 30 seconds and returns the next round; holding the buy
+     bleeds out after 45 seconds and returns the next round; holding the buy
      button for 3 seconds next to them revives them. When Link goes down his
      game over is held off while player 2 is standing, and the rest of the
      world keeps moving. Both down ends the run.

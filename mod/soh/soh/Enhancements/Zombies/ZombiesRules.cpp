@@ -75,12 +75,12 @@ int FirstDogRound(float roll) {
 }
 
 int NextDogRound(int currentDogRound, float roll) {
-    return currentDogRound + 4 + std::min(static_cast<int>(roll * 3), 2);
+    return currentDogRound + 4 + std::min(static_cast<int>(roll * 2), 1);
 }
 
 int DogsForRound(int dogRoundIndex, int players) {
     players = std::clamp(players, 1, kMaxPlayers);
-    int perPlayer = std::min(6 + 2 * std::max(dogRoundIndex - 1, 0), 12);
+    int perPlayer = dogRoundIndex <= 2 ? 6 : 8;
     return perPlayer * players;
 }
 
@@ -146,7 +146,7 @@ bool DropTracker::OnKill(int totalPointsEarned, float roll) {
         increment = static_cast<int>(increment * 1.14f);
         threshold = totalPointsEarned + increment;
         drop = true;
-    } else if (roll < 0.02f) {
+    } else if (roll < 0.03f) {
         drop = true;
     }
     if (drop) {
@@ -155,18 +155,39 @@ bool DropTracker::OnKill(int totalPointsEarned, float roll) {
     return drop;
 }
 
-PowerUp PickPowerUp(float roll, bool boxAvailable, bool barricadesAvailable) {
-    PowerUp pool[static_cast<int>(PowerUp::Count)];
-    int count = 0;
-    for (int i = 0; i < static_cast<int>(PowerUp::Count); i++) {
-        PowerUp p = static_cast<PowerUp>(i);
+PowerUp PowerUpDeck::Draw(float (*rng)(), bool boxAvailable, bool barricadesAvailable) {
+    constexpr int kCount = static_cast<int>(PowerUp::Count);
+    for (int tries = 0; tries < 2 * kCount; tries++) {
+        if (next >= kCount) {
+            for (int i = 0; i < kCount; i++) {
+                order[i] = static_cast<PowerUp>(i);
+            }
+            for (int i = kCount - 1; i > 0; i--) {
+                int j = std::min(static_cast<int>(rng() * (i + 1)), i);
+                std::swap(order[i], order[j]);
+            }
+            next = 0;
+        }
+        PowerUp p = order[next++];
         if ((p == PowerUp::FireSale && !boxAvailable) || (p == PowerUp::Carpenter && !barricadesAvailable)) {
             continue;
         }
-        pool[count++] = p;
+        return p;
     }
-    int index = std::min(static_cast<int>(roll * count), count - 1);
-    return pool[index];
+    return PowerUp::MaxAmmo;
+}
+
+bool ChestMoves(int uses, bool everMoved, float roll) {
+    if (uses <= 4) {
+        return false;
+    }
+    if (uses <= 8) {
+        return roll < 0.15f;
+    }
+    if (!everMoved) {
+        return true;
+    }
+    return roll < (uses <= 13 ? 0.3f : 0.5f);
 }
 
 int RepairPoints(int repairPointsThisRound) {

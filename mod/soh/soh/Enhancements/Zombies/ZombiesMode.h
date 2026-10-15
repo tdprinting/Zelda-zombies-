@@ -192,6 +192,7 @@ struct Run {
     std::vector<TrackedEnemy> enemies;
     std::vector<ActiveDrop> drops;
     DropTracker dropTracker;
+    PowerUpDeck powerUpDeck;
     Vec3f lastKillPos = {};
 
     bool zombiesOnly = false; // Zombies Only when the run started; decides what happens to the items
@@ -321,6 +322,8 @@ int Coop_Credit(const TrackedEnemy& enemy);
 void Coop_GiveSword(int sword);
 void Coop_GiveBombs(int count);
 void Coop_Heal();
+// A down costs a cut of the player's points and all their perks (Juggernog's defense goes back).
+void LoseOnDown(int index);
 int Coop_MaxBombs();
 
 // HUD (ZombiesHud.cpp)
