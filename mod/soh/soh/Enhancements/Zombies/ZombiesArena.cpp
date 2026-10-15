@@ -245,6 +245,9 @@ const ArenaLayout* Arena_ForScene(s16 sceneNum) {
 }
 
 bool Arena_Resolve(PlayState* play, LayoutSpot spot, float refY, Vec3f* out) {
+    if (spot.y > LayoutSpot::kNoHeight) {
+        refY = spot.y;
+    }
     Vec3f probe = { spot.x, refY + kResolveRange, spot.z };
     CollisionPoly* poly;
     s32 bgId;
@@ -281,7 +284,9 @@ void Arena_Start(PlayState* play) {
     Run& run = GetRun();
     run.openZones = 1;
     run.debris.clear();
-    run.layout = CVarGetInteger(CVAR_ZOMBIES("Arenas"), 1) ? Arena_ForScene(play->sceneNum) : nullptr;
+    run.layout = BoMap_Active(play)                              ? BoMap_Layout()
+                 : CVarGetInteger(CVAR_ZOMBIES("Arenas"), 1) ? Arena_ForScene(play->sceneNum)
+                                                             : nullptr;
     if (run.layout == nullptr) {
         return;
     }

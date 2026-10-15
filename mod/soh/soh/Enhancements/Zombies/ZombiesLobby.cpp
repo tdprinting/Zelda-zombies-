@@ -47,6 +47,7 @@ struct LobbyMap {
     s16 entrance;
     int requiredAge; // -1: either
     const char* intel;
+    bool blackOps = false; // converted from the player's own Black Ops install (ZombiesBoMap.cpp)
 };
 
 static const LobbyMap kMaps[] = {
@@ -59,6 +60,10 @@ static const LobbyMap kMaps[] = {
       "Wide open paddock. Room to run a train of undead in circles around the fence." },
     { "HYRULE FIELD", "FIELD", SCENE_HYRULE_FIELD, ENTR_HYRULE_FIELD_PAST_BRIDGE_SPAWN, -1,
       "Huge and dark, with nowhere to hide. Turn Max Undead Alive up in the settings for a real horde." },
+    { "NACHT DER UNTOTEN", "NACHT", SCENE_GRAVEYARD, ENTR_GRAVEYARD_ENTRANCE, -1,
+      "The original. A bunker in the woods, the help room upstairs and the box room. Imported from your own "
+      "Black Ops: see Black Ops Maps in the settings.",
+      true },
 };
 static constexpr int kMapCount = sizeof(kMaps) / sizeof(kMaps[0]);
 
@@ -208,6 +213,7 @@ void Lobby_Close(PlayState* play) {
 // Changing age goes through linkAgeOnLoad: leaving the scene then swaps the child and
 // adult equipment the way the Master Sword pedestal does.
 static void WarpToMap(PlayState* play, const LobbyMap& map) {
+    BoMap_Select(map.blackOps);
     play->linkAgeOnLoad = static_cast<u8>(ChosenAge());
     play->nextEntranceIndex = map.entrance;
     play->transitionTrigger = TRANS_TRIGGER_START;
@@ -219,9 +225,13 @@ static void WarpToMap(PlayState* play, const LobbyMap& map) {
 
 static void StartPlaying(PlayState* play) {
     const LobbyMap& map = kMaps[MapIndex()];
+    if (map.blackOps && BoMap_Status() != "READY") {
+        Sfx_PlaySfxCentered(NA_SE_SY_ERROR);
+        return;
+    }
     CloseMenus(play);
     Sfx_PlaySfxCentered(NA_SE_SY_FSEL_DECIDE_L);
-    if (play->sceneNum != map.sceneNum || gSaveContext.linkAge != ChosenAge()) {
+    if (play->sceneNum != map.sceneNum || gSaveContext.linkAge != ChosenAge() || BoMap_Active(play) != map.blackOps) {
         sPendingStart = true;
         WarpToMap(play, map);
         return;
@@ -548,6 +558,7 @@ void Lobby_OnLoadGame() {
         return;
     }
     gSaveContext.entranceIndex = kMaps[MapIndex()].entrance;
+    BoMap_Select(kMaps[MapIndex()].blackOps);
     if (gSaveContext.linkAge != ChosenAge()) {
         Inventory_SwapAgeEquipment(); // uses the age Link has now
         gSaveContext.linkAge = ChosenAge();
@@ -690,8 +701,9 @@ class LobbyWindow final : public Ship::GuiWindow {
     void DrawMain() {
         const LobbyMap& map = kMaps[MapIndex()];
         bool ageLocked = map.requiredAge >= 0;
+        bool missing = map.blackOps && BoMap_Status() != "READY";
         std::vector<std::string> labels = {
-            "PLAY",
+            missing ? "PLAY  (" + BoMap_Status() + ")" : std::string("PLAY"),
             std::string("MAP      < ") + map.shortName + " >",
             std::string("LINK     ") + (ageLocked ? "  " : "< ") + (ChosenAge() == LINK_AGE_CHILD ? "CHILD" : "ADULT") +
                 (ageLocked ? "" : " >"),
@@ -700,7 +712,7 @@ class LobbyWindow final : public Ship::GuiWindow {
             "CONTROLS",
             "QUIT TO TITLE",
         };
-        DrawList(labels, { false, false, ageLocked, false, false, false, false });
+        DrawList(labels, { missing, false, ageLocked, false, false, false, false });
 
         // Map intel, right.
         float right = size.x * 0.58f;

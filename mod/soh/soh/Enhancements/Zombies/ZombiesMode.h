@@ -49,6 +49,9 @@ enum class StationType {
 struct LayoutSpot {
     float x;
     float z;
+    float y = kNoHeight; // set on maps with floors above each other: the floor nearest this height
+
+    static constexpr float kNoHeight = -32000.0f;
 };
 
 struct LayoutStation {
@@ -267,6 +270,17 @@ void Extras_Update(PlayState* play, Player* player);
 
 // Arenas (ZombiesArena.cpp)
 const ArenaLayout* Arena_ForScene(s16 sceneNum);
+
+// A Black Ops map converted from the player's own install (ZombiesBoMap.cpp).
+std::string BoMap_Path();
+bool BoMap_Available();
+std::string BoMap_Status();
+void BoMap_Select(bool selected);
+bool BoMap_Selected();
+bool BoMap_Active(PlayState* play);
+const ArenaLayout* BoMap_Layout();
+void BoMap_OnSceneInit(PlayState* play);
+void BoMap_Update(PlayState* play);
 // Floor under an authored spot, near refY. Authored spots can be on slightly different
 // ground from where Link started, so this allows more height difference than FloorAt.
 bool Arena_Resolve(PlayState* play, LayoutSpot spot, float refY, Vec3f* out);

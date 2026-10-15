@@ -30,6 +30,21 @@ scratch, and no code from that repository is copied in.
 There's also a command-line tool for the same conversion, so it can be run
 and checked without the game.
 
+## Status
+
+- The game side is in (`ZombiesBoMap.cpp`). A converted map in
+  `zombies/nacht.zzmap` (next to the game's settings file, format in
+  `tools/bomap/docs/ZZMAP_FORMAT.md`) shows up as **Nacht der Untoten** in the
+  main menu's map list. It plays in Kakariko Graveyard's slot for the night sky:
+  the graveyard's collision, actors and room geometry are swapped for the map's,
+  and its minimap is hidden. Windows, debris, the Mystery Chest and the Armory
+  come from the map's own entities.
+- OoT's collision budget is sized per scene; the map gets its own allocation
+  (up to 64K lookup nodes, a cell grid sized to the map). Collision is limited to
+  8191 vertices (13-bit vertex ids), so the converter simplifies it to fit.
+- The converter's map export (`bomap mapgeo`) is in progress; the game side was
+  checked with a synthetic test map.
+
 ## Pipeline
 
 ```

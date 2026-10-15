@@ -1315,6 +1315,9 @@ static void OnActorDestroy(void* refActor) {
 }
 
 static void OnSceneInit(int16_t sceneNum) {
+    if (gPlayState != nullptr) {
+        BoMap_OnSceneInit(gPlayState);
+    }
     Lobby_OnSceneInit(sceneNum);
     if (!IsRunActive() || sRun.phase == Phase::GameOver) {
         if (sRun.phase == Phase::GameOver) {
@@ -1372,6 +1375,7 @@ static void OnGameFrameUpdate() {
     if (gPlayState == nullptr) {
         return;
     }
+    BoMap_Update(gPlayState);
     Lobby_OnFrame(gPlayState);
     if (IsRunActive() || !sRun.prompt.empty() || sRun.announcement.framesLeft > 0 ||
         CVarOn(CVAR_ZOMBIES("ShowCoordinates"), 0)) {
