@@ -1,0 +1,22 @@
+diff --git a/soh/soh/OTRGlobals.cpp b/soh/soh/OTRGlobals.cpp
+index d336c3c5..8a072436 100644
+--- a/soh/soh/OTRGlobals.cpp
++++ b/soh/soh/OTRGlobals.cpp
+@@ -1034,6 +1034,8 @@ uint32_t OTRGlobals::GetInterpolationFPS() {
+ extern "C" void OTRMessage_Init();
+ extern "C" void AudioMgr_CreateNextAudioBuffer(s16* samples, u32 num_samples);
+ extern "C" void AudioPlayer_Play(const uint8_t* buf, uint32_t len);
++// Zombies of Time: the mode's own sounds (Black Ops, imported by the player), added to each frame.
++extern "C" void ZombiesSound_Mix(int16_t* samples, uint32_t frames, uint32_t rate);
+ int AudioPlayer_Buffered(void);
+ extern "C" int AudioPlayer_GetDesiredBuffered(void);
+ std::unordered_map<std::string, ExtensionEntry> ExtensionCache;
+@@ -1070,6 +1072,8 @@ void OTRAudio_Thread() {
+                                            num_audio_samples);
+         }
+ 
++        ZombiesSound_Mix(audio_buffer, num_audio_samples * AUDIO_FRAMES_PER_UPDATE, 32000);
++
+         AudioPlayer_Play((u8*)audio_buffer,
+                          num_audio_samples * (sizeof(int16_t) * NUM_AUDIO_CHANNELS * AUDIO_FRAMES_PER_UPDATE));
+ 

@@ -1,0 +1,1364 @@
+// Zombies of Time: buy stations.
+//
+// Each station is a torch placed on open floor in a ring around where the run
+// started. Walk up to one and press the buy button. Perk and Pack-a-Punch
+// torches stay dark until the power is on.
+
+#include "ZombiesMode.h"
+#include "ZombiesBox.h"
+#include "ZombiesGuns.h"
+#include "ZombiesSound.h"
+
+#include <libultraship/bridge/consolevariablebridge.h>
+
+#include <algorithm>
+#include <cmath>
+
+extern "C" {
+#include "functions.h"
+#include "macros.h"
+#include "variables.h"
+extern PlayState* gPlayState;
+}
+
+namespace Zombies {
+
+static constexpr float kStationRadius = 320.0f;
+static constexpr float kInteractDist = 95.0f;
+static constexpr int kChestCost = 950;
+static constexpr int kFireSaleCost = 10;
+static constexpr int kPackAPunchCost = 5000;
+static constexpr int kFountainRupees = 50;
+
+// Torch params: high nibble is the torch type, 0x400 keeps it lit, low bits are a
+// switch flag. 0x3E is a temp flag (cleared on every scene load), so lighting one never
+// trips anything in the arena; Redead kills use 0x3F, so they never light the stone torches.
+static constexpr s16 kTorchFlag = 0x3E;
+static constexpr s16 kTorchGolden = 0x0000 | kTorchFlag;
+static constexpr s16 kTorchStone = 0x1000 | kTorchFlag;
+static constexpr s16 kTorchWooden = 0x2000 | kTorchFlag; // a Deku Stick lights it and sets the flag
+static constexpr s16 kTorchLit = 0x0400;
+
+struct Station {
+    StationType type;
+    Vec3f pos;
+    Actor* torch = nullptr;
+    bool placed = false;
+    int zone = -1; // arena zone, or -1 when placed around the start point
+};
+
+static Station sStations[static_cast<int>(StationType::Count)];
+
+// An imported map's wall buys: each sells one gun (or grenades) from its own spot on the
+// wall, chalked there, as in Black Ops. No torch: the chalk is the marker.
+struct WallBuy {
+    GunId gun = GunId::None;
+    bool grenades = false; // the stielhandgranate's spot: bombs
+    Vec3f spot = {};       // on the wall, where the chalk goes
+    Vec3f floor = {};      // the floor under it, where the buyer stands near
+    int zone = 0;
+};
+static std::vector<WallBuy> sWallBuys;
+static constexpr float kWallBuyReach = 85.0f;
+static constexpr int kGrenadeCost = 250;
+static constexpr int kGrenadesPerBuy = 4;
+static int sChestUses = 0; // prizes since the chest last moved
+static bool sChestMoved = false;
+static bool sPapSword = false;
+static int sFairyBuys = 0; // solo Fairy Revive sells out after three, as Quick Revive does
+static constexpr int kSoloFairyBuys = 3;
+
+static bool Solo() {
+    return GetRun().playerCount < 2;
+}
+
+static bool NeedsPower(StationType type) {
+    switch (type) {
+        case StationType::Juggernog:
+        case StationType::DoubleTap:
+        case StationType::StaminUp:
+        case StationType::PackAPunch:
+            return true;
+        case StationType::FairyRevive:
+            return !Solo(); // Quick Revive sells without power in solo
+
+        default:
+            return false;
+    }
+}
+
+static s16 TorchParams(StationType type) {
+    switch (type) {
+        case StationType::MysteryChest:
+            return kTorchGolden | kTorchLit;
+        case StationType::Armory:
+        case StationType::FairyFountain:
+            return kTorchWooden | kTorchLit;
+        case StationType::Power:
+            return GetRun().powerOn ? (kTorchWooden | kTorchLit) : kTorchWooden;
+        default:
+            return (GetRun().powerOn || !NeedsPower(type)) ? (kTorchStone | kTorchLit) : kTorchStone;
+    }
+}
+
+static bool FloorAt(PlayState* play, float x, float z, float refY, Vec3f* out) {
+    Vec3f probe = { x, refY + 150.0f, z };
+    CollisionPoly* poly;
+    s32 bgId;
+    f32 floorY = BgCheck_EntityRaycastFloor3(&play->colCtx, &poly, &bgId, &probe);
+    if (floorY <= BGCHECK_Y_MIN + 1.0f || fabsf(floorY - refY) > 80.0f) {
+        return false;
+    }
+    *out = { x, floorY, z };
+    return true;
+}
+
+static bool TooCloseToOtherStations(const Vec3f& pos, int self) {
+    for (int i = 0; i < static_cast<int>(StationType::Count); i++) {
+        if (i != self && sStations[i].placed &&
+            Math_Vec3f_DistXZ(&sStations[i].pos, const_cast<Vec3f*>(&pos)) < 140.0f) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void SpawnTorch(PlayState* play, int index, const Vec3f& pos) {
+    Station& station = sStations[index];
+    station.pos = pos;
+    station.placed = true;
+    if (!GetRun().powerOn) {
+        Flags_UnsetSwitch(play, kTorchFlag); // a stone torch lit by hand stays dark
+    }
+    station.torch =
+        Actor_Spawn(&play->actorCtx, play, ACTOR_OBJ_SYOKUDAI, pos.x, pos.y, pos.z, 0, 0, 0, TorchParams(station.type));
+    if (station.torch != nullptr) {
+        station.torch->room = -1;
+    }
+}
+
+static bool PlaceStation(PlayState* play, int index, s16 baseAngle) {
+    const Run& run = GetRun();
+    static constexpr float radii[] = { 1.0f, 0.75f, 1.3f, 0.5f, 1.6f };
+    static constexpr s16 angleOffsets[] = { 0, 0x600, -0x600, 0xC00, -0xC00 };
+
+    for (float radiusScale : radii) {
+        for (s16 offset : angleOffsets) {
+            s16 angle = baseAngle + offset;
+            float radius = kStationRadius * radiusScale;
+            Vec3f pos;
+            if (!FloorAt(play, run.origin.x + Math_SinS(angle) * radius, run.origin.z + Math_CosS(angle) * radius,
+                         run.origin.y, &pos)) {
+                continue;
+            }
+            if (TooCloseToOtherStations(pos, index)) {
+                continue;
+            }
+            SpawnTorch(play, index, pos);
+            return true;
+        }
+    }
+    return false;
+}
+
+// The authored spot for a station in the arena layout, if it has one.
+static const LayoutSpot* LayoutSpotFor(int index, int* zone) {
+    const ArenaLayout* layout = GetRun().layout;
+    if (layout == nullptr) {
+        return nullptr;
+    }
+    for (size_t z = 0; z < layout->zones.size(); z++) {
+        for (const LayoutStation& st : layout->zones[z].stations) {
+            if (static_cast<int>(st.type) == index) {
+                *zone = static_cast<int>(z);
+                return &st.spot;
+            }
+        }
+    }
+    return nullptr;
+}
+
+static bool PlaceAtSpot(PlayState* play, int index, const LayoutSpot& spot) {
+    Vec3f pos;
+    if (!Arena_Resolve(play, spot, GetRun().origin.y, &pos, true)) {
+        return false;
+    }
+    SpawnTorch(play, index, pos);
+    return true;
+}
+
+void Stations_Clear() {
+    sWallBuys.clear();
+    for (Station& station : sStations) {
+        if (station.torch != nullptr) {
+            Actor_Kill(station.torch);
+        }
+        station = Station();
+    }
+}
+
+// The scene is gone, and the torches with it: drop them without touching the actors.
+void Stations_Forget() {
+    for (Station& station : sStations) {
+        station = Station();
+    }
+}
+
+void Stations_OnActorDestroy(Actor* actor) {
+    for (Station& station : sStations) {
+        if (station.torch == actor) {
+            station.torch = nullptr;
+            station.placed = false;
+        }
+    }
+}
+
+static void PlaceWallBuys(PlayState* play) {
+    sWallBuys.clear();
+    const ArenaLayout* layout = GetRun().layout;
+    if (layout == nullptr) {
+        return;
+    }
+    for (size_t z = 0; z < layout->zones.size(); z++) {
+        for (const LayoutWallBuy& w : layout->zones[z].wallBuys) {
+            WallBuy buy;
+            buy.grenades = w.boName.find("granate") != std::string::npos || w.boName.find("grenade") != std::string::npos;
+            buy.gun = buy.grenades ? GunId::None : GunByBoName(w.boName.c_str());
+            if (!buy.grenades && buy.gun == GunId::None) {
+                continue; // a gun the table doesn't have
+            }
+            if (!Arena_Resolve(play, w.spot, GetRun().origin.y, &buy.floor, true)) {
+                continue;
+            }
+            float height = w.spot.y > LayoutSpot::kNoHeight ? w.spot.y : buy.floor.y + 45.0f;
+            buy.spot = { w.spot.x, height, w.spot.z };
+            buy.zone = static_cast<int>(z);
+            sWallBuys.push_back(buy);
+        }
+    }
+}
+
+void Stations_Place(PlayState* play) {
+    Stations_Clear();
+    const Run& run = GetRun();
+    constexpr int count = static_cast<int>(StationType::Count);
+
+    // The Mystery Chest gets the spot straight ahead of Link; the rest fan out around him.
+    for (int i = 0; i < count; i++) {
+        sStations[i].type = static_cast<StationType>(i);
+    }
+    static constexpr StationType order[] = {
+        StationType::MysteryChest, StationType::Armory,    StationType::Juggernog,
+        StationType::Power,        StationType::DoubleTap, StationType::FairyRevive,
+        StationType::PackAPunch,   StationType::StaminUp,  StationType::FairyFountain,
+    };
+    for (int slot = 0; slot < count; slot++) {
+        int index = static_cast<int>(order[slot]);
+        // In an authored arena, stations go on their spots, and wait for their zone to open.
+        int zone;
+        const LayoutSpot* spot = LayoutSpotFor(index, &zone);
+        if (spot != nullptr) {
+            sStations[index].zone = zone;
+            if (!Arena_ZoneOpen(zone) || PlaceAtSpot(play, index, *spot)) {
+                continue;
+            }
+        }
+        s16 angle = run.originYaw + static_cast<s16>(slot * (0x10000 / count));
+        PlaceStation(play, index, angle);
+    }
+    PlaceWallBuys(play);
+}
+
+// A new run: the chest's use count and the Punched Blade start over. A void-out
+// re-places the stations but keeps both.
+void Stations_NewRun() {
+    sChestUses = 0;
+    sChestMoved = false;
+    sPapSword = false;
+    sFairyBuys = 0;
+}
+
+static void MoveChest(PlayState* play) {
+    sChestMoved = true;
+    int index = static_cast<int>(StationType::MysteryChest);
+    Station& chest = sStations[index];
+    if (chest.torch != nullptr) {
+        Actor_Kill(chest.torch);
+    }
+    chest.torch = nullptr;
+    chest.placed = false;
+
+    // In an authored arena the chest moves between its spots in the open zones.
+    const ArenaLayout* layout = GetRun().layout;
+    if (layout != nullptr) {
+        Vec3f oldPos = chest.pos;
+        std::vector<Vec3f> options;
+        for (size_t z = 0; z < layout->zones.size(); z++) {
+            if (!Arena_ZoneOpen(static_cast<int>(z))) {
+                continue;
+            }
+            for (const LayoutSpot& spot : layout->zones[z].chestSpots) {
+                Vec3f pos;
+                if (Arena_Resolve(play, spot, GetRun().origin.y, &pos, true) && Math_Vec3f_DistXZ(&pos, &oldPos) > 100.0f) {
+                    options.push_back(pos);
+                }
+            }
+        }
+        if (!options.empty()) {
+            size_t pick =
+                std::min(static_cast<size_t>(Rand_ZeroOne() * static_cast<float>(options.size())), options.size() - 1);
+            SpawnTorch(play, index, options[pick]);
+            return;
+        }
+    }
+    PlaceStation(play, index, static_cast<s16>(Rand_ZeroOne() * 0x10000));
+}
+
+void Stations_OpenZone(PlayState* play, int zone) {
+    for (int i = 0; i < static_cast<int>(StationType::Count); i++) {
+        int stationZone;
+        const LayoutSpot* spot = LayoutSpotFor(i, &stationZone);
+        if (spot != nullptr && stationZone == zone && !sStations[i].placed) {
+            if (!PlaceAtSpot(play, i, *spot)) {
+                PlaceStation(play, i, static_cast<s16>(Rand_ZeroOne() * 0x10000));
+            }
+        }
+    }
+}
+
+static void RelightTorches() {
+    for (Station& station : sStations) {
+        if (station.torch != nullptr) {
+            station.torch->params = TorchParams(station.type);
+        }
+    }
+}
+
+int Stations_BoxCost() {
+    return PowerUpActive(PowerUp::FireSale) ? kFireSaleCost : kChestCost;
+}
+
+bool Stations_PapSword() {
+    return sPapSword;
+}
+
+// ---------------------------------------------------------------------------
+// Giving items
+
+static bool Has(u8 item) {
+    return INV_CONTENT(item) == item;
+}
+
+static void AutoEquip(PlayState* play, u8 item) {
+    for (int b = 1; b <= 3; b++) {
+        if (gSaveContext.equips.buttonItems[b] == item) {
+            return;
+        }
+    }
+    for (int b = 1; b <= 3; b++) {
+        if (b == Guns_Button()) {
+            continue; // the guns' button
+        }
+        if (gSaveContext.equips.buttonItems[b] == ITEM_NONE) {
+            gSaveContext.equips.buttonItems[b] = item;
+            gSaveContext.equips.cButtonSlots[b - 1] = SLOT(item);
+            Interface_LoadItemIcon1(play, static_cast<u16>(b));
+            return;
+        }
+    }
+}
+
+static void GiveMagic() {
+    if (!gSaveContext.isMagicAcquired) {
+        gSaveContext.isMagicAcquired = true;
+        gSaveContext.magicFillTarget = MAGIC_NORMAL_METER;
+    }
+}
+
+static void GiveWeapon(PlayState* play, u8 item) {
+    // Giving the slingshot or bow again resets an upgraded seed bag or quiver: refill instead.
+    if ((item == ITEM_SLINGSHOT || item == ITEM_BOW) && Has(item)) {
+        RefillAmmo();
+        AutoEquip(play, item);
+        return;
+    }
+    switch (item) {
+        case ITEM_BOMB:
+            Item_Give(play, CUR_UPG_VALUE(UPG_BOMB_BAG) == 0 ? ITEM_BOMB_BAG_20 : ITEM_BOMBS_20);
+            break;
+        case ITEM_BOMBCHU:
+            Item_Give(play, ITEM_BOMBCHUS_20);
+            break;
+        case ITEM_STICK:
+            Item_Give(play, ITEM_STICKS_10);
+            break;
+        case ITEM_DINS_FIRE:
+        case ITEM_NAYRUS_LOVE:
+            GiveMagic();
+            Item_Give(play, item);
+            break;
+        case ITEM_ARROW_FIRE:
+        case ITEM_ARROW_ICE:
+        case ITEM_ARROW_LIGHT:
+            if (!Has(ITEM_BOW)) {
+                Item_Give(play, ITEM_BOW);
+            }
+            GiveMagic();
+            Item_Give(play, item);
+            break;
+        case ITEM_SWORD_BGS:
+            Item_Give(play, ITEM_SWORD_BGS);
+            gSaveContext.bgsFlag = 1;
+            gSaveContext.equips.buttonItems[0] = ITEM_SWORD_BGS;
+            Inventory_ChangeEquipment(EQUIP_TYPE_SWORD, EQUIP_VALUE_SWORD_BIGGORON);
+            Interface_LoadItemIcon1(play, 0);
+            Player_SetEquipmentData(play, GET_PLAYER(play));
+            return;
+        default:
+            Item_Give(play, item);
+            break;
+    }
+    RefillAmmo();
+    AutoEquip(play, item);
+}
+
+// Zombies-only starting kit, Black Ops style: a sword for the knife, the M1911 (given by
+// the guns), four bombs for the grenades, three hearts, and an ocarina with the
+// three songs the mode uses. The run's save snapshot puts the real inventory back after.
+void GiveLoadout(PlayState* play) {
+    bool adult = LINK_IS_ADULT;
+    for (int i = 0; i < static_cast<int>(ARRAY_COUNT(gSaveContext.inventory.items)); i++) {
+        gSaveContext.inventory.items[i] = ITEM_NONE;
+    }
+    for (int i = 0; i < static_cast<int>(ARRAY_COUNT(gSaveContext.inventory.ammo)); i++) {
+        gSaveContext.inventory.ammo[i] = 0;
+    }
+    // C buttons and SoH's D-pad item buttons.
+    for (int b = 1; b < static_cast<int>(ARRAY_COUNT(gSaveContext.equips.buttonItems)); b++) {
+        gSaveContext.equips.buttonItems[b] = ITEM_NONE;
+        gSaveContext.equips.cButtonSlots[b - 1] = SLOT_NONE;
+    }
+    gSaveContext.inventory.equipment &= ~0x00FF; // swords and shields
+    gSaveContext.inventory.upgrades = 0;
+    gSaveContext.isDoubleDefenseAcquired = 0;
+    gSaveContext.isMagicAcquired = 0;
+    gSaveContext.isDoubleMagicAcquired = 0;
+    gSaveContext.magicLevel = 0;
+    gSaveContext.magic = 0;
+    gSaveContext.magicCapacity = 0;
+    gSaveContext.healthCapacity = 0x30;
+    gSaveContext.health = 0x30;
+    gSaveContext.rupees = 0;
+
+    Item_Give(play, adult ? ITEM_SWORD_MASTER : ITEM_SWORD_KOKIRI);
+    Item_Give(play, adult ? ITEM_SHIELD_HYLIAN : ITEM_SHIELD_DEKU);
+    Inventory_ChangeEquipment(EQUIP_TYPE_SWORD, adult ? EQUIP_VALUE_SWORD_MASTER : EQUIP_VALUE_SWORD_KOKIRI);
+    Inventory_ChangeEquipment(EQUIP_TYPE_SHIELD, adult ? EQUIP_VALUE_SHIELD_HYLIAN : EQUIP_VALUE_SHIELD_DEKU);
+    gSaveContext.equips.buttonItems[0] = adult ? ITEM_SWORD_MASTER : ITEM_SWORD_KOKIRI;
+    Interface_LoadItemIcon1(play, 0);
+
+    // The pistol is the M1911 on the guns' button (ZombiesGuns.cpp); the slingshot or bow
+    // is the Armory's first buy.
+    Item_Give(play, ITEM_BOMB_BAG_20);
+    AMMO(ITEM_BOMB) = 4;
+    AutoEquip(play, ITEM_BOMB);
+    Item_Give(play, ITEM_OCARINA_FAIRY);
+    AutoEquip(play, ITEM_OCARINA_FAIRY);
+    // Only the mode's three songs: a warp song would carry Link out of the map.
+    for (int song = QUEST_SONG_MINUET; song <= QUEST_SONG_STORMS; song++) {
+        gSaveContext.inventory.questItems &= ~(1u << song);
+    }
+    gSaveContext.inventory.questItems |= (1 << QUEST_SONG_LULLABY) | (1 << QUEST_SONG_SUN) | (1 << QUEST_SONG_STORMS);
+}
+
+struct WeaponOffer {
+    u8 item;
+    const char* name;
+    int cost;
+};
+
+// Wall buys, best-first per age. The Armory sells the first one Link lacks.
+static const WeaponOffer kChildArmory[] = {
+    { ITEM_SLINGSHOT, "FAIRY SLINGSHOT", 500 },
+    { ITEM_BOOMERANG, "BOOMERANG", 750 },
+    { ITEM_BOMB, "BOMBS", 1000 },
+};
+static const WeaponOffer kAdultArmory[] = {
+    { ITEM_BOW, "FAIRY BOW", 1000 },
+    { ITEM_BOMB, "BOMBS", 1000 },
+    { ITEM_HOOKSHOT, "HOOKSHOT", 1200 },
+    { ITEM_HAMMER, "MEGATON HAMMER", 1500 },
+};
+static constexpr int kAmmoCost = 500;
+
+static const WeaponOffer* ArmoryOffer() {
+    const WeaponOffer* list = LINK_IS_ADULT ? kAdultArmory : kChildArmory;
+    int count = static_cast<int>(LINK_IS_ADULT ? std::size(kAdultArmory) : std::size(kChildArmory));
+    for (int i = 0; i < count; i++) {
+        if (!Has(list[i].item)) {
+            return &list[i];
+        }
+    }
+    return nullptr;
+}
+
+struct ChestPrize {
+    u8 item;
+    const char* name;
+    int weight;
+};
+
+// Black Ops box analogues: Bombchus are the Monkey Bomb, Din's Fire the Thundergun. The
+// guns (the Ray Gun among them) join these in the roll; see ZombiesGunTable.cpp.
+static const ChestPrize kChildChest[] = {
+    { ITEM_BOMBCHU, "BOMBCHUS", 4 },  { ITEM_SLINGSHOT, "FAIRY SLINGSHOT", 3 }, { ITEM_BOOMERANG, "BOOMERANG", 3 },
+    { ITEM_BOMB, "BOMBS", 3 },        { ITEM_DINS_FIRE, "DIN'S FIRE", 2 },      { ITEM_NAYRUS_LOVE, "NAYRU'S LOVE", 1 },
+    { ITEM_STICK, "DEKU STICKS", 2 },
+};
+static const ChestPrize kAdultChest[] = {
+    { ITEM_BOMBCHU, "BOMBCHUS", 4 },         { ITEM_ARROW_FIRE, "FIRE ARROWS", 3 },
+    { ITEM_ARROW_ICE, "ICE ARROWS", 3 },     { ITEM_HAMMER, "MEGATON HAMMER", 2 },
+    { ITEM_LONGSHOT, "LONGSHOT", 2 },        { ITEM_DINS_FIRE, "DIN'S FIRE", 2 },
+    { ITEM_NAYRUS_LOVE, "NAYRU'S LOVE", 1 }, { ITEM_ARROW_LIGHT, "LIGHT ARROWS", 1 },
+    { ITEM_SWORD_BGS, "BIGGORON SWORD", 1 },
+};
+
+static int ChestWeight() {
+    const ChestPrize* list = LINK_IS_ADULT ? kAdultChest : kChildChest;
+    int count = static_cast<int>(LINK_IS_ADULT ? std::size(kAdultChest) : std::size(kChildChest));
+    int total = 0;
+    for (int i = 0; i < count; i++) {
+        total += list[i].weight;
+    }
+    return total;
+}
+
+static const ChestPrize& RollChest() {
+    const ChestPrize* list = LINK_IS_ADULT ? kAdultChest : kChildChest;
+    int count = static_cast<int>(LINK_IS_ADULT ? std::size(kAdultChest) : std::size(kChildChest));
+    int total = 0;
+    for (int i = 0; i < count; i++) {
+        total += list[i].weight;
+    }
+    int roll = std::min(static_cast<int>(Rand_ZeroOne() * static_cast<float>(total)), total - 1);
+    for (int i = 0; i < count; i++) {
+        if (roll < list[i].weight) {
+            return list[i];
+        }
+        roll -= list[i].weight;
+    }
+    return list[0];
+}
+
+// ---------------------------------------------------------------------------
+// Pack-a-Punch: upgrades the first upgradable thing on Link's C buttons, then his
+// sword, then his shield.
+
+struct PapUpgrade {
+    const char* name = nullptr;
+    void (*apply)(PlayState*) = nullptr;
+};
+
+static PapUpgrade PapForItem(u8 item) {
+    switch (item) {
+        case ITEM_BOW:
+        case ITEM_ARROW_FIRE:
+        case ITEM_ARROW_ICE:
+        case ITEM_ARROW_LIGHT:
+            if (CUR_UPG_VALUE(UPG_QUIVER) < 3) {
+                return { "BIGGER QUIVER", [](PlayState* play) {
+                            Item_Give(play, CUR_UPG_VALUE(UPG_QUIVER) == 1 ? ITEM_QUIVER_40 : ITEM_QUIVER_50);
+                        } };
+            }
+            if (!Has(ITEM_ARROW_LIGHT)) {
+                return { "LIGHT ARROWS", [](PlayState* play) { GiveWeapon(play, ITEM_ARROW_LIGHT); } };
+            }
+            break;
+        case ITEM_SLINGSHOT:
+            if (CUR_UPG_VALUE(UPG_BULLET_BAG) < 3) {
+                return { "BIGGER SEED BAG", [](PlayState* play) {
+                            Item_Give(play,
+                                      CUR_UPG_VALUE(UPG_BULLET_BAG) == 1 ? ITEM_BULLET_BAG_40 : ITEM_BULLET_BAG_50);
+                        } };
+            }
+            break;
+        case ITEM_BOMB:
+            if (CUR_UPG_VALUE(UPG_BOMB_BAG) < 3) {
+                return { "BIGGER BOMB BAG", [](PlayState* play) {
+                            Item_Give(play, CUR_UPG_VALUE(UPG_BOMB_BAG) == 1 ? ITEM_BOMB_BAG_30 : ITEM_BOMB_BAG_40);
+                        } };
+            }
+            break;
+        case ITEM_HOOKSHOT:
+            return { "LONGSHOT", [](PlayState* play) { Item_Give(play, ITEM_LONGSHOT); } };
+        default:
+            break;
+    }
+    return {};
+}
+
+static PapUpgrade FindPapUpgrade() {
+    // The gun in hand, when Link used it last: Black Ops punches what you're holding.
+    if (Guns_PapWanted(0)) {
+        return { Guns_PapName(0), [](PlayState* play) { Guns_PackAPunch(play, 0); } };
+    }
+    for (int b = 1; b <= 3; b++) {
+        PapUpgrade upgrade = PapForItem(gSaveContext.equips.buttonItems[b]);
+        if (upgrade.apply != nullptr) {
+            return upgrade;
+        }
+    }
+    if (LINK_IS_ADULT && !CHECK_OWNED_EQUIP(EQUIP_TYPE_SWORD, EQUIP_INV_SWORD_BIGGORON)) {
+        return { "BIGGORON SWORD", [](PlayState* play) { GiveWeapon(play, ITEM_SWORD_BGS); } };
+    }
+    if (!sPapSword) {
+        return { "PUNCHED BLADE", [](PlayState*) { sPapSword = true; } };
+    }
+    if (LINK_IS_ADULT && !CHECK_OWNED_EQUIP(EQUIP_TYPE_SHIELD, EQUIP_INV_SHIELD_MIRROR)) {
+        return { "MIRROR SHIELD", [](PlayState* play) {
+                    Item_Give(play, ITEM_SHIELD_MIRROR);
+                    Inventory_ChangeEquipment(EQUIP_TYPE_SHIELD, EQUIP_VALUE_SHIELD_MIRROR);
+                    Player_SetEquipmentData(play, GET_PLAYER(play));
+                } };
+    }
+    if (Guns_PapWanted(0, true)) {
+        return { Guns_PapName(0), [](PlayState* play) { Guns_PackAPunch(play, 0); } };
+    }
+    return {};
+}
+
+static bool PapNeedsLullaby() {
+    return CHECK_QUEST_ITEM(QUEST_SONG_LULLABY) && !GetRun().papUnlocked;
+}
+
+// ---------------------------------------------------------------------------
+// Perks
+
+// The bottle slot Fairy Revive fills, or -1 if every bottle holds a quest item.
+static int FairyBottleSlot() {
+    static constexpr int bottleSlots[] = { SLOT_BOTTLE_1, SLOT_BOTTLE_2, SLOT_BOTTLE_3, SLOT_BOTTLE_4 };
+    int target = -1;
+    for (int slot : bottleSlots) {
+        if (gSaveContext.inventory.items[slot] == ITEM_BOTTLE) {
+            target = slot;
+            break;
+        }
+    }
+    if (target < 0) {
+        for (int slot : bottleSlots) {
+            if (gSaveContext.inventory.items[slot] == ITEM_NONE) {
+                target = slot;
+                break;
+            }
+        }
+    }
+    if (target < 0) {
+        // Every bottle is full: one's contents make way, but never a quest item.
+        for (int slot : bottleSlots) {
+            u8 item = gSaveContext.inventory.items[slot];
+            if (item != ITEM_LETTER_RUTO && item != ITEM_BIG_POE) {
+                target = slot;
+                break;
+            }
+        }
+    }
+    return target;
+}
+
+static void GiveFairyBottle() {
+    int target = FairyBottleSlot();
+    if (target < 0) {
+        return;
+    }
+    gSaveContext.inventory.items[target] = ITEM_FAIRY;
+    for (int b = 1; b <= 3; b++) {
+        if (gSaveContext.equips.cButtonSlots[b - 1] == target) {
+            gSaveContext.equips.buttonItems[b] = ITEM_FAIRY;
+            Interface_LoadItemIcon1(gPlayState, static_cast<u16>(b));
+        }
+    }
+}
+
+bool Stations_ChestMoved() {
+    return sChestMoved;
+}
+
+// Nacht's box has the one spot and never moves, as in Black Ops: no teddy bear there.
+static bool ChestCanMove() {
+    const ArenaLayout* layout = GetRun().layout;
+    if (layout == nullptr) {
+        return true;
+    }
+    size_t spots = 0;
+    for (const LayoutZone& zone : layout->zones) {
+        spots += zone.chestSpots.size();
+    }
+    return spots != 1;
+}
+
+bool Stations_ChestPlaced() {
+    return sStations[static_cast<int>(StationType::MysteryChest)].placed;
+}
+
+bool Stations_Chest(Vec3f* pos, Actor** torch) {
+    const Station& chest = sStations[static_cast<int>(StationType::MysteryChest)];
+    *pos = chest.pos;
+    *torch = chest.torch;
+    return chest.placed;
+}
+
+static bool HasPerk(int who, Perk perk) {
+    if (perk == PERK_FAIRY_REVIVE && who == 0 && Solo()) {
+        return Inventory_HasSpecificBottle(ITEM_FAIRY); // solo, the perk is the fairy
+    }
+    return GetRun().players[who].perks[perk];
+}
+
+struct PerkInfo {
+    Perk perk;
+    const char* name;
+    int cost;
+};
+
+static PerkInfo PerkFor(StationType type) {
+    switch (type) {
+        case StationType::Juggernog:
+            return { PERK_JUGGERNOG, "JUGGERNOG MILK", 2500 };
+        case StationType::FairyRevive:
+            // Solo it's a self-revive for 500; in co-op it revives others faster, for 1500.
+            return { PERK_FAIRY_REVIVE, "FAIRY REVIVE", Solo() ? 500 : 1500 };
+        case StationType::DoubleTap:
+            return { PERK_DOUBLE_TAP, "DOUBLE TAP", 2000 };
+        case StationType::StaminUp:
+        default:
+            return { PERK_STAMIN_UP, "STAMIN-UP", 2000 };
+    }
+}
+
+static constexpr int kPartnerJuggernogHealth = 80; // five hearts
+
+static void ApplyPerk(int who, Perk perk) {
+    PlayerState& ps = GetRun().players[who];
+    ps.perks[perk] = true;
+    if (who == 1) {
+        // Player 2's perks live in their own state: Juggernog adds two hearts, the rest are
+        // read where they act.
+        Partner& partner = GetRun().partner;
+        if (perk == PERK_JUGGERNOG) {
+            partner.healthCapacity = kPartnerJuggernogHealth;
+            partner.health = partner.healthCapacity;
+        }
+        return;
+    }
+    switch (perk) {
+        case PERK_JUGGERNOG:
+            gSaveContext.isDoubleDefenseAcquired = true;
+            gSaveContext.inventory.defenseHearts = 20;
+            gSaveContext.health = gSaveContext.healthCapacity;
+            break;
+        case PERK_FAIRY_REVIVE:
+            if (Solo()) {
+                GiveFairyBottle(); // the fairy is the self-revive
+                sFairyBuys++;
+            }
+            break;
+        default:
+            break;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Prompts and purchases
+
+struct Offer {
+    std::string label;
+    int cost = 0;      // points
+    int rupeeCost = 0; // Fairy Fountain charges rupees instead
+    bool available = true;
+    std::string unavailableReason;
+};
+
+// Player 2's wall buys and chest: swords and bombs, their own.
+static constexpr int kPartnerMasterSwordCost = 1500;
+static constexpr int kPartnerBombsCost = 1000;
+static constexpr int kPartnerFountainCost = 500;
+static constexpr int kPartnerBombsPerBuy = 10;
+
+struct PartnerChestPrize {
+    const char* name;
+    int weight;
+    void (*give)();
+    u8 item; // what floats up out of the imported box
+};
+
+static const PartnerChestPrize kPartnerChest[] = {
+    { "MASTER SWORD", 3, [] { Coop_GiveSword(PARTNER_SWORD_MASTER); }, ITEM_SWORD_MASTER },
+    { "BIGGORON SWORD", 1, [] { Coop_GiveSword(PARTNER_SWORD_BIGGORON); }, ITEM_SWORD_BGS },
+    { "BOMBS", 4,
+      [] {
+          GetRun().partner.bombBag = true;
+          Coop_GiveBombs(Coop_MaxBombs());
+      },
+      ITEM_BOMB },
+    { "FAIRY", 2, [] { Coop_Heal(); }, ITEM_FAIRY },
+};
+
+static int PartnerChestWeight() {
+    int total = 0;
+    for (const PartnerChestPrize& prize : kPartnerChest) {
+        total += prize.weight;
+    }
+    return total;
+}
+
+static const PartnerChestPrize& RollPartnerChest() {
+    int total = PartnerChestWeight();
+    int roll = std::min(static_cast<int>(Rand_ZeroOne() * static_cast<float>(total)), total - 1);
+    for (const PartnerChestPrize& prize : kPartnerChest) {
+        if (roll < prize.weight) {
+            return prize;
+        }
+        roll -= prize.weight;
+    }
+    return kPartnerChest[0];
+}
+
+static Offer GetOffer(const Station& station, int who) {
+    Offer offer;
+    const Run& run = GetRun();
+    const Partner& partner = run.partner;
+
+    if (NeedsPower(station.type) && !run.powerOn) {
+        offer.available = false;
+        offer.unavailableReason = "NEEDS POWER";
+    }
+
+    switch (station.type) {
+        case StationType::Armory: {
+            // The rack's gun entries (R at the Armory, L for player 2), then its Zelda item.
+            if (Guns_ArmoryOffer(who, &offer.label, &offer.cost, &offer.available, &offer.unavailableReason)) {
+                break;
+            }
+            if (who == 1) {
+                if (partner.sword < PARTNER_SWORD_MASTER) {
+                    offer.label = "MASTER SWORD";
+                    offer.cost = kPartnerMasterSwordCost;
+                } else if (!partner.bombBag) {
+                    offer.label = "BOMBS";
+                    offer.cost = kPartnerBombsCost;
+                } else {
+                    offer.label = "BOMBS";
+                    offer.cost = kAmmoCost;
+                    if (partner.bombs >= Coop_MaxBombs()) {
+                        offer.available = false;
+                        offer.unavailableReason = "FULL";
+                    }
+                }
+                break;
+            }
+            const WeaponOffer* weapon = ArmoryOffer();
+            if (weapon != nullptr) {
+                offer.label = weapon->name;
+                offer.cost = weapon->cost;
+            } else {
+                offer.label = "AMMO";
+                offer.cost = kAmmoCost;
+            }
+            break;
+        }
+        case StationType::MysteryChest:
+            offer.label = PowerUpActive(PowerUp::FireSale) ? "MYSTERY BOX (FIRE SALE)" : "MYSTERY BOX";
+            offer.cost = Stations_BoxCost();
+            break;
+        case StationType::Juggernog:
+        case StationType::FairyRevive:
+        case StationType::DoubleTap:
+        case StationType::StaminUp: {
+            PerkInfo info = PerkFor(station.type);
+            offer.label = info.name;
+            offer.cost = info.cost;
+            if (HasPerk(who, info.perk)) {
+                offer.available = false;
+                offer.unavailableReason = "OWNED";
+            } else if (info.perk == PERK_FAIRY_REVIVE && Solo() && sFairyBuys >= kSoloFairyBuys) {
+                offer.available = false;
+                offer.unavailableReason = "SOLD OUT";
+            } else if (info.perk == PERK_FAIRY_REVIVE && Solo() && FairyBottleSlot() < 0) {
+                offer.available = false;
+                offer.unavailableReason = "NO BOTTLE FREE";
+            }
+            break;
+        }
+        case StationType::Power:
+            offer.label = "POWER SWITCH";
+            if (run.powerOn) {
+                offer.available = false;
+                offer.unavailableReason = "ON";
+            } else {
+                offer.available = true;
+            }
+            break;
+        case StationType::PackAPunch: {
+            offer.label = "PACK-A-PUNCH";
+            offer.cost = kPackAPunchCost;
+            if (offer.available && PapNeedsLullaby()) {
+                offer.available = false;
+                offer.unavailableReason = "PLAY ZELDA'S LULLABY";
+            } else if (offer.available && who == 1) {
+                if (Guns_PapWanted(1, true)) {
+                    offer.label += std::string(": ") + Guns_PapName(1); // the gun in hand first
+                } else if (partner.papSword) {
+                    offer.available = false;
+                    offer.unavailableReason = "NOTHING TO UPGRADE";
+                } else {
+                    offer.label += ": PUNCHED BLADE";
+                }
+            } else if (offer.available) {
+                PapUpgrade upgrade = FindPapUpgrade();
+                if (upgrade.apply == nullptr) {
+                    offer.available = false;
+                    offer.unavailableReason = "NOTHING TO UPGRADE";
+                } else {
+                    offer.label += std::string(": ") + upgrade.name;
+                }
+            }
+            break;
+        }
+        case StationType::FairyFountain:
+            offer.label = "FAIRY FOUNTAIN";
+            // Player 2 has no rupees, and on a Black Ops map every price is in points.
+            if (who == 1 || (run.layout != nullptr && run.layout->blackOps)) {
+                offer.cost = kPartnerFountainCost;
+            } else {
+                offer.rupeeCost = kFountainRupees;
+            }
+            break;
+        default:
+            break;
+    }
+    return offer;
+}
+
+static void Fail() {
+    if (!Sound_Play("deny")) {
+        Sfx_PlaySfxCentered(NA_SE_SY_ERROR);
+    }
+}
+
+// Player 2's side of the stations that give them something of their own. Returns false
+// for the ones that work the same for both (power, perks, the chest moving).
+static bool BuyForPartner(PlayState* play, Station& station, const Offer& offer) {
+    Partner& partner = GetRun().partner;
+    switch (station.type) {
+        case StationType::Armory:
+            if (Guns_ArmoryBuy(play, 1)) {
+                return true;
+            }
+            if (partner.sword < PARTNER_SWORD_MASTER) {
+                Coop_GiveSword(PARTNER_SWORD_MASTER);
+                Announce("PLAYER 2: MASTER SWORD", 3);
+            } else {
+                partner.bombBag = true;
+                Coop_GiveBombs(kPartnerBombsPerBuy);
+            }
+            Sfx_PlaySfxCentered(NA_SE_SY_GET_ITEM);
+            return true;
+        case StationType::MysteryChest: {
+            if (Box_Active()) {
+                return false; // the imported box rolls for player 2 too (RollBox)
+            }
+            sChestUses++;
+            if (!PowerUpActive(PowerUp::FireSale) && ChestCanMove() && ChestMoves(sChestUses, sChestMoved, Rand_ZeroOne())) {
+                GetRun().players[1].points += offer.cost; // refund, not earnings
+                Announce("THE CHEST MOVED", 3);
+                Sfx_PlaySfxCentered(NA_SE_VO_SK_LAUGH);
+                MoveChest(play);
+                sChestUses = 0;
+                return true;
+            }
+            // Guns and player 2's own prizes share the chest.
+            int gunWeight = Guns_ChestWeight(1);
+            int roll = static_cast<int>(Rand_ZeroOne() * static_cast<float>(gunWeight + PartnerChestWeight()));
+            const char* gun = roll < gunWeight ? Guns_ChestGive(play, 1, roll) : nullptr;
+            if (gun != nullptr) {
+                Announce(std::string("PLAYER 2: ") + gun, 3);
+                Sfx_PlaySfxCentered(NA_SE_SY_GET_BOXITEM);
+                return true;
+            }
+            const PartnerChestPrize& prize = RollPartnerChest();
+            prize.give();
+            Announce(std::string("PLAYER 2: ") + prize.name, 3);
+            Sfx_PlaySfxCentered(NA_SE_SY_GET_BOXITEM);
+            return true;
+        }
+        case StationType::PackAPunch:
+            if (Guns_PapWanted(1, true)) {
+                Guns_PackAPunch(play, 1);
+                Announce(std::string("PLAYER 2: ") + Guns_PapName(1), 3);
+                Sfx_PlaySfxCentered(NA_SE_SY_GET_ITEM);
+                return true;
+            }
+            partner.papSword = true;
+            Announce("PLAYER 2: PUNCHED BLADE", 3);
+            Sfx_PlaySfxCentered(NA_SE_SY_GET_ITEM);
+            return true;
+        case StationType::FairyFountain:
+            Coop_Heal();
+            Sfx_PlaySfxCentered(NA_SE_EV_FIATY_HEAL);
+            return true;
+        default:
+            return false;
+    }
+}
+
+// The chest's roll for the imported Mystery Box (ZombiesBox.cpp), made as its cycle ends:
+// false when the bear comes up instead (the buyer gets their points back).
+static bool RollBox(int who, int cost, BoxPrize* prize) {
+    sChestUses++;
+    if (!PowerUpActive(PowerUp::FireSale) && ChestCanMove() && ChestMoves(sChestUses, sChestMoved, Rand_ZeroOne())) {
+        GetRun().players[who].points += cost; // refund, not earnings: no Double Points
+        Announce("THE CHEST MOVED", 3);
+        if (!Sound_Play("box_teddy")) {
+            Sfx_PlaySfxCentered(NA_SE_VO_SK_LAUGH);
+        }
+        sChestUses = 0;
+        return false;
+    }
+    int gunWeight = Guns_ChestWeight(who);
+    int otherWeight = who == 1 ? PartnerChestWeight() : ChestWeight();
+    int roll = static_cast<int>(Rand_ZeroOne() * static_cast<float>(gunWeight + otherWeight));
+    GunId gun = roll < gunWeight ? GunBoxPick(Guns_Of(who), roll) : GunId::None;
+    if (gun != GunId::None) {
+        prize->label = GunName(gun, false);
+        prize->gunBoName = GunInfo(gun).boName;
+        // The gun shown is the gun given, whatever the player bought in between.
+        prize->give = [who, gun](PlayState* p) {
+            const char* name = Guns_ChestGiveGun(p, who, gun);
+            if (name != nullptr) {
+                Announce(who == 1 ? std::string("PLAYER 2: ") + name : std::string(name), 3);
+            }
+            Sfx_PlaySfxCentered(NA_SE_SY_GET_BOXITEM);
+        };
+        return true;
+    }
+    if (who == 1) {
+        // Player 2's own prizes: swords, bombs, a fairy.
+        const PartnerChestPrize& item = RollPartnerChest();
+        prize->label = item.name;
+        prize->item = item.item;
+        prize->give = [&item](PlayState*) {
+            item.give();
+            Announce(std::string("PLAYER 2: ") + item.name, 3);
+            Sfx_PlaySfxCentered(NA_SE_SY_GET_BOXITEM);
+        };
+        return true;
+    }
+    const ChestPrize& item = RollChest();
+    prize->label = item.name;
+    prize->item = item.item;
+    prize->give = [&item](PlayState* p) {
+        GiveWeapon(p, item.item);
+        Announce(item.name, 3);
+        Sfx_PlaySfxCentered(NA_SE_SY_GET_BOXITEM);
+    };
+    return true;
+}
+
+static void Buy(PlayState* play, Station& station, const Offer& offer, int who) {
+    if (!offer.available) {
+        Fail();
+        return;
+    }
+    if (offer.rupeeCost > 0) {
+        if (gSaveContext.rupees < offer.rupeeCost) {
+            Announce("NOT ENOUGH RUPEES", 2);
+            Fail();
+            return;
+        }
+        Rupees_ChangeBy(static_cast<s16>(-offer.rupeeCost));
+    } else if (!SpendPoints(who, offer.cost)) {
+        Fail();
+        return;
+    }
+    if (offer.cost > 0) {
+        Sound_Play("purchase");
+    }
+
+    Run& run = GetRun();
+    if (who == 1 && BuyForPartner(play, station, offer)) {
+        return;
+    }
+    switch (station.type) {
+        case StationType::Armory: {
+            if (Guns_ArmoryBuy(play, who)) {
+                break;
+            }
+            const WeaponOffer* weapon = ArmoryOffer();
+            if (weapon != nullptr) {
+                GiveWeapon(play, weapon->item);
+            } else {
+                RefillAmmo();
+            }
+            Sfx_PlaySfxCentered(NA_SE_SY_GET_ITEM);
+            break;
+        }
+        case StationType::MysteryChest: {
+            if (Box_Active()) {
+                // Black Ops' box: the prize (or the bear) comes when the cycle ends.
+                int cost = offer.cost;
+                Box_Start(play, who, [who, cost](BoxPrize* prize) { return RollBox(who, cost, prize); },
+                          [](PlayState* p) { MoveChest(p); });
+                break;
+            }
+            sChestUses++;
+            // The Keaton laugh is our teddy bear: after a few uses the chest may move on.
+            if (!PowerUpActive(PowerUp::FireSale) && ChestCanMove() && ChestMoves(sChestUses, sChestMoved, Rand_ZeroOne())) {
+                run.players[who].points += offer.cost; // refund, not earnings: no Double Points
+                Announce("THE CHEST MOVED", 3);
+                Sfx_PlaySfxCentered(NA_SE_VO_SK_LAUGH);
+                MoveChest(play);
+                sChestUses = 0;
+                return;
+            }
+            // Guns and Zelda items share the chest: roll over both weights together.
+            int gunWeight = Guns_ChestWeight(who);
+            int roll = static_cast<int>(Rand_ZeroOne() * static_cast<float>(gunWeight + ChestWeight()));
+            const char* gun = roll < gunWeight ? Guns_ChestGive(play, who, roll) : nullptr;
+            if (gun != nullptr) {
+                Announce(gun, 3);
+                Sfx_PlaySfxCentered(NA_SE_SY_GET_BOXITEM);
+                break;
+            }
+            const ChestPrize& prize = RollChest();
+            GiveWeapon(play, prize.item);
+            Announce(prize.name, 3);
+            Sfx_PlaySfxCentered(NA_SE_SY_GET_BOXITEM);
+            break;
+        }
+        case StationType::Juggernog:
+        case StationType::FairyRevive:
+        case StationType::DoubleTap:
+        case StationType::StaminUp: {
+            PerkInfo info = PerkFor(station.type);
+            ApplyPerk(who, info.perk);
+            Announce(info.name, 3);
+            Sound_Play("perk_jingle", &station.pos);
+            if (!Sound_Play("perk_drink")) {
+                Sfx_PlaySfxCentered(NA_SE_SY_GET_ITEM);
+            }
+            break;
+        }
+        case StationType::Power:
+            run.powerOn = true;
+            RelightTorches();
+            Announce("THE POWER IS ON", 3);
+            Sound_Play("power_switch", &station.pos);
+            if (!Sound_Play("power_on")) {
+                Sfx_PlaySfxCentered(NA_SE_EV_DIAMOND_SWITCH);
+            }
+            break;
+        case StationType::PackAPunch: {
+            PapUpgrade upgrade = FindPapUpgrade();
+            if (upgrade.apply != nullptr) {
+                upgrade.apply(play);
+                Announce(upgrade.name, 3);
+            }
+            if (!Sound_Play("pap_upgrade", &station.pos)) {
+                Sfx_PlaySfxCentered(NA_SE_SY_GET_ITEM);
+            }
+            break;
+        }
+        case StationType::FairyFountain:
+            gSaveContext.health = gSaveContext.healthCapacity;
+            if (gSaveContext.isMagicAcquired) {
+                Magic_Fill(play);
+            }
+            Sfx_PlaySfxCentered(NA_SE_EV_FIATY_HEAL);
+            break;
+        default:
+            break;
+    }
+}
+
+static Offer WallBuyOffer(const WallBuy& w, int who) {
+    Offer offer;
+    if (!w.grenades) {
+        Guns_WallOffer(who, w.gun, &offer.label, &offer.cost, &offer.available, &offer.unavailableReason);
+        return offer;
+    }
+    offer.label = "GRENADES";
+    offer.cost = kGrenadeCost;
+    bool full = who == 1 ? GetRun().partner.bombBag && GetRun().partner.bombs >= Coop_MaxBombs()
+                         : INV_CONTENT(ITEM_BOMB) == ITEM_BOMB && AMMO(ITEM_BOMB) >= CUR_CAPACITY(UPG_BOMB_BAG);
+    if (full) {
+        offer.available = false;
+        offer.unavailableReason = "FULL";
+    }
+    return offer;
+}
+
+static void UpdateWallBuyer(PlayState* play, const Buyer& buyer, const WallBuy& w) {
+    Offer offer = WallBuyOffer(w, buyer.index);
+    std::string button = buyer.index == 0 ? BuyButtonName() : "A";
+    if (!offer.available) {
+        *buyer.prompt = offer.label + " - " + offer.unavailableReason;
+    } else {
+        *buyer.prompt = button + ": " + offer.label + " [" + std::to_string(offer.cost) + "]";
+    }
+    if (!buyer.pressed || buyer.busy) {
+        return;
+    }
+    if (!offer.available || !SpendPoints(buyer.index, offer.cost)) {
+        Fail();
+        return;
+    }
+    Sound_Play("purchase");
+    if (!w.grenades) {
+        Guns_WallBuy(play, buyer.index, w.gun);
+        return;
+    }
+    // Black Ops' grenades are our bombs.
+    if (buyer.index == 1) {
+        GetRun().partner.bombBag = true;
+        Coop_GiveBombs(kGrenadesPerBuy);
+    } else {
+        if (INV_CONTENT(ITEM_BOMB) != ITEM_BOMB) {
+            Item_Give(play, ITEM_BOMB_BAG_20);
+            AMMO(ITEM_BOMB) = 0;
+            AutoEquip(play, ITEM_BOMB);
+        }
+        AMMO(ITEM_BOMB) = static_cast<s8>(std::min<int>(AMMO(ITEM_BOMB) + kGrenadesPerBuy, CUR_CAPACITY(UPG_BOMB_BAG)));
+    }
+    Announce(buyer.index == 1 ? "PLAYER 2: GRENADES" : "GRENADES", 2);
+    Sfx_PlaySfxCentered(NA_SE_SY_GET_ITEM);
+}
+
+int Stations_WallBuyCount() {
+    return static_cast<int>(sWallBuys.size());
+}
+
+bool Stations_WallBuyWares(int index, Vec3f* pos, ArmoryWares* wares) {
+    if (index < 0 || index >= static_cast<int>(sWallBuys.size())) {
+        return false;
+    }
+    const WallBuy& w = sWallBuys[index];
+    *pos = w.spot;
+    wares->gun = static_cast<int>(w.gun);
+    wares->item = w.grenades ? static_cast<u8>(ITEM_BOMB) : static_cast<u8>(ITEM_NONE);
+    wares->ammo = false;
+    wares->cost = WallBuyOffer(w, 0).cost;
+    return true;
+}
+
+static void UpdateBuyer(PlayState* play, const Buyer& buyer) {
+    if (!buyer.prompt->empty()) {
+        return; // a revive prompt comes first
+    }
+    Station* nearest = nullptr;
+    float nearestDist = kInteractDist;
+    Vec3f buyerPos = buyer.pos;
+    for (Station& station : sStations) {
+        if (!station.placed) {
+            continue;
+        }
+        float dist = Math_Vec3f_DistXZ(&station.pos, &buyerPos);
+        if (dist < nearestDist && fabsf(station.pos.y - buyer.pos.y) < 80.0f) {
+            nearest = &station;
+            nearestDist = dist;
+        }
+    }
+    // A wall buy nearer than any station: that's what's for sale.
+    WallBuy* wall = nullptr;
+    float wallDist = kWallBuyReach;
+    for (WallBuy& w : sWallBuys) {
+        float dist = Math_Vec3f_DistXZ(&w.spot, &buyerPos);
+        if (dist < wallDist && fabsf(w.floor.y - buyer.pos.y) < 60.0f && Arena_ZoneOpen(w.zone)) {
+            wall = &w;
+            wallDist = dist;
+        }
+    }
+    if (wall != nullptr && (nearest == nullptr || wallDist < nearestDist)) {
+        UpdateWallBuyer(play, buyer, *wall);
+        return;
+    }
+    if (nearest == nullptr) {
+        return;
+    }
+    // The Mystery Box in use: no sale, and its buyer takes the prize here.
+    if (nearest->type == StationType::MysteryChest &&
+        Box_Busy(buyer.index, buyer.index == 0 ? BuyButtonName() : "A", buyer.prompt)) {
+        if (buyer.pressed && !buyer.busy) {
+            Box_Take(play, buyer.index);
+        }
+        return;
+    }
+
+    std::string rack;
+    if (nearest->type == StationType::Armory) {
+        rack = Guns_ArmoryBrowse(play, buyer.index); // R steps through the guns on the wall
+    }
+    Offer offer = GetOffer(*nearest, buyer.index);
+    std::string button = buyer.index == 0 ? BuyButtonName() : "A";
+    std::string& prompt = *buyer.prompt;
+    if (!offer.available) {
+        prompt = offer.label + " - " + offer.unavailableReason;
+    } else if (offer.rupeeCost > 0) {
+        prompt = button + ": " + offer.label + " [" + std::to_string(offer.rupeeCost) + " RUPEES]";
+    } else if (offer.cost > 0) {
+        prompt = button + ": " + offer.label + " [" + std::to_string(offer.cost) + "]";
+    } else {
+        prompt = button + ": " + offer.label;
+    }
+    prompt += rack;
+
+    if (buyer.pressed && !buyer.busy) {
+        Buy(play, *nearest, offer, buyer.index);
+    }
+}
+
+bool Stations_ArmoryWares(Vec3f* pos, ArmoryWares* wares) {
+    const Station& armory = sStations[static_cast<int>(StationType::Armory)];
+    if (!armory.placed) {
+        return false;
+    }
+    *pos = armory.pos;
+    Offer offer = GetOffer(armory, 0);
+    wares->gun = static_cast<int>(Guns_ArmoryRackGun(0));
+    wares->cost = offer.cost;
+    wares->item = ITEM_NONE;
+    wares->ammo = false;
+    if (wares->gun == static_cast<int>(GunId::None)) {
+        const WeaponOffer* weapon = ArmoryOffer();
+        wares->item = weapon != nullptr ? weapon->item : static_cast<u8>(ITEM_NONE);
+        wares->ammo = weapon == nullptr;
+    }
+    return true;
+}
+
+void Stations_Update(PlayState* play, Player* player) {
+    Run& run = GetRun();
+
+    // Black Ops' perk machines and Pack-a-Punch hum once the power is on.
+    for (const Station& st : sStations) {
+        bool perk = st.type == StationType::Juggernog || st.type == StationType::FairyRevive ||
+                    st.type == StationType::DoubleTap || st.type == StationType::StaminUp;
+        if (st.placed && run.powerOn && (perk || st.type == StationType::PackAPunch)) {
+            Sound_Keep(&st, perk ? "perk_loop" : "pap_loop", &st.pos, 0.6f);
+        }
+    }
+
+    // Sun's Song can switch the power on from anywhere; keep the torches in step.
+    static bool lastPowerOn = false;
+    if (run.powerOn != lastPowerOn) {
+        lastPowerOn = run.powerOn;
+        RelightTorches();
+    }
+
+    Buyer buyers[2];
+    int count = GetBuyers(play, player, buyers);
+    for (int i = 0; i < count; i++) {
+        UpdateBuyer(play, buyers[i]);
+    }
+}
+
+} // namespace Zombies

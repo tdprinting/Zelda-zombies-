@@ -1,0 +1,491 @@
+// Zombies of Time: authored arenas.
+//
+// Anywhere else the mode places its stations and windows around Link. A scene with
+// a layout here gets fixed spots instead, split into zones the way a Black Ops map
+// is split into rooms: Link starts in one zone and pays to clear the debris into
+// the next, which opens its stations and lets undead in through its windows.
+//
+// Every spot is checked against the scene's collision when the run starts. A spot
+// that doesn't land on usable floor is skipped (or falls back to the placement
+// around Link), so a layout that is slightly off still plays.
+
+#include "ZombiesMode.h"
+
+#include <libultraship/bridge/consolevariablebridge.h>
+
+#include <algorithm>
+#include <cmath>
+
+#include "soh/frame_interpolation.h"
+
+extern "C" {
+#include "functions.h"
+#include "macros.h"
+#include "variables.h"
+extern PlayState* gPlayState;
+}
+
+namespace Zombies {
+
+static constexpr float kResolveRange = 250.0f;
+static constexpr float kDebrisReach = 110.0f;
+
+// Kakariko Graveyard, after the flow of Black Ops' first map: a small start area
+// with windows and a wall buy, debris into a bigger middle room with the Mystery
+// Chest's second spot, and more debris to the far end, where the power and
+// Pack-a-Punch are. The graveyard climbs in terraces from the gate (x < -550) to the
+// far end (x > 350); every spot was checked against a floor scan of the scene and
+// walked with the playtest harness.
+static const ArenaLayout sGraveyard = {
+    SCENE_GRAVEYARD,
+    "KAKARIKO GRAVEYARD",
+    {
+        {
+            "THE GATE",
+            0,
+            { 0.0f, 0.0f },
+            { -850.0f, 350.0f },
+            { { -1100.0f, 120.0f }, { -1000.0f, 620.0f }, { -700.0f, 50.0f } },
+            {
+                { StationType::Armory, { -950.0f, 300.0f } },
+                { StationType::FairyFountain, { -1000.0f, 470.0f } },
+                { StationType::MysteryChest, { -780.0f, 420.0f } },
+            },
+            { { -780.0f, 420.0f } },
+        },
+        {
+            "THE GRAVES",
+            1000,
+            { -560.0f, 300.0f },
+            { -150.0f, 250.0f },
+            { { -300.0f, -150.0f }, { 0.0f, 650.0f }, { 150.0f, -150.0f } },
+            {
+                { StationType::Juggernog, { -300.0f, 120.0f } },
+                { StationType::DoubleTap, { 0.0f, 420.0f } },
+            },
+            { { -50.0f, 50.0f } },
+        },
+        {
+            "THE ROYAL TOMB",
+            1000,
+            { 330.0f, 100.0f },
+            { 600.0f, 80.0f },
+            { { 620.0f, -180.0f }, { 620.0f, 330.0f } },
+            {
+                { StationType::Power, { 520.0f, -60.0f } },
+                { StationType::PackAPunch, { 560.0f, 220.0f } },
+                { StationType::StaminUp, { 450.0f, 300.0f } },
+                { StationType::FairyRevive, { 450.0f, -150.0f } },
+            },
+            { { 700.0f, 350.0f } },
+        },
+    },
+};
+
+// The other maps are open ground with no walls between zones, so their debris is a
+// toll rather than a door: clearing it opens that area's stations and windows. Spots
+// were picked from floor scans of each scene (every spot is on open, level floor
+// well clear of the scene exits) and walked with the playtest harness.
+
+// Market Ruins (adult, night): the walled square. Start at the south gate, then the
+// middle of the square, then the castle road at the north end.
+static const ArenaLayout sMarketRuins = {
+    SCENE_MARKET_RUINS,
+    "MARKET RUINS",
+    {
+        {
+            "THE SOUTH GATE",
+            0,
+            { 0.0f, 0.0f },
+            { 0.0f, 550.0f },
+            { { -650.0f, 700.0f }, { 650.0f, 700.0f }, { -650.0f, 250.0f } },
+            {
+                { StationType::Armory, { -500.0f, 600.0f } },
+                { StationType::FairyFountain, { 500.0f, 600.0f } },
+                { StationType::MysteryChest, { 300.0f, 350.0f } },
+            },
+            { { 300.0f, 350.0f } },
+        },
+        {
+            "THE SQUARE",
+            1000,
+            { 0.0f, 150.0f },
+            { 0.0f, -100.0f },
+            { { -650.0f, -200.0f }, { 650.0f, 0.0f } },
+            {
+                { StationType::Juggernog, { -500.0f, -100.0f } },
+                { StationType::DoubleTap, { 400.0f, -100.0f } },
+            },
+            { { -300.0f, -250.0f } },
+        },
+        {
+            "THE CASTLE ROAD",
+            1250,
+            { 0.0f, -450.0f },
+            { -100.0f, -750.0f },
+            { { -650.0f, -850.0f }, { 600.0f, -850.0f } },
+            {
+                { StationType::Power, { -600.0f, -800.0f } },
+                { StationType::PackAPunch, { -300.0f, -850.0f } },
+                { StationType::StaminUp, { 300.0f, -750.0f } },
+                { StationType::FairyRevive, { -700.0f, -600.0f } },
+            },
+            { { 400.0f, -800.0f } },
+        },
+    },
+};
+
+// Lon Lon Ranch: in at the front gate, out across the paddock, and the far end by
+// the barn for the power and Pack-a-Punch.
+static const ArenaLayout sLonLonRanch = {
+    SCENE_LON_LON_RANCH,
+    "LON LON RANCH",
+    {
+        {
+            "THE FRONT GATE",
+            0,
+            { 0.0f, 0.0f },
+            { 600.0f, -1800.0f },
+            { { -200.0f, -2200.0f }, { 1500.0f, -2100.0f }, { 1600.0f, -1400.0f } },
+            {
+                { StationType::Armory, { 300.0f, -2000.0f } },
+                { StationType::FairyFountain, { 900.0f, -2000.0f } },
+                { StationType::MysteryChest, { 600.0f, -1500.0f } },
+            },
+            { { 600.0f, -1500.0f } },
+        },
+        {
+            "THE PADDOCK",
+            1000,
+            { 300.0f, -1200.0f },
+            { 0.0f, -300.0f },
+            { { -1800.0f, -900.0f }, { 1600.0f, -300.0f }, { -1800.0f, 400.0f } },
+            {
+                { StationType::Juggernog, { -600.0f, -500.0f } },
+                { StationType::DoubleTap, { 800.0f, -200.0f } },
+            },
+            { { -300.0f, 300.0f } },
+        },
+        {
+            "THE BARN",
+            1250,
+            { 0.0f, 700.0f },
+            { 0.0f, 1500.0f },
+            { { -1800.0f, 1700.0f }, { 1700.0f, 1400.0f }, { 500.0f, 1900.0f } },
+            {
+                { StationType::Power, { -1000.0f, 1500.0f } },
+                { StationType::PackAPunch, { -400.0f, 1700.0f } },
+                { StationType::StaminUp, { 700.0f, 1300.0f } },
+                { StationType::FairyRevive, { 1100.0f, 1700.0f } },
+            },
+            { { 300.0f, 1500.0f } },
+        },
+    },
+};
+
+// Hyrule Field: the open ground south of the castle bridge, split west and east.
+static const ArenaLayout sHyruleField = {
+    SCENE_HYRULE_FIELD,
+    "HYRULE FIELD",
+    {
+        {
+            "THE BRIDGE",
+            0,
+            { 0.0f, 0.0f },
+            { 300.0f, 1700.0f },
+            { { -700.0f, 1400.0f }, { 1300.0f, 1500.0f }, { 300.0f, 2300.0f } },
+            {
+                { StationType::Armory, { 0.0f, 1900.0f } },
+                { StationType::FairyFountain, { 600.0f, 1950.0f } },
+                { StationType::MysteryChest, { 300.0f, 1350.0f } },
+            },
+            { { 300.0f, 1350.0f } },
+        },
+        {
+            "THE WEST FIELD",
+            1000,
+            { -500.0f, 1800.0f },
+            { -1000.0f, 2000.0f },
+            { { -1300.0f, 1500.0f }, { -1100.0f, 2500.0f } },
+            {
+                { StationType::Juggernog, { -900.0f, 1700.0f } },
+                { StationType::DoubleTap, { -700.0f, 2200.0f } },
+            },
+            { { -1000.0f, 2200.0f } },
+        },
+        {
+            "THE EAST FIELD",
+            1250,
+            { 1100.0f, 1900.0f },
+            { 1600.0f, 2100.0f },
+            { { 1900.0f, 1700.0f }, { 1700.0f, 2500.0f } },
+            {
+                { StationType::Power, { 1500.0f, 1800.0f } },
+                { StationType::PackAPunch, { 1800.0f, 2200.0f } },
+                { StationType::StaminUp, { 1300.0f, 2300.0f } },
+                { StationType::FairyRevive, { 1700.0f, 2000.0f } },
+            },
+            { { 1500.0f, 2400.0f } },
+        },
+    },
+};
+
+const ArenaLayout* Arena_ForScene(s16 sceneNum) {
+    switch (sceneNum) {
+        case SCENE_GRAVEYARD:
+            return &sGraveyard;
+        case SCENE_MARKET_RUINS:
+            return &sMarketRuins;
+        case SCENE_LON_LON_RANCH:
+            return &sLonLonRanch;
+        case SCENE_HYRULE_FIELD:
+            return &sHyruleField;
+        default:
+            return nullptr;
+    }
+}
+
+bool Arena_Resolve(PlayState* play, LayoutSpot spot, float refY, Vec3f* out, bool justAbove, float lift) {
+    if (spot.y > LayoutSpot::kNoHeight) {
+        refY = spot.y;
+    }
+    Vec3f probe = { spot.x, refY + kResolveRange, spot.z };
+    CollisionPoly* poly;
+    s32 bgId;
+    f32 floorY = BGCHECK_Y_MIN;
+    if (justAbove && spot.y > LayoutSpot::kNoHeight) {
+        // Look down from just above the spot first, so a floor overhead (Nacht's help
+        // room over a wall buy, its roof) isn't taken for the spot's own.
+        Vec3f low = { spot.x, refY + lift, spot.z };
+        floorY = BgCheck_EntityRaycastFloor3(&play->colCtx, &poly, &bgId, &low);
+    }
+    if (floorY <= BGCHECK_Y_MIN + 1.0f || fabsf(floorY - refY) > kResolveRange) {
+        floorY = BgCheck_EntityRaycastFloor3(&play->colCtx, &poly, &bgId, &probe);
+    }
+    if (floorY <= BGCHECK_Y_MIN + 1.0f || fabsf(floorY - refY) > kResolveRange) {
+        return false;
+    }
+    WaterBox* waterBox;
+    f32 waterY;
+    if (WaterBox_GetSurface1(play, &play->colCtx, spot.x, spot.z, &waterY, &waterBox) && waterY > floorY + 10.0f) {
+        return false;
+    }
+    *out = { spot.x, floorY, spot.z };
+    return true;
+}
+
+bool Arena_ZoneOpen(int zone) {
+    return zone < 0 || zone >= 32 || (GetRun().openZones & (1u << zone)) != 0;
+}
+
+static void OpenZone(PlayState* play, int zone) {
+    Run& run = GetRun();
+    run.openZones |= 1u << zone;
+    // Every way into the zone clears: Nacht's help room opens from either staircase.
+    for (size_t i = 0; i < run.debris.size();) {
+        if (run.debris[i].zone == zone) {
+            run.debris.erase(run.debris.begin() + i);
+        } else {
+            i++;
+        }
+    }
+    Stations_OpenZone(play, zone);
+}
+
+// How wide the way is at a Black Ops debris pile or door: the narrowest line across it
+// through pos, wall to wall. The blocker sits in the middle of that line and spans it.
+static void FitBlocker(PlayState* play, Debris* d) {
+    constexpr float kReach = 160.0f;
+    float bestWidth = 1e9f;
+    Vec3f bestMid = d->pos;
+    for (int i = 0; i < 8; i++) {
+        s16 yaw = static_cast<s16>(i * 0x1000);
+        float dx = Math_SinS(yaw);
+        float dz = Math_CosS(yaw);
+        float reach[2];
+        for (int side = 0; side < 2; side++) {
+            float sign = side == 0 ? 1.0f : -1.0f;
+            Vec3f a = { d->pos.x, d->pos.y + 35.0f, d->pos.z };
+            Vec3f b = { a.x + dx * sign * kReach, a.y, a.z + dz * sign * kReach };
+            Vec3f hit;
+            CollisionPoly* poly = nullptr;
+            s32 bgId = 0;
+            reach[side] = BgCheck_EntityLineTest1(&play->colCtx, &a, &b, &hit, &poly, true, false, false, true, &bgId)
+                              ? Math_Vec3f_DistXZ(&a, &hit)
+                              : kReach;
+        }
+        float width = reach[0] + reach[1];
+        if (width < bestWidth) {
+            bestWidth = width;
+            float mid = (reach[0] - reach[1]) * 0.5f;
+            bestMid = { d->pos.x + dx * mid, d->pos.y, d->pos.z + dz * mid };
+        }
+    }
+    d->pos = bestMid;
+    d->radius = std::clamp(bestWidth * 0.5f + 10.0f, 40.0f, 110.0f);
+}
+
+bool Arena_KeepOut(Vec3f* pos) {
+    const Run& run = GetRun();
+    if (run.layout == nullptr || !run.layout->blackOps) {
+        return false;
+    }
+    bool moved = false;
+    for (const Debris& d : run.debris) {
+        if (d.radius <= 0.0f || pos->y < d.pos.y - 70.0f || pos->y > d.pos.y + 110.0f) {
+            continue;
+        }
+        float dx = pos->x - d.pos.x;
+        float dz = pos->z - d.pos.z;
+        float dist = sqrtf(dx * dx + dz * dz);
+        if (dist >= d.radius) {
+            continue;
+        }
+        if (dist < 0.01f) {
+            dx = Math_SinS(static_cast<s16>(d.yaw + 0x8000));
+            dz = Math_CosS(static_cast<s16>(d.yaw + 0x8000));
+            dist = 1.0f;
+        }
+        pos->x = d.pos.x + dx / dist * d.radius;
+        pos->z = d.pos.z + dz / dist * d.radius;
+        moved = true;
+    }
+    return moved;
+}
+
+void Arena_Start(PlayState* play) {
+    Run& run = GetRun();
+    run.openZones = 1;
+    run.debris.clear();
+    run.layout = BoMap_Active(play)                              ? BoMap_Layout()
+                 : CVarGetInteger(CVAR_ZOMBIES("Arenas"), 1) ? Arena_ForScene(play->sceneNum)
+                                                             : nullptr;
+    if (run.layout == nullptr) {
+        return;
+    }
+
+    // Everyone starts in the first zone, like Black Ops' spawn room, wherever the map
+    // loaded Link (often right on the scene exit he came in by).
+    Vec3f start;
+    if (!run.layout->zones.empty() && Arena_Resolve(play, run.layout->zones[0].centre, run.origin.y, &start, true)) {
+        Player* player = GET_PLAYER(play);
+        player->actor.world.pos = start;
+        player->actor.prevPos = start;
+        // Entrances that walk Link in (the ranch gate) aim him at a point ahead of the
+        // spawn; aim that walk at the start instead, or it drags him back.
+        player->unk_450.x = start.x;
+        player->unk_450.z = start.z;
+        player->actor.home.pos = start;
+        player->actor.shape.rot.y = player->actor.world.rot.y = player->yaw = run.originYaw;
+        run.origin = start;
+    }
+
+    bool blackOps = run.layout->blackOps;
+    for (size_t z = 1; z < run.layout->zones.size() && z < 32; z++) {
+        const LayoutZone& zone = run.layout->zones[z];
+        Vec3f pos;
+        Vec3f centre;
+        if (Arena_Resolve(play, zone.debris, run.origin.y, &pos, blackOps, kBoEntityLift) &&
+            Arena_Resolve(play, zone.centre, run.origin.y, &centre)) {
+            run.debris.push_back({ static_cast<int>(z), pos, Math_Vec3f_Yaw(&pos, &centre) });
+            for (const LayoutSpot& more : zone.moreDebris) {
+                if (Arena_Resolve(play, more, run.origin.y, &pos, blackOps, kBoEntityLift)) {
+                    run.debris.push_back({ static_cast<int>(z), pos, Math_Vec3f_Yaw(&pos, &centre) });
+                }
+            }
+        } else {
+            // Nowhere to put the debris: start with the zone open rather than locked away.
+            run.openZones |= 1u << z;
+        }
+    }
+    // On a Black Ops map the debris and doors are solid, as they are there: nothing gets
+    // past one until it's bought.
+    if (blackOps) {
+        for (Debris& d : run.debris) {
+            FitBlocker(play, &d);
+        }
+    }
+    Nav_Build(play);
+}
+
+static void UpdateBuyer(PlayState* play, const Buyer& buyer) {
+    Run& run = GetRun();
+    if (!buyer.prompt->empty()) {
+        return;
+    }
+    Debris* nearest = nullptr;
+    float nearestDist = kDebrisReach;
+    Vec3f buyerPos = buyer.pos;
+    for (Debris& d : run.debris) {
+        // A solid pile is reached from its edge.
+        float dist = Math_Vec3f_DistXZ(&d.pos, &buyerPos) - std::max(d.radius - 40.0f, 0.0f);
+        if (dist < nearestDist && fabsf(d.pos.y - buyer.pos.y) < 80.0f) {
+            nearest = &d;
+            nearestDist = dist;
+        }
+    }
+    if (nearest == nullptr) {
+        return;
+    }
+
+    const LayoutZone& zone = run.layout->zones[nearest->zone];
+    *buyer.prompt =
+        std::string(buyer.index == 0 ? BuyButtonName() : "A") + ": CLEAR DEBRIS [" + std::to_string(zone.cost) + "]";
+    if (!buyer.pressed || buyer.busy) {
+        return;
+    }
+    if (!SpendPoints(buyer.index, zone.cost)) {
+        Sfx_PlaySfxCentered(NA_SE_SY_ERROR);
+        return;
+    }
+    Vec3f pos = nearest->pos;
+    SoundSource_PlaySfxAtFixedWorldPos(play, &pos, 30, NA_SE_EV_WOODBOX_BREAK);
+    Sfx_PlaySfxCentered(NA_SE_SY_CORRECT_CHIME);
+    Announce(std::string(zone.name) + " OPEN", 3);
+    OpenZone(play, nearest->zone);
+}
+
+void Arena_Update(PlayState* play, Player* player) {
+    if (GetRun().layout == nullptr) {
+        return;
+    }
+    Nav_Update(play);
+    if (Arena_KeepOut(&player->actor.world.pos)) {
+        player->linearVelocity = 0.0f;
+    }
+    Actor* partner = GetRun().partner.actor;
+    if (partner != nullptr) {
+        Arena_KeepOut(&partner->world.pos);
+    }
+    Buyer buyers[2];
+    int count = GetBuyers(play, player, buyers);
+    for (int i = 0; i < count; i++) {
+        UpdateBuyer(play, buyers[i]);
+    }
+}
+
+} // namespace Zombies
+
+// A heap of crates and planks across the way.
+extern "C" void Zombies_DrawDebrisPile(PlayState* play, const Vec3f& pos, s16 yaw) {
+    // y is the centre of each piece.
+    ZombiesDraw_Crate(play, pos, yaw, -40.0f, 15.0f, 0.0f, 0.0f, 32.0f, 30.0f, 32.0f);
+    ZombiesDraw_Crate(play, pos, yaw, 0.0f, 17.0f, 8.0f, 0.0f, 36.0f, 34.0f, 34.0f);
+    ZombiesDraw_Crate(play, pos, yaw, 42.0f, 14.0f, -4.0f, 0.0f, 30.0f, 28.0f, 30.0f);
+    ZombiesDraw_Crate(play, pos, yaw, -20.0f, 46.0f, 4.0f, 0.15f, 30.0f, 28.0f, 30.0f);
+    ZombiesDraw_Crate(play, pos, yaw, 24.0f, 44.0f, 0.0f, -0.2f, 28.0f, 26.0f, 28.0f);
+    ZombiesDraw_Crate(play, pos, yaw, 0.0f, 60.0f, -10.0f, 0.5f, 110.0f, 7.0f, 4.0f);
+    ZombiesDraw_Crate(play, pos, yaw, 0.0f, 48.0f, 18.0f, -0.4f, 100.0f, 7.0f, 4.0f);
+}
+
+namespace Zombies {
+
+void Arena_DrawDebris(PlayState* play) {
+    for (const Debris& d : GetRun().debris) {
+        FrameInterpolation_RecordOpenChild(&d, 0);
+        Zombies_DrawDebrisPile(play, d.pos, d.yaw);
+        FrameInterpolation_RecordCloseChild();
+    }
+}
+
+} // namespace Zombies

@@ -1,0 +1,53 @@
+diff --git a/CMake/Packaging.cmake b/CMake/Packaging.cmake
+index a5294c1a..1d732fce 100644
+--- a/CMake/Packaging.cmake
++++ b/CMake/Packaging.cmake
+@@ -1,6 +1,6 @@
+ # these are cache variables, so they could be overwritten with -D,
+ 
+-set(CPACK_PACKAGE_NAME "${PROJECT_NAME}"
++set(CPACK_PACKAGE_NAME "ZombiesOfTime"
+     CACHE STRING "The resulting package name"
+ )
+ 
+diff --git a/scripts/linux/appimage/soh.desktop b/scripts/linux/appimage/soh.desktop
+index 5e517c59..85170b58 100644
+--- a/scripts/linux/appimage/soh.desktop
++++ b/scripts/linux/appimage/soh.desktop
+@@ -1,7 +1,7 @@
+ [Desktop Entry]
+ Version=1.0
+-Name=SOH
+-Exec=soh.elf
++Name=Zombies of Time
++Exec=ZombiesOfTime
+ Terminal=false
+ Icon=sohIcon
+ Type=Application
+diff --git a/soh/CMakeLists.txt b/soh/CMakeLists.txt
+index f356d214..cba8908c 100644
+--- a/soh/CMakeLists.txt
++++ b/soh/CMakeLists.txt
+@@ -254,9 +254,21 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+     )
+ elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+     set_target_properties(${PROJECT_NAME} PROPERTIES
+-    OUTPUT_NAME "soh.elf"
++    OUTPUT_NAME "ZombiesOfTime"
+     )
+ endif()
++# Zombies of Time installs next to Ship of Harkinian: ZombiesOfTime.exe, not soh.exe.
++if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
++    # use_props gives every configuration its own name (OUTPUT_NAME_RELEASE "soh"),
++    # which wins over OUTPUT_NAME, so the per-configuration names are set too.
++    set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME "ZombiesOfTime")
++    foreach(ZZ_CONFIG DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
++        set_target_properties(${PROJECT_NAME} PROPERTIES
++            OUTPUT_NAME_${ZZ_CONFIG} "ZombiesOfTime"
++            RUNTIME_OUTPUT_NAME_${ZZ_CONFIG} "ZombiesOfTime"
++        )
++    endforeach()
++endif()
+ ################################################################################
+ # MSVC runtime library
+ ################################################################################

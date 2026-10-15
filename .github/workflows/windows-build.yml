@@ -1,0 +1,93 @@
+# The Windows build of Zombies of Time, for play-testing.
+# Download the "zombies-of-time-windows" artifact from the run, unzip it to its own
+# folder and run ZombiesOfTime.exe. Saves, settings and logs stay in that folder, apart
+# from any Ship of Harkinian install. Like SoH, it asks for your own Ocarina of Time
+# ROM on first launch; no game data is included.
+name: Windows build
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  soh-o2r:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y $(cat Shipwright/linux-build-deps/apt.txt)
+      - name: Turn Ship of Harkinian into Zombies of Time
+        run: ./scripts/apply.sh
+      - name: Generate soh.o2r
+        working-directory: Shipwright
+        run: |
+          cmake --no-warn-unused-cli -H. -Bbuild-cmake -GNinja -DCMAKE_BUILD_TYPE:STRING=Release -DSOH_TOOLS_ONLY=ON
+          cmake --build build-cmake --config Release --target GenerateSohOtr -j4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: soh.o2r
+          path: Shipwright/soh.o2r
+          retention-days: 3
+
+  build-windows:
+    needs: soh-o2r
+    runs-on: windows-latest
+    steps:
+      - name: Install dependencies
+        run: |
+          choco install ninja -y
+          Remove-Item -Path "C:\ProgramData\Chocolatey\bin\ccache.exe" -Force -ErrorAction SilentlyContinue
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Turn Ship of Harkinian into Zombies of Time
+        shell: bash
+        run: ./scripts/apply.sh
+      - name: Configure ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          max-size: "2G"
+          key: ${{ runner.os }}-ccache-${{ github.sha }}
+          restore-keys: ${{ runner.os }}-ccache-
+      - name: Restore vcpkg
+        uses: actions/cache@v4
+        with:
+          key: ${{ runner.os }}-vcpkg-${{ hashFiles('Shipwright/CMakeLists.txt') }}
+          restore-keys: ${{ runner.os }}-vcpkg-
+          path: Shipwright/vcpkg
+      - name: Configure Developer Command Prompt
+        uses: TheMrMilchmann/setup-msvc-dev@v3
+        with:
+          arch: x64
+      - uses: actions/download-artifact@v4
+        with:
+          name: soh.o2r
+          path: Shipwright/build-windows/soh
+      - name: Build Zombies of Time
+        working-directory: Shipwright
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}/Shipwright/vcpkg
+        run: |
+          cmake -S . -B build-windows -G Ninja -DCMAKE_MAKE_PROGRAM=ninja -DCMAKE_BUILD_TYPE:STRING=Release -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake --build build-windows --config Release --parallel 10
+          if ($LASTEXITCODE -ne 0) { throw "The build failed" }
+          (cd build-windows && cpack)
+          cd ..
+          mv _packages/*.zip _packages/zombies-of-time-windows.zip
+      - name: Unzip package
+        working-directory: Shipwright
+        run: |
+          Expand-Archive -Path _packages/zombies-of-time-windows.zip -DestinationPath zombies-of-time-windows
+          if (-not (Test-Path zombies-of-time-windows/ZombiesOfTime.exe)) { throw "ZombiesOfTime.exe is missing from the package" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zombies-of-time-windows
+          path: Shipwright/zombies-of-time-windows

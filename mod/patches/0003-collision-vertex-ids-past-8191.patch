@@ -1,0 +1,360 @@
+diff --git a/soh/include/z64bgcheck.h b/soh/include/z64bgcheck.h
+index 4ef17881..a5c08bd9 100644
+--- a/soh/include/z64bgcheck.h
++++ b/soh/include/z64bgcheck.h
+@@ -10,6 +10,9 @@ struct DynaPolyActor;
+ #define COLPOLY_GET_NORMAL(n) ((n)*COLPOLY_NORMAL_FRAC)
+ #define COLPOLY_VIA_FLAG_TEST(vIA, flags) ((vIA) & (((flags)&7) << 13))
+ #define COLPOLY_VTX_INDEX(vI) ((vI)&0x1FFF)
++// Full vertex ids, with the high bits Zombies of Time keeps in vtxHi.
++#define COLPOLY_VTX_A(poly) ((u16)(COLPOLY_VTX_INDEX((poly)->flags_vIA) | (((poly)->vtxHi & 7) << 13)))
++#define COLPOLY_VTX_B(poly) ((u16)(COLPOLY_VTX_INDEX((poly)->flags_vIB) | ((((poly)->vtxHi >> 3) & 7) << 13)))
+ 
+ #define DYNAPOLY_INVALIDATE_LOOKUP (1 << 0)
+ 
+@@ -49,6 +52,7 @@ typedef struct {
+                              // Value ranges from -0x7FFF to 0x7FFF, representing -1.0 to 1.0; 0x8000 is invalid
+ 
+     /* 0x0E */ s16 dist; // Plane distance from origin along the normal
++    /* 0x10 */ u16 vtxHi; // Zombies of Time: vertex id bits 13-15 of A (0x7) and B (0x38), for meshes past 8191 vertices
+ } CollisionPoly; // size = 0x10
+ 
+ typedef struct {
+diff --git a/soh/soh/Enhancements/debugger/colViewer.cpp b/soh/soh/Enhancements/debugger/colViewer.cpp
+index 31c316a7..14a53798 100644
+--- a/soh/soh/Enhancements/debugger/colViewer.cpp
++++ b/soh/soh/Enhancements/debugger/colViewer.cpp
+@@ -422,9 +422,9 @@ void DrawDynapoly(std::vector<Gfx>& dl, CollisionHeader* col, int32_t bgId) {
+         lastColorG = color.g;
+         lastColorB = color.b;
+ 
+-        Vec3s* va = &col->vtxList[COLPOLY_VTX_INDEX(poly->flags_vIA)];
+-        Vec3s* vb = &col->vtxList[COLPOLY_VTX_INDEX(poly->flags_vIB)];
+-        Vec3s* vc = &col->vtxList[COLPOLY_VTX_INDEX(poly->vIC)];
++        Vec3s* va = &col->vtxList[COLPOLY_VTX_A(poly)];
++        Vec3s* vb = &col->vtxList[COLPOLY_VTX_B(poly)];
++        Vec3s* vc = &col->vtxList[poly->vIC];
+         vtxDl.push_back(gdSPDefVtxN(va->x, va->y, va->z, 0, 0, (signed char)(poly->normal.x / 0x100),
+                                     (signed char)(poly->normal.y / 0x100), (signed char)(poly->normal.z / 0x100),
+                                     0xFF));
+diff --git a/soh/soh/resource/importer/CollisionHeaderFactory.cpp b/soh/soh/resource/importer/CollisionHeaderFactory.cpp
+index 42d0e8dd..7ad0ac55 100644
+--- a/soh/soh/resource/importer/CollisionHeaderFactory.cpp
++++ b/soh/soh/resource/importer/CollisionHeaderFactory.cpp
+@@ -36,7 +36,7 @@ ResourceFactoryBinaryCollisionHeaderV0::ReadResource(std::shared_ptr<Ship::File>
+     collisionHeader->collisionHeaderData.numPolygons = reader->ReadUInt32();
+     collisionHeader->polygons.reserve(collisionHeader->collisionHeaderData.numPolygons);
+     for (uint32_t i = 0; i < collisionHeader->collisionHeaderData.numPolygons; i++) {
+-        CollisionPoly polygon;
++        CollisionPoly polygon = {};
+ 
+         polygon.type = reader->ReadUInt16();
+ 
+@@ -160,7 +160,7 @@ ResourceFactoryXMLCollisionHeaderV0::ReadResource(std::shared_ptr<Ship::File> fi
+             vtx.z = child->IntAttribute("Z");
+             collisionHeader->vertices.push_back(vtx);
+         } else if (childName == "Polygon") {
+-            CollisionPoly polygon;
++            CollisionPoly polygon = {};
+ 
+             polygon.type = child->UnsignedAttribute("Type");
+ 
+diff --git a/soh/soh/resource/type/CollisionHeader.h b/soh/soh/resource/type/CollisionHeader.h
+index daba15fd..19edceb8 100644
+--- a/soh/soh/resource/type/CollisionHeader.h
++++ b/soh/soh/resource/type/CollisionHeader.h
+@@ -22,7 +22,8 @@ typedef struct {
+                              // Value ranges from -0x7FFF to 0x7FFF, representing -1.0 to 1.0; 0x8000 is invalid
+ 
+     /* 0x0E */ s16 dist; // Plane distance from origin along the normal
+-} CollisionPoly;         // size = 0x10
++    /* 0x10 */ u16 vtxHi; // Zombies of Time: vertex id bits 13-15 of A (0x7) and B (0x38), for meshes past 8191 vertices
++} CollisionPoly;         // size = 0x12
+ 
+ typedef struct {
+     /* 0x00 */ s16 xMin;
+diff --git a/soh/src/code/z_bgcheck.c b/soh/src/code/z_bgcheck.c
+index d3c18357..139b4b4d 100644
+--- a/soh/src/code/z_bgcheck.c
++++ b/soh/src/code/z_bgcheck.c
+@@ -173,11 +173,11 @@ s16 CollisionPoly_GetMinY(CollisionPoly* poly, Vec3s* vtxList) {
+     //! @bug Due to rounding errors, some polys with a slight slope have a y normal of 1.0f/-1.0f. As such, this
+     //! optimization returns the wrong minimum y for a subset of these polys.
+     if (poly->normal.y == COLPOLY_SNORMAL(1.0f) || poly->normal.y == COLPOLY_SNORMAL(-1.0f)) {
+-        return vtxList[COLPOLY_VTX_INDEX(poly->flags_vIA)].y;
++        return vtxList[COLPOLY_VTX_A(poly)].y;
+     }
+ 
+-    a = COLPOLY_VTX_INDEX(poly->flags_vIA);
+-    b = COLPOLY_VTX_INDEX(poly->flags_vIB);
++    a = COLPOLY_VTX_A(poly);
++    b = COLPOLY_VTX_B(poly);
+     c = poly->vIC;
+ 
+     min = vtxList[a].y;
+@@ -265,8 +265,8 @@ f32 CollisionPoly_GetPointDistanceFromPlane(CollisionPoly* poly, Vec3f* point) {
+  * Get Poly Vertices
+  */
+ void CollisionPoly_GetVertices(CollisionPoly* poly, Vec3s* vtxList, Vec3f* dest) {
+-    BgCheck_Vec3sToVec3f(&vtxList[COLPOLY_VTX_INDEX(poly->flags_vIA)], &dest[0]);
+-    BgCheck_Vec3sToVec3f(&vtxList[COLPOLY_VTX_INDEX(poly->flags_vIB)], &dest[1]);
++    BgCheck_Vec3sToVec3f(&vtxList[COLPOLY_VTX_A(poly)], &dest[0]);
++    BgCheck_Vec3sToVec3f(&vtxList[COLPOLY_VTX_B(poly)], &dest[1]);
+     BgCheck_Vec3sToVec3f(&vtxList[poly->vIC], &dest[2]);
+ }
+ 
+@@ -313,9 +313,9 @@ s32 CollisionPoly_CheckYIntersectApprox1(CollisionPoly* poly, Vec3s* vtxList, f3
+     Vec3s* vB;
+     Vec3s* vC;
+ 
+-    vA = &vtxList[COLPOLY_VTX_INDEX(poly->flags_vIA)];
++    vA = &vtxList[COLPOLY_VTX_A(poly)];
+     Math_Vec3s_ToVec3f(&polyVerts[0], vA);
+-    vB = &vtxList[COLPOLY_VTX_INDEX(poly->flags_vIB)];
++    vB = &vtxList[COLPOLY_VTX_B(poly)];
+     Math_Vec3s_ToVec3f(&polyVerts[1], vB);
+     vC = &vtxList[poly->vIC];
+     Math_Vec3s_ToVec3f(&polyVerts[2], vC);
+@@ -475,8 +475,8 @@ void StaticLookup_AddPolyToSSList(CollisionContext* colCtx, SSList* ssList, Coll
+     curPolyId = curNode->polyId;
+ 
+     // if the poly being inserted has a lower y than the first poly
+-    if (polyYMin < vtxList[COLPOLY_VTX_INDEX(polyList[curPolyId].flags_vIA)].y &&
+-        polyYMin < vtxList[COLPOLY_VTX_INDEX(polyList[curPolyId].flags_vIB)].y &&
++    if (polyYMin < vtxList[COLPOLY_VTX_A(&polyList[curPolyId])].y &&
++        polyYMin < vtxList[COLPOLY_VTX_B(&polyList[curPolyId])].y &&
+         polyYMin < vtxList[polyList[curPolyId].vIC].y) {
+         SSNodeList_SetSSListHead(&colCtx->polyNodes, ssList, &polyId);
+         return;
+@@ -494,8 +494,8 @@ void StaticLookup_AddPolyToSSList(CollisionContext* colCtx, SSList* ssList, Coll
+         curPolyId = nextNode->polyId;
+ 
+         // if the poly being inserted is lower than the next poly
+-        if (polyYMin < vtxList[COLPOLY_VTX_INDEX(polyList[curPolyId].flags_vIA)].y &&
+-            polyYMin < vtxList[COLPOLY_VTX_INDEX(polyList[curPolyId].flags_vIB)].y &&
++        if (polyYMin < vtxList[COLPOLY_VTX_A(&polyList[curPolyId])].y &&
++            polyYMin < vtxList[COLPOLY_VTX_B(&polyList[curPolyId])].y &&
+             polyYMin < vtxList[polyList[curPolyId].vIC].y) {
+             newNodeId = SSNodeList_GetNextNodeIdx(&colCtx->polyNodes);
+             SSNode_SetValue(&colCtx->polyNodes.tbl[newNodeId], &polyId, curNode->next);
+@@ -552,8 +552,8 @@ f32 BgCheck_RaycastFloorStaticList(CollisionContext* colCtx, u16 xpFlags, SSList
+             continue;
+         }
+ 
+-        if (pos->y < colCtx->colHeader->vtxList[COLPOLY_VTX_INDEX(colCtx->colHeader->polyList[polyId].flags_vIA)].y &&
+-            pos->y < colCtx->colHeader->vtxList[COLPOLY_VTX_INDEX(colCtx->colHeader->polyList[polyId].flags_vIB)].y &&
++        if (pos->y < colCtx->colHeader->vtxList[COLPOLY_VTX_A(&colCtx->colHeader->polyList[polyId])].y &&
++            pos->y < colCtx->colHeader->vtxList[COLPOLY_VTX_B(&colCtx->colHeader->polyList[polyId])].y &&
+             pos->y < colCtx->colHeader->vtxList[colCtx->colHeader->polyList[polyId].vIC].y) {
+             break;
+         }
+@@ -690,8 +690,8 @@ s32 BgCheck_SphVsStaticWall(StaticLookup* lookup, CollisionContext* colCtx, u16
+     while (true) {
+         polyId = curNode->polyId;
+         curPoly = &polyList[polyId];
+-        if (pos->y < vtxList[COLPOLY_VTX_INDEX(curPoly->flags_vIA)].y &&
+-            pos->y < vtxList[COLPOLY_VTX_INDEX(curPoly->flags_vIB)].y && pos->y < vtxList[curPoly->vIC].y) {
++        if (pos->y < vtxList[COLPOLY_VTX_A(curPoly)].y &&
++            pos->y < vtxList[COLPOLY_VTX_B(curPoly)].y && pos->y < vtxList[curPoly->vIC].y) {
+             break;
+         }
+ 
+@@ -723,9 +723,9 @@ s32 BgCheck_SphVsStaticWall(StaticLookup* lookup, CollisionContext* colCtx, u16
+         }
+ 
+         // compute curPoly zMin/zMax
+-        zTemp = vtxList[COLPOLY_VTX_INDEX(curPoly->flags_vIA)].z;
++        zTemp = vtxList[COLPOLY_VTX_A(curPoly)].z;
+         zMax = zMin = zTemp;
+-        zTemp = vtxList[COLPOLY_VTX_INDEX(curPoly->flags_vIB)].z;
++        zTemp = vtxList[COLPOLY_VTX_B(curPoly)].z;
+ 
+         if (zTemp < zMin) {
+             zMin = zTemp;
+@@ -771,8 +771,8 @@ s32 BgCheck_SphVsStaticWall(StaticLookup* lookup, CollisionContext* colCtx, u16
+     while (true) {
+         polyId = curNode->polyId;
+         curPoly = &polyList[polyId];
+-        if (pos->y < vtxList[COLPOLY_VTX_INDEX(curPoly->flags_vIA)].y &&
+-            pos->y < vtxList[COLPOLY_VTX_INDEX(curPoly->flags_vIB)].y && pos->y < vtxList[curPoly->vIC].y) {
++        if (pos->y < vtxList[COLPOLY_VTX_A(curPoly)].y &&
++            pos->y < vtxList[COLPOLY_VTX_B(curPoly)].y && pos->y < vtxList[curPoly->vIC].y) {
+             break;
+         }
+ 
+@@ -804,9 +804,9 @@ s32 BgCheck_SphVsStaticWall(StaticLookup* lookup, CollisionContext* colCtx, u16
+         }
+ 
+         // compute curPoly xMin/xMax
+-        xTemp = vtxList[COLPOLY_VTX_INDEX(curPoly->flags_vIA)].x;
++        xTemp = vtxList[COLPOLY_VTX_A(curPoly)].x;
+         xMax = xMin = xTemp;
+-        xTemp = vtxList[COLPOLY_VTX_INDEX(curPoly->flags_vIB)].x;
++        xTemp = vtxList[COLPOLY_VTX_B(curPoly)].x;
+ 
+         if (xTemp < xMin) {
+             xMin = xTemp;
+@@ -1038,8 +1038,8 @@ s32 BgCheck_SphVsFirstStaticPolyList(SSNode* node, u16 xpFlags, CollisionContext
+             }
+         }
+ 
+-        if (center->y + radius < vtxList[COLPOLY_VTX_INDEX(curPoly->flags_vIA)].y &&
+-            center->y + radius < vtxList[COLPOLY_VTX_INDEX(curPoly->flags_vIB)].y &&
++        if (center->y + radius < vtxList[COLPOLY_VTX_A(curPoly)].y &&
++            center->y + radius < vtxList[COLPOLY_VTX_B(curPoly)].y &&
+             center->y + radius < vtxList[curPoly->vIC].y) {
+             break;
+         }
+@@ -1206,7 +1206,6 @@ void BgCheck_GetSubdivisionMaxBounds(CollisionContext* colCtx, Vec3f* pos, s32*
+ void BgCheck_GetPolySubdivisionBounds(CollisionContext* colCtx, Vec3s* vtxList, CollisionPoly* polyList,
+                                       s32* subdivMinX, s32* subdivMinY, s32* subdivMinZ, s32* subdivMaxX,
+                                       s32* subdivMaxY, s32* subdivMaxZ, s16 polyId) {
+-    u16* vtxDataTemp;
+     Vec3f minVtx;
+     Vec3f maxVtx;
+ 
+@@ -1215,14 +1214,14 @@ void BgCheck_GetPolySubdivisionBounds(CollisionContext* colCtx, Vec3s* vtxList,
+     f32 z;
+ 
+     Vec3s* vtx;
+-    s16 vtxId = COLPOLY_VTX_INDEX(polyList[polyId].vtxData[0]);
++    u16 vtxIds[3] = { COLPOLY_VTX_A(&polyList[polyId]), COLPOLY_VTX_B(&polyList[polyId]), polyList[polyId].vIC };
++    s32 i;
+ 
+-    Math_Vec3s_ToVec3f(&maxVtx, &vtxList[vtxId]);
++    Math_Vec3s_ToVec3f(&maxVtx, &vtxList[vtxIds[0]]);
+     Math_Vec3f_Copy(&minVtx, &maxVtx);
+ 
+-    for (vtxDataTemp = polyList[polyId].vtxData + 1; vtxDataTemp < polyList[polyId].vtxData + 3; vtxDataTemp++) {
+-        vtxId = COLPOLY_VTX_INDEX(*vtxDataTemp);
+-        vtx = &vtxList[vtxId];
++    for (i = 1; i < 3; i++) {
++        vtx = &vtxList[vtxIds[i]];
+         x = vtx->x;
+         y = vtx->y;
+         z = vtx->z;
+@@ -1271,13 +1270,13 @@ s32 BgCheck_PolyIntersectsSubdivision(Vec3f* min, Vec3f* max, CollisionPoly* pol
+     flags[0] = flags[1] = 0;
+     poly = &polyList[polyId];
+ 
+-    BgCheck_Vec3sToVec3f(&vtxList[COLPOLY_VTX_INDEX(poly->flags_vIA)], &va);
++    BgCheck_Vec3sToVec3f(&vtxList[COLPOLY_VTX_A(poly)], &va);
+     flags[0] = Math3D_PointRelativeToCubeFaces(&va, min, max);
+     if (flags[0] == 0) {
+         return true;
+     }
+ 
+-    BgCheck_Vec3sToVec3f(&vtxList[COLPOLY_VTX_INDEX(poly->flags_vIB)], &vb);
++    BgCheck_Vec3sToVec3f(&vtxList[COLPOLY_VTX_B(poly)], &vb);
+     flags[1] = Math3D_PointRelativeToCubeFaces(&vb, min, max);
+     if (flags[1] == 0) {
+         return true;
+@@ -1341,8 +1340,8 @@ s32 BgCheck_PolyIntersectsSubdivision(Vec3f* min, Vec3f* max, CollisionPoly* pol
+         return true;
+     }
+ 
+-    BgCheck_Vec3sToVec3f(&vtxList[COLPOLY_VTX_INDEX(poly->flags_vIA)], &va2);
+-    BgCheck_Vec3sToVec3f(&vtxList[COLPOLY_VTX_INDEX(poly->flags_vIB)], &vb2);
++    BgCheck_Vec3sToVec3f(&vtxList[COLPOLY_VTX_A(poly)], &va2);
++    BgCheck_Vec3sToVec3f(&vtxList[COLPOLY_VTX_B(poly)], &vb2);
+     BgCheck_Vec3sToVec3f(&vtxList[poly->vIC], &vc2);
+     if (Math3D_LineVsCube(min, max, &va2, &vb2) || Math3D_LineVsCube(min, max, &vb2, &vc2) ||
+         Math3D_LineVsCube(min, max, &vc2, &va2)) {
+@@ -2895,18 +2894,21 @@ void DynaPoly_ExpandSRT(PlayState* play, DynaCollisionContext* dyna, s32 bgId, s
+             *newPoly = pbgdata->polyList[i];
+ 
+             // Yeah, this is all kinds of fake, but my God, it matches.
+-            newPoly->flags_vIA =
+-                (COLPOLY_VTX_INDEX(newPoly->flags_vIA) + *vtxStartIndex) | ((*newPoly).flags_vIA & 0xE000);
+-            newPoly->flags_vIB =
+-                (COLPOLY_VTX_INDEX(newPoly->flags_vIB) + *vtxStartIndex) | ((*newPoly).flags_vIB & 0xE000);
++            {
++                u16 vA = COLPOLY_VTX_A(newPoly) + *vtxStartIndex;
++                u16 vB = COLPOLY_VTX_B(newPoly) + *vtxStartIndex;
++                newPoly->flags_vIA = (vA & 0x1FFF) | (newPoly->flags_vIA & 0xE000);
++                newPoly->flags_vIB = (vB & 0x1FFF) | (newPoly->flags_vIB & 0xE000);
++                newPoly->vtxHi = ((vA >> 13) & 7) | (((vB >> 13) & 7) << 3);
++            }
+             newPoly->vIC = *vtxStartIndex + newPoly->vIC;
+             dVtxList = dyna->vtxList;
+-            vtxA.x = dVtxList[(uintptr_t)COLPOLY_VTX_INDEX(newPoly->flags_vIA)].x;
+-            vtxA.y = dVtxList[(uintptr_t)COLPOLY_VTX_INDEX(newPoly->flags_vIA)].y;
+-            vtxA.z = dVtxList[(uintptr_t)COLPOLY_VTX_INDEX(newPoly->flags_vIA)].z;
+-            vtxB.x = dVtxList[(uintptr_t)COLPOLY_VTX_INDEX(newPoly->flags_vIB)].x;
+-            vtxB.y = dVtxList[(uintptr_t)COLPOLY_VTX_INDEX(newPoly->flags_vIB)].y;
+-            vtxB.z = dVtxList[(uintptr_t)COLPOLY_VTX_INDEX(newPoly->flags_vIB)].z;
++            vtxA.x = dVtxList[(uintptr_t)COLPOLY_VTX_A(newPoly)].x;
++            vtxA.y = dVtxList[(uintptr_t)COLPOLY_VTX_A(newPoly)].y;
++            vtxA.z = dVtxList[(uintptr_t)COLPOLY_VTX_A(newPoly)].z;
++            vtxB.x = dVtxList[(uintptr_t)COLPOLY_VTX_B(newPoly)].x;
++            vtxB.y = dVtxList[(uintptr_t)COLPOLY_VTX_B(newPoly)].y;
++            vtxB.z = dVtxList[(uintptr_t)COLPOLY_VTX_B(newPoly)].z;
+             vtxC.x = dVtxList[newPoly->vIC].x;
+             vtxC.y = dVtxList[newPoly->vIC].y;
+             vtxC.z = dVtxList[newPoly->vIC].z;
+@@ -2922,7 +2924,7 @@ void DynaPoly_ExpandSRT(PlayState* play, DynaCollisionContext* dyna, s32 bgId, s
+                 newPoly->normal.z = COLPOLY_SNORMAL(newNormal.z);
+             }
+ 
+-            newPoly->dist = -DOTXYZ(newNormal, dVtxList[(uintptr_t)COLPOLY_VTX_INDEX(newPoly->flags_vIA)]);
++            newPoly->dist = -DOTXYZ(newNormal, dVtxList[(uintptr_t)COLPOLY_VTX_A(newPoly)]);
+             if (newNormal.y > 0.5f) {
+                 s16 polyId = *polyStartIndex + i;
+                 DynaSSNodeList_SetSSListHead(&dyna->polyNodes, &dyna->bgActors[bgId].dynaLookup.floor, &polyId);
+@@ -3174,7 +3176,8 @@ f32 BgCheck_RaycastFloorDyna(DynaRaycast* dynaRaycast) {
+             vtxList = dynaRaycast->dyna->bgActors[*dynaRaycast->bgId].colHeader->vtxList;
+ 
+             for (i2 = 0; i2 < 3; i2++) {
+-                Math_Vec3s_ToVec3f(&vtx, &vtxList[COLPOLY_VTX_INDEX(poly->vtxData[i2])]);
++                u16 vtxIds[3] = { COLPOLY_VTX_A(poly), COLPOLY_VTX_B(poly), poly->vIC };
++                Math_Vec3s_ToVec3f(&vtx, &vtxList[vtxIds[i2]]);
+                 SkinMatrix_Vec3fMtxFMultXYZ(&srpMtx, &vtx, &polyVtx[i2]);
+             }
+             Math3D_SurfaceNorm(&polyVtx[0], &polyVtx[1], &polyVtx[2], &polyNorm);
+@@ -3267,10 +3270,10 @@ s32 BgCheck_SphVsDynaWallInBgActor(CollisionContext* colCtx, u16 xpFlags, DynaCo
+         }
+ 
+         // compute poly zMin/zMax
+-        zTemp = dyna->vtxList[COLPOLY_VTX_INDEX(poly->flags_vIA)].z;
++        zTemp = dyna->vtxList[COLPOLY_VTX_A(poly)].z;
+         zMax = zMin = zTemp;
+ 
+-        zTemp = dyna->vtxList[COLPOLY_VTX_INDEX(poly->flags_vIB)].z;
++        zTemp = dyna->vtxList[COLPOLY_VTX_B(poly)].z;
+         if (zTemp < zMin) {
+             zMin = zTemp;
+         } else if (zTemp > zMax) {
+@@ -3341,9 +3344,9 @@ s32 BgCheck_SphVsDynaWallInBgActor(CollisionContext* colCtx, u16 xpFlags, DynaCo
+         }
+ 
+         // compute poly xMin/xMax
+-        xTemp = dyna->vtxList[COLPOLY_VTX_INDEX(poly->flags_vIA)].x;
++        xTemp = dyna->vtxList[COLPOLY_VTX_A(poly)].x;
+         xMax = xMin = xTemp;
+-        xTemp = dyna->vtxList[COLPOLY_VTX_INDEX(poly->flags_vIB)].x;
++        xTemp = dyna->vtxList[COLPOLY_VTX_B(poly)].x;
+ 
+         if (xTemp < xMin) {
+             xMin = xTemp;
+@@ -4420,8 +4423,8 @@ void BgCheck_DrawDynaPolyList(PlayState* play, CollisionContext* colCtx, DynaCol
+         while (true) {
+             curPolyId = curNode->polyId;
+             poly = &dyna->polyList[curPolyId];
+-            BgCheck_Vec3sToVec3f(COLPOLY_VTX_INDEX(poly->flags_vIA) + dyna->vtxList, &vA);
+-            BgCheck_Vec3sToVec3f(COLPOLY_VTX_INDEX(poly->flags_vIB) + dyna->vtxList, &vB);
++            BgCheck_Vec3sToVec3f(COLPOLY_VTX_A(poly) + dyna->vtxList, &vA);
++            BgCheck_Vec3sToVec3f(COLPOLY_VTX_B(poly) + dyna->vtxList, &vB);
+             BgCheck_Vec3sToVec3f((s32)(poly->vIC) + dyna->vtxList, &vC);
+             if (AREG(26)) {
+                 nx = COLPOLY_GET_NORMAL(poly->normal.x);
+@@ -4489,8 +4492,8 @@ void BgCheck_DrawStaticPoly(PlayState* play, CollisionContext* colCtx, Collision
+     f32 ny;
+     f32 nz;
+ 
+-    BgCheck_Vec3sToVec3f(COLPOLY_VTX_INDEX(poly->flags_vIA) + colCtx->colHeader->vtxList, &vA);
+-    BgCheck_Vec3sToVec3f(COLPOLY_VTX_INDEX(poly->flags_vIB) + colCtx->colHeader->vtxList, &vB);
++    BgCheck_Vec3sToVec3f(COLPOLY_VTX_A(poly) + colCtx->colHeader->vtxList, &vA);
++    BgCheck_Vec3sToVec3f(COLPOLY_VTX_B(poly) + colCtx->colHeader->vtxList, &vB);
+     BgCheck_Vec3sToVec3f(poly->vIC + colCtx->colHeader->vtxList, &vC);
+     if (AREG(26) != 0) {
+         nx = COLPOLY_GET_NORMAL(poly->normal.x);

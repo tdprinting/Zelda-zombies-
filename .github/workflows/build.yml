@@ -1,0 +1,67 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  rules-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run rules unit tests
+        run: ./scripts/test.sh
+
+  bomap:
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install zlib
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y zlib1g-dev
+      - name: Build bomap
+        run: |
+          cmake -S tools/bomap -B build-bomap -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-bomap --config Release
+      - name: Test bomap
+        shell: bash
+        run: |
+          if [ -f build-bomap/Release/bomap_test.exe ]; then build-bomap/Release/bomap_test.exe; else build-bomap/bomap_test; fi
+      - name: Upload bomap
+        uses: actions/upload-artifact@v4
+        with:
+          name: bomap-${{ runner.os == 'Windows' && 'windows' || 'linux' }}
+          path: |
+            build-bomap/Release/bomap.exe
+            build-bomap/bomap
+          if-no-files-found: ignore
+
+  build-linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc g++ ccache $(cat Shipwright/linux-build-deps/apt.txt)
+      - name: Configure ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          max-size: "2G"
+          key: ${{ runner.os }}-ccache-${{ github.sha }}
+          restore-keys: ${{ runner.os }}-ccache-
+      - name: Turn Ship of Harkinian into Zombies of Time
+        run: ./scripts/apply.sh
+      - name: Build Zombies of Time
+        working-directory: Shipwright
+        run: |
+          cmake -H. -Bbuild-cmake -GNinja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake --build build-cmake --target soh -j4
+          test -x build-cmake/soh/ZombiesOfTime

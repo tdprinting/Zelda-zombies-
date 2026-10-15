@@ -1,0 +1,1647 @@
+// Zombies of Time: round-based survival for Ship of Harkinian.
+//
+// This file owns the run: starting and ending it, the round state machine,
+// spawning and tracking undead, points, power-ups and the save snapshot.
+// Stations, the HUD and the menu live in the other Zombies*.cpp files.
+
+#include "ZombiesMode.h"
+#include "ZombiesGuns.h"
+#include "ZombiesSound.h"
+
+#include <libultraship/bridge/consolevariablebridge.h>
+
+#include <ship/Context.h>
+#include <ship/window/Window.h>
+
+#include <algorithm>
+#include <atomic>
+#include <cmath>
+#include <cstdio>
+#include <filesystem>
+
+#include "soh/Enhancements/game-interactor/GameInteractor.h"
+#include "soh/Enhancements/game-interactor/GameInteractor_Hooks.h"
+#include "soh/ShipInit.hpp"
+
+extern "C" {
+#include "functions.h"
+#include "macros.h"
+#include "variables.h"
+#include "overlays/actors/ovl_En_Bom/z_en_bom.h"
+#include "overlays/actors/ovl_En_Rd/z_en_rd.h"
+extern PlayState* gPlayState;
+void Save_SaveFile(void);
+}
+
+namespace Zombies {
+
+static constexpr int kFps = 20; // OoT game logic runs at 20 updates per second
+
+static constexpr float kSpawnMinDist = 380.0f;
+static constexpr float kSpawnMaxDist = 750.0f;
+static constexpr float kSpawnMaxHeightDiff = 120.0f;
+// Horde Pull stops this close to Link so each enemy's own attack takes over.
+static constexpr float kPullStopDistWalk = 140.0f;
+static constexpr float kPullStopDistFast = 80.0f;
+static constexpr float kPullStopDistPartner = 35.0f;
+static constexpr float kLostDist = 2500.0f;
+// Black Ops respawns a zombie that can't reach the player. Ours gets 15 seconds to
+// close 50 units of distance before it goes back into the round's pool. Only one in
+// reach of Link (fighting him) is never stuck: one stranded on a ledge a few steps
+// away would otherwise hold the round open forever.
+static constexpr int kStuckFrames = 15 * 20;
+static constexpr float kStuckProgress = 50.0f;
+static constexpr float kFallOutDepth = 1500.0f; // below the start point: fell out of the map
+static constexpr float kStuckMinDist = 110.0f;
+// Redeads and Gibdos come all the way in to swipe: their own attack is a grab, which
+// Black Ops zombies don't do.
+static constexpr float kPullStopDistSwiper = 40.0f;
+// Undead swipes, as in Black Ops: a hit at arm's length every so often, through the
+// boards too while a window is still up.
+static constexpr float kSwipeReach = 55.0f;
+static constexpr float kWindowSwipeReach = 95.0f; // from outside the boards to just inside
+static constexpr int kSwipeFrames = 24;
+// Black Ops health comes back about two and a half seconds after the last hit, quickly.
+static constexpr int kRegenDelayFrames = 50;
+static constexpr float kCrawlerChance = 0.3f; // an explosive that doesn't kill takes the legs
+// Hellhounds: at most two per player on the field at once.
+static constexpr int kDogsAlivePerPlayer = 2;
+
+static Run sRun;
+
+Run& GetRun() {
+    return sRun;
+}
+
+bool IsRunActive() {
+    return sRun.phase != Phase::Inactive;
+}
+
+bool PowerUpActive(PowerUp p) {
+    return sRun.powerUpFrames[static_cast<int>(p)] > 0;
+}
+
+static bool CVarOn(const char* name, int def) {
+    return CVarGetInteger(name, def) != 0;
+}
+
+void Announce(const std::string& text, int seconds) {
+    sRun.announcement.text = text;
+    sRun.announcement.framesLeft = seconds * kFps;
+}
+
+void AwardPoints(int playerIndex, int amount) {
+    if (PowerUpActive(PowerUp::DoublePoints)) {
+        amount *= 2;
+    }
+    PlayerState& ps = sRun.players[playerIndex];
+    ps.points += amount;
+    ps.totalEarned += amount;
+    sRun.popups.push_back({ amount, kFps, playerIndex });
+    if (sRun.popups.size() > 4) {
+        sRun.popups.erase(sRun.popups.begin());
+    }
+}
+
+bool SpendPoints(int playerIndex, int amount) {
+    PlayerState& ps = sRun.players[playerIndex];
+    if (ps.points < amount) {
+        return false;
+    }
+    ps.points -= amount;
+    sRun.popups.push_back({ -amount, kFps, playerIndex });
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// Save snapshot: purchases go into the real file, so by default a run puts the
+// inventory back the way it found it.
+
+struct SaveSnapshot {
+    bool valid = false;
+    ItemEquips equips;
+    Inventory inventory;
+    s16 healthCapacity;
+    s16 health;
+    s8 magicLevel;
+    s8 magic;
+    s16 magicCapacity;
+    u8 isMagicAcquired;
+    u8 isDoubleMagicAcquired;
+    u8 isDoubleDefenseAcquired;
+    u8 bgsFlag;
+    s16 rupees;
+    u16 dayTime;
+};
+
+static SaveSnapshot sSnapshot;
+
+// The snapshot is also kept on disk while a run is going, so the real items come back
+// even if the game is closed or reset mid-run, or an autosave wrote the run's loadout.
+static constexpr u32 kSnapshotMagic = 0x5A4F4D42; // "ZOMB"
+
+static std::string SnapshotPath(int fileNum) {
+    return Ship::Context::GetPathRelativeToAppDirectory("Save") + "/zombies_snapshot_" + std::to_string(fileNum) +
+           ".bin";
+}
+
+static void WriteSnapshotFile() {
+    if (gSaveContext.fileNum < 0 || gSaveContext.fileNum >= 3) {
+        return; // debug and boss rush files are never saved
+    }
+    FILE* file = fopen(SnapshotPath(gSaveContext.fileNum).c_str(), "wb");
+    if (file == nullptr) {
+        return;
+    }
+    u32 header[2] = { kSnapshotMagic, static_cast<u32>(sizeof(SaveSnapshot)) };
+    fwrite(header, sizeof(header), 1, file);
+    fwrite(&sSnapshot, sizeof(SaveSnapshot), 1, file);
+    fclose(file);
+}
+
+static void DeleteSnapshotFile(int fileNum) {
+    std::error_code error;
+    std::filesystem::remove(SnapshotPath(fileNum), error);
+}
+
+// A snapshot left by a run that never ended: put it back into the file being loaded.
+static bool ReadSnapshotFile(int fileNum) {
+    if (fileNum < 0 || fileNum >= 3) {
+        return false;
+    }
+    FILE* file = fopen(SnapshotPath(fileNum).c_str(), "rb");
+    if (file == nullptr) {
+        return false;
+    }
+    u32 header[2] = {};
+    SaveSnapshot snapshot;
+    bool ok = fread(header, sizeof(header), 1, file) == 1 && header[0] == kSnapshotMagic &&
+              header[1] == sizeof(SaveSnapshot) && fread(&snapshot, sizeof(SaveSnapshot), 1, file) == 1;
+    fclose(file);
+    if (ok) {
+        sSnapshot = snapshot;
+        sSnapshot.valid = true;
+    }
+    return ok;
+}
+
+// Saves run on SoH's save thread; these are set from its OnSaveFile hook.
+static std::atomic<bool> sSavedDuringRun = false;  // an autosave wrote the run's loadout
+static std::atomic<bool> sDeleteAfterSave = false; // the snapshot copy goes once the next save lands
+static std::atomic<bool> sLoadoutHeld = false;     // the save context holds a run's loadout
+
+static void TakeSnapshot() {
+    sSnapshot.valid = true;
+    sSnapshot.equips = gSaveContext.equips;
+    sSnapshot.inventory = gSaveContext.inventory;
+    sSnapshot.healthCapacity = gSaveContext.healthCapacity;
+    sSnapshot.health = gSaveContext.health;
+    sSnapshot.magicLevel = gSaveContext.magicLevel;
+    sSnapshot.magic = gSaveContext.magic;
+    sSnapshot.magicCapacity = gSaveContext.magicCapacity;
+    sSnapshot.isMagicAcquired = gSaveContext.isMagicAcquired;
+    sSnapshot.isDoubleMagicAcquired = gSaveContext.isDoubleMagicAcquired;
+    sSnapshot.isDoubleDefenseAcquired = gSaveContext.isDoubleDefenseAcquired;
+    sSnapshot.bgsFlag = gSaveContext.bgsFlag;
+    sSnapshot.rupees = gSaveContext.rupees;
+    sSnapshot.dayTime = gSaveContext.dayTime;
+    WriteSnapshotFile();
+    sLoadoutHeld = true;
+}
+
+// ---------------------------------------------------------------------------
+// Link's age and equipment as the file had them before Zombies Only changed his age
+// for a map. Kept on disk while Zombies Only is on and put back the next time the file
+// loads without it, so the save is never left as the other age.
+
+struct FileState {
+    u8 linkAge;
+    ItemEquips equips;
+    ItemEquips childEquips;
+    ItemEquips adultEquips;
+    u16 equipment;
+};
+
+static std::string FileStatePath(int fileNum) {
+    return Ship::Context::GetPathRelativeToAppDirectory("Save") + "/zombies_file_" + std::to_string(fileNum) + ".bin";
+}
+
+static void WriteFileState(int fileNum) {
+    if (fileNum < 0 || fileNum >= 3) {
+        return;
+    }
+    FileState state = { static_cast<u8>(gSaveContext.linkAge), gSaveContext.equips, gSaveContext.childEquips,
+                        gSaveContext.adultEquips, gSaveContext.inventory.equipment };
+    FILE* file = fopen(FileStatePath(fileNum).c_str(), "wb");
+    if (file == nullptr) {
+        return;
+    }
+    u32 header[2] = { kSnapshotMagic, static_cast<u32>(sizeof(FileState)) };
+    fwrite(header, sizeof(header), 1, file);
+    fwrite(&state, sizeof(FileState), 1, file);
+    fclose(file);
+}
+
+static bool ReadFileState(int fileNum, FileState* out) {
+    if (fileNum < 0 || fileNum >= 3) {
+        return false;
+    }
+    FILE* file = fopen(FileStatePath(fileNum).c_str(), "rb");
+    if (file == nullptr) {
+        return false;
+    }
+    u32 header[2] = {};
+    FileState state;
+    bool ok = fread(header, sizeof(header), 1, file) == 1 && header[0] == kSnapshotMagic &&
+              header[1] == sizeof(FileState) && fread(&state, sizeof(FileState), 1, file) == 1;
+    fclose(file);
+    if (ok) {
+        *out = state;
+    }
+    return ok;
+}
+
+// Returns true if a state was put back into gSaveContext (the file needs saving).
+static bool ApplyFileState(int fileNum) {
+    FileState state;
+    if (!ReadFileState(fileNum, &state)) {
+        return false;
+    }
+    gSaveContext.linkAge = state.linkAge;
+    gSaveContext.equips = state.equips;
+    gSaveContext.childEquips = state.childEquips;
+    gSaveContext.adultEquips = state.adultEquips;
+    // Only the Master Sword the adult maps hand out is taken back; anything else Link
+    // owns now, he earned.
+    u16 masterSword = static_cast<u16>(OWNED_EQUIP_FLAG(EQUIP_TYPE_SWORD, EQUIP_INV_SWORD_MASTER));
+    gSaveContext.inventory.equipment =
+        static_cast<u16>((gSaveContext.inventory.equipment & ~masterSword) | (state.equipment & masterSword));
+    return true;
+}
+
+static void DeleteFileState(int fileNum) {
+    std::error_code error;
+    std::filesystem::remove(FileStatePath(fileNum), error);
+}
+
+// Drops the snapshot without restoring it (Keep Items): the run's items stay.
+static void DiscardSnapshot() {
+    sSnapshot.valid = false;
+    sLoadoutHeld = false;
+    DeleteSnapshotFile(gSaveContext.fileNum);
+}
+
+// refresh: update the C button icons and Link's equipment now. Not while a scene is
+// loading or the game is closing; Play_Init rebuilds both from the save anyway.
+static void RestoreSnapshot(bool linkIsDead, bool refresh) {
+    if (!sSnapshot.valid) {
+        return;
+    }
+    sSnapshot.valid = false;
+    sLoadoutHeld = false;
+
+    gSaveContext.equips = sSnapshot.equips;
+    gSaveContext.inventory = sSnapshot.inventory;
+    gSaveContext.healthCapacity = sSnapshot.healthCapacity;
+    // During a death the game over sequence owns health; refilling it here would revive Link.
+    if (!linkIsDead) {
+        gSaveContext.health = std::min(sSnapshot.health, sSnapshot.healthCapacity);
+    }
+    gSaveContext.magicLevel = sSnapshot.magicLevel;
+    gSaveContext.magic = sSnapshot.magic;
+    gSaveContext.magicCapacity = sSnapshot.magicCapacity;
+    gSaveContext.isMagicAcquired = sSnapshot.isMagicAcquired;
+    gSaveContext.isDoubleMagicAcquired = sSnapshot.isDoubleMagicAcquired;
+    gSaveContext.isDoubleDefenseAcquired = sSnapshot.isDoubleDefenseAcquired;
+    gSaveContext.bgsFlag = sSnapshot.bgsFlag;
+    gSaveContext.rupees = sSnapshot.rupees;
+    gSaveContext.dayTime = sSnapshot.dayTime;
+
+    // If the file was saved mid-run (an autosave), it holds the run's loadout: write the
+    // real items back over it, and drop the copy on disk once that save has landed.
+    // With Autosave on, a save of the loadout may still be queued (it saves on exit too),
+    // so save after it. Otherwise the file on disk was never touched and the copy can go now.
+    bool savedDuringRun = sSavedDuringRun.exchange(false);
+    if ((savedDuringRun || CVarGetInteger(CVAR_ENHANCEMENT("Autosave"), 0) != 0) && gSaveContext.fileNum >= 0 &&
+        gSaveContext.fileNum < 3) {
+        sDeleteAfterSave = true;
+        Save_SaveFile();
+    } else {
+        DeleteSnapshotFile(gSaveContext.fileNum);
+    }
+
+    if (refresh && gPlayState != nullptr) {
+        for (u16 button = 0; button < 4; button++) {
+            Interface_LoadItemIcon1(gPlayState, button);
+        }
+        Player_SetEquipmentData(gPlayState, GET_PLAYER(gPlayState));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Undead
+
+struct EnemySpec {
+    s16 actorId;
+    s16 params;
+    int baseHp;
+};
+
+static EnemySpec GetEnemySpec(EnemyKind kind) {
+    // Redead/Gibdo high byte is the switch flag set on death; 0x3F is a temp flag
+    // so a kill never opens anything in the arena. Bit 0x80 of it disables the scream.
+    s16 rdFlags = CVarOn(CVAR_ZOMBIES("RedeadScream"), 0) ? 0x3F : 0xBF;
+    switch (kind) {
+        case EnemyKind::Stalchild:
+            return { ACTOR_EN_SKB, 1, 2 };
+        case EnemyKind::BigStalchild:
+            return { ACTOR_EN_SKB, 8, 4 };
+        case EnemyKind::Redead:
+            return { ACTOR_EN_RD, static_cast<s16>((rdFlags << 8) | 0x01), 8 };
+        case EnemyKind::Gibdo:
+            return { ACTOR_EN_RD, static_cast<s16>((rdFlags << 8) | 0xFE), 8 };
+        case EnemyKind::WhiteWolfos:
+        default:
+            // High byte 0xFF: no switch flag, so the Wolfos never despawns on a flag.
+            return { ACTOR_EN_WF, static_cast<s16>(0xFF01), 8 };
+    }
+}
+
+bool FloorAt(PlayState* play, float x, float z, float refY, float* outY) {
+    Vec3f probe = { x, refY + 200.0f, z };
+    CollisionPoly* poly;
+    s32 bgId;
+    f32 floorY = BgCheck_EntityRaycastFloor3(&play->colCtx, &poly, &bgId, &probe);
+    if (floorY <= BGCHECK_Y_MIN + 1.0f || fabsf(floorY - refY) > kSpawnMaxHeightDiff) {
+        return false;
+    }
+    WaterBox* waterBox;
+    f32 waterY;
+    if (WaterBox_GetSurface1(play, &play->colCtx, x, z, &waterY, &waterBox) && waterY > floorY + 10.0f) {
+        return false;
+    }
+    *outY = floorY;
+    return true;
+}
+
+static bool FindFloorNear(PlayState* play, const Vec3f& center, float minDist, float maxDist, float refY, Vec3f* out) {
+    for (int attempt = 0; attempt < 16; attempt++) {
+        s16 angle = static_cast<s16>(Rand_ZeroOne() * 0x10000);
+        float dist = minDist + Rand_ZeroOne() * (maxDist - minDist);
+        float x = center.x + Math_SinS(angle) * dist;
+        float z = center.z + Math_CosS(angle) * dist;
+        float y;
+        if (FloorAt(play, x, z, refY, &y)) {
+            *out = { x, y, z };
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool SpawnEnemy(PlayState* play, Player* player, EnemyKind kind) {
+    Vec3f pos;
+    // Undead come in through the barricades; Wolfos, like hellhounds, appear anywhere.
+    int window = kind == EnemyKind::WhiteWolfos ? -1 : Barricades_PickWindow();
+    if (window >= 0) {
+        const Window& w = sRun.windows[window];
+        float side = (Rand_ZeroOne() - 0.5f) * 80.0f;
+        pos = { w.spawnPos.x + Math_CosS(w.yaw) * side, w.spawnPos.y, w.spawnPos.z - Math_SinS(w.yaw) * side };
+        if (!FloorAt(play, pos.x, pos.z, w.spawnPos.y, &pos.y)) {
+            pos = w.spawnPos;
+        }
+    } else if (!FindFloorNear(play, player->actor.world.pos, kSpawnMinDist, kSpawnMaxDist, player->actor.world.pos.y,
+                              &pos)) {
+        return false;
+    }
+
+    EnemySpec spec = GetEnemySpec(kind);
+    // Undead are Black Ops zombies when the player has imported the model.
+    if (kind != EnemyKind::WhiteWolfos && CVarOn(CVAR_ZOMBIES("BlackOpsZombies"), 1) && ZombieActor_Available()) {
+        spec.actorId = ZombieActor_Id();
+        spec.params = 0;
+    }
+    s16 yaw = Math_Vec3f_Yaw(&pos, &player->actor.world.pos);
+
+    // Actor_Spawn refuses enemies in a room whose clear flag is set.
+    Flags_UnsetClear(play, play->roomCtx.curRoom.num);
+
+    Actor* actor = Actor_Spawn(&play->actorCtx, play, spec.actorId, pos.x, pos.y, pos.z, 0, yaw, 0, spec.params);
+    if (actor == nullptr) {
+        return false;
+    }
+    // Room -1 keeps the undead alive when Link walks into another room of the arena.
+    actor->room = -1;
+    bool dog = kind == EnemyKind::WhiteWolfos;
+    u8 hp = dog && sRun.dogRound
+                ? DogHealth(sRun.dogRoundIndex, spec.baseHp)
+                : ScaleHealth(spec.baseHp, sRun.round, CVarGetInteger(CVAR_ZOMBIES("HealthScaling"), 100));
+    actor->colChkInfo.health = hp;
+
+    // Hellhounds always sprint; undead get a Black Ops move tier for the round.
+    MoveTier tier = dog ? MoveTier::Sprint : PickMoveTier(sRun.round, Rand_ZeroOne());
+    TrackedEnemy tracked = { actor, kind, tier, static_cast<s16>(hp), actor->world.pos, false,
+                             Math_Vec3f_DistXZ(&pos, &player->actor.world.pos), 0, window };
+    tracked.vocalTimer = static_cast<int>((1.0f + Rand_ZeroOne() * 4.0f) * kFps);
+    tracked.maxHealth = static_cast<s16>(hp);
+    sRun.enemies.push_back(tracked);
+    if (dog) {
+        // Hellhounds arrive in a lightning strike.
+        static Color_RGBA8 sBoltPrim = { 255, 255, 255, 255 };
+        static Color_RGBA8 sBoltEnv = { 120, 160, 255, 255 };
+        Vec3f bolt = { pos.x, pos.y + 20.0f, pos.z };
+        EffectSsLightning_Spawn(play, &bolt, &sBoltPrim, &sBoltEnv, 255, static_cast<s16>(Rand_ZeroOne() * 0x10000),
+                                8, 3);
+        Environment_AddLightningBolts(play, 1);
+        SoundSource_PlaySfxAtFixedWorldPos(play, &pos, 40, NA_SE_EV_LIGHTNING);
+    } else {
+        // Dust where the undead claws out of the ground.
+        Actor_SpawnFloorDustRing(play, actor, &pos, 30.0f, 7, 4.0f, 60, 6, 0);
+    }
+    return true;
+}
+
+static void ForgetEnemy(size_t index, bool escaped) {
+    if (escaped && sRun.phase == Phase::Active) {
+        // An undead that despawned or got lost goes back into the round's pool.
+        sRun.toSpawn++;
+    }
+    sRun.enemies.erase(sRun.enemies.begin() + index);
+}
+
+static KillType CurrentKillType(Player* player) {
+    if (player->meleeWeaponState != 0) {
+        return KillType::Melee;
+    }
+    if (Guns_FiredRecently(0)) {
+        return KillType::Ranged;
+    }
+    switch (player->heldItemAction) {
+        case PLAYER_IA_BOW:
+        case PLAYER_IA_BOW_FIRE:
+        case PLAYER_IA_BOW_ICE:
+        case PLAYER_IA_BOW_LIGHT:
+        case PLAYER_IA_SLINGSHOT:
+        case PLAYER_IA_HOOKSHOT:
+        case PLAYER_IA_LONGSHOT:
+            return KillType::Ranged;
+        default:
+            return KillType::Other;
+    }
+}
+
+static void SpawnPowerUp(PlayState* play, const Vec3f& pos, PowerUp type);
+
+// Keep home under the enemy so it never walks back or despawns for straying from home.
+// A Stalchild burrows away when its home is over 800 from Link, which a far window or a
+// big map always is: its home goes on Link instead, and it walks to him anyway.
+static void KeepHome(TrackedEnemy& enemy, const Vec3f& target) {
+    if (enemy.kind == EnemyKind::Stalchild || enemy.kind == EnemyKind::BigStalchild) {
+        enemy.actor->home.pos = target;
+    } else {
+        enemy.actor->home.pos = enemy.actor->world.pos;
+    }
+}
+
+// Where an undead is headed: Link, or in co-op whichever player still standing is nearer.
+struct Target {
+    Vec3f pos;
+    float dist;
+    s16 yaw;
+    bool partner; // player 2, whom the enemy's own AI doesn't know about
+};
+
+static Target TargetFor(Actor* actor, Player* player) {
+    Target target = { player->actor.world.pos, actor->xzDistToPlayer, actor->yawTowardsPlayer, false };
+    Vec3f pos;
+    float dist;
+    if (sRun.playerCount >= 2 && Coop_Target(actor->world.pos, &pos, &dist)) {
+        if (Math_Vec3f_DistXZ(&pos, &player->actor.world.pos) > 1.0f) {
+            target = { pos, dist, Math_Vec3f_Yaw(&actor->world.pos, &pos), true };
+        }
+    }
+    return target;
+}
+
+// Solo Fairy Revive is the bottled fairy, however Link got it. When it saves him from
+// dying, that's a down as in Black Ops: points and perks go. Drinking it to heal just
+// uses it up.
+static bool sLinkFell = false;
+static int sFairies = 0; // bottled fairies Link held last frame
+
+static int CountFairies() {
+    int count = 0;
+    for (int slot = SLOT_BOTTLE_1; slot <= SLOT_BOTTLE_4; slot++) {
+        count += gSaveContext.inventory.items[slot] == ITEM_FAIRY;
+    }
+    return count;
+}
+
+static void UpdateSoloFairy() {
+    if (sRun.playerCount >= 2) {
+        return;
+    }
+    if (gSaveContext.health <= 0) {
+        sLinkFell = true;
+    }
+    int fairies = CountFairies();
+    if (fairies < sFairies && sLinkFell) {
+        LoseOnDown(0); // one fairy saved him: that's a down
+        sLinkFell = false;
+    }
+    sFairies = fairies;
+    sRun.players[0].perks[PERK_FAIRY_REVIVE] = fairies > 0;
+    if (gSaveContext.health > 0) {
+        sLinkFell = false;
+    }
+}
+
+static void OnEnemyKilled(PlayState* play, Player* player, TrackedEnemy& enemy, int who) {
+    enemy.killCounted = true;
+    enemy.stuckFrames = 0; // now counts the death animation
+    PlayerState& ps = sRun.players[who];
+    ps.kills++;
+    KillType type = who == 0          ? CurrentKillType(player)
+                    : enemy.hitBy == 1 ? KillType::Melee
+                    : enemy.hitBy == 3 ? KillType::Ranged // player 2's gun
+                                       : KillType::Other;
+    AwardPoints(who, PointsForKill(type));
+    sRun.lastKillPos = enemy.actor->world.pos;
+
+    // The drop threshold counts the whole team's points, as in Black Ops.
+    int teamEarned = 0;
+    for (int i = 0; i < sRun.playerCount; i++) {
+        teamEarned += sRun.players[i].totalEarned;
+    }
+    if (sRun.dropTracker.OnKill(teamEarned, Rand_ZeroOne())) {
+        SpawnPowerUp(play, enemy.actor->world.pos,
+                     sRun.powerUpDeck.Draw(Rand_ZeroOne, Stations_ChestPlaced() && Stations_ChestMoved(),
+                                           Barricades_AnyBroken()));
+    }
+}
+
+static bool IsSwiper(const TrackedEnemy& enemy) {
+    return enemy.kind == EnemyKind::Redead || enemy.kind == EnemyKind::Gibdo || ZombieActor_Is(enemy.actor);
+}
+
+// Groans while they shamble, as Black Ops zombies do.
+static void Vocalize(TrackedEnemy& enemy, bool attack) {
+    // Black Ops' zombie (and hellhound, for the Wolfos) voices when imported.
+    const char* role;
+    if (enemy.kind == EnemyKind::WhiteWolfos) {
+        role = attack ? "dog_bite" : "dog_amb";
+    } else if (attack) {
+        role = "zombie_attack";
+    } else {
+        role = enemy.tier == MoveTier::Crawl ? "zombie_crawler" : enemy.tier == MoveTier::Sprint ? "zombie_sprint" : "zombie_amb";
+    }
+    if (Sound_Play(role, &enemy.actor->world.pos)) {
+        return;
+    }
+    u16 sfx;
+    switch (enemy.kind) {
+        case EnemyKind::Redead:
+        case EnemyKind::Gibdo:
+            sfx = attack ? NA_SE_EN_REDEAD_ATTACK : NA_SE_EN_REDEAD_AIM;
+            break;
+        case EnemyKind::WhiteWolfos:
+            sfx = attack ? NA_SE_EN_WOLFOS_ATTACK : NA_SE_EN_WOLFOS_CRY;
+            break;
+        default:
+            sfx = attack ? NA_SE_EN_STALKID_ATTACK : NA_SE_EN_STAL_WARAU;
+            break;
+    }
+    Audio_PlayActorSound2(enemy.actor, sfx);
+}
+
+// An undead in reach of Link swipes at him: the Redead's grab and the scream's freeze
+// are off, and undead held at a window reach through the boards.
+static void TrySwipeLink(PlayState* play, Player* player, TrackedEnemy& enemy, float reach) {
+    Actor* actor = enemy.actor;
+    if (enemy.swipeTimer > 0 || player->invincibilityTimer != 0 || gSaveContext.health <= 0 ||
+        (player->stateFlags1 & PLAYER_STATE1_DEAD) || actor->freezeTimer > 0) {
+        return;
+    }
+    if (actor->xzDistToPlayer > reach || fabsf(actor->world.pos.y - player->actor.world.pos.y) > 60.0f) {
+        return;
+    }
+    enemy.swipeTimer = kSwipeFrames;
+    actor->shape.rot.y = actor->yawTowardsPlayer;
+    ZombieActor_Attack(actor);
+    // Any damage at all: Black Ops health below turns it into one hit's worth.
+    Actor_SetPlayerKnockbackSmall(play, actor, 4.0f, actor->yawTowardsPlayer, 4.0f, 8);
+    Vocalize(enemy, true);
+    Sound_Play("zombie_swipe", &actor->world.pos);
+    Sound_Play("player_hit");
+}
+
+// Explosions this frame, for crawlers.
+static bool NearExplosion(PlayState* play, const Vec3f& pos) {
+    for (Actor* a = play->actorCtx.actorLists[ACTORCAT_EXPLOSIVE].head; a != nullptr; a = a->next) {
+        if (a->id != ACTOR_EN_BOM || a->params != BOMB_EXPLOSION) {
+            continue;
+        }
+        EnBom* bomb = reinterpret_cast<EnBom*>(a);
+        float radius = bomb->explosionCollider.elements[0].dim.worldSphere.radius + 40.0f;
+        if (Math_Vec3f_DistXYZ(&a->world.pos, const_cast<Vec3f*>(&pos)) < radius) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void MakeCrawler(TrackedEnemy& enemy) {
+    enemy.tier = MoveTier::Crawl;
+    if (!ZombieActor_Is(enemy.actor)) {
+        // Down on the ground, dragging itself along. The Black Ops zombie has its own crawl.
+        enemy.actor->scale.y *= 0.45f;
+    }
+}
+
+// Black Ops health for Link: two hits down (five with Juggernog), whoever lands them,
+// and it all comes back a few seconds after the last one.
+static int sLinkHealthLast = 0;
+static int sLinkSinceHit = 0;
+
+static void UpdateLinkHealth(Player* player) {
+    int health = gSaveContext.health;
+    int capacity = gSaveContext.healthCapacity;
+    if (!CVarOn(CVAR_ZOMBIES("BlackOpsHealth"), 1) || capacity <= 0) {
+        sLinkHealthLast = health;
+        return;
+    }
+    bool jug = sRun.players[0].perks[PERK_JUGGERNOG];
+    if (health < sLinkHealthLast && health > 0) {
+        health = HealthAfterHit(sLinkHealthLast, capacity, jug);
+        if (health <= 0) {
+            health = 0; // OoT plays out the fall from here: fairy, down or game over
+        }
+        gSaveContext.health = static_cast<s16>(health);
+        sLinkSinceHit = 0;
+    } else if (health > 0 && !(player->stateFlags1 & PLAYER_STATE1_DEAD)) {
+        if (sLinkSinceHit < kRegenDelayFrames) {
+            sLinkSinceHit++;
+        } else if (health < capacity) {
+            health = std::min(capacity, health + std::max(capacity / 10, 4));
+            gSaveContext.health = static_cast<s16>(health);
+        }
+    }
+    sLinkHealthLast = gSaveContext.health;
+}
+
+static void UpdateEnemies(PlayState* play, Player* player) {
+    bool hordePull = CVarOn(CVAR_ZOMBIES("HordePull"), 1);
+    float slow = sRun.stormFrames > 0 ? 0.5f : 1.0f;
+
+    for (size_t i = 0; i < sRun.enemies.size();) {
+        TrackedEnemy& enemy = sRun.enemies[i];
+        Actor* actor = enemy.actor;
+
+        if (actor->update == nullptr) {
+            // Actor_Kill ran: either a finished death animation or a despawn (Stalchild burrowing).
+            ForgetEnemy(i, !enemy.killCounted);
+            continue;
+        }
+
+        // Knocked through the floor, or a death animation that never finishes (it fell
+        // while dying): it would hold the round open forever.
+        if (enemy.killCounted && actor->colChkInfo.health == 0) {
+            enemy.stuckFrames++;
+        }
+        if (actor->world.pos.y < sRun.origin.y - kFallOutDepth || enemy.stuckFrames > kStuckFrames * 2) {
+            Actor_Kill(actor);
+            ForgetEnemy(i, !enemy.killCounted);
+            continue;
+        }
+
+        if (!enemy.killCounted) {
+            if (PowerUpActive(PowerUp::InstaKill) && actor->colChkInfo.health > 1) {
+                actor->colChkInfo.health = 1;
+                enemy.lastHealth = 1;
+            }
+
+            s16 health = actor->colChkInfo.health;
+            int who = Coop_Credit(enemy);
+            if (health < enemy.lastHealth) {
+                if (who == 0) {
+                    health = static_cast<s16>(Guns_ScaleItemHit(play, player, enemy, health)); // Zelda items keep up
+                }
+                s16 damage = enemy.lastHealth - health;
+                // Double Tap and a Pack-a-Punched blade each land the hit again. The extra damage
+                // never finishes an enemy off, because its own death check already ran this frame.
+                // Player 2's Punched Blade already doubles their sword's own damage.
+                // Double Tap fires a third faster in Black Ops: here every third hit lands twice.
+                static int sDoubleTapHits[kMaxPlayers] = {};
+                bool doubleTap = sRun.players[who].perks[PERK_DOUBLE_TAP] && ++sDoubleTapHits[who] % 3 == 0;
+                int repeats =
+                    (doubleTap ? 1 : 0) + (who == 0 && Stations_PapSword() && player->meleeWeaponState != 0 ? 1 : 0);
+                if (repeats > 0 && health > 1) {
+                    health = static_cast<s16>(std::max(1, health - damage * repeats));
+                    actor->colChkInfo.health = static_cast<u8>(health);
+                }
+                AwardPoints(who, kPointsPerHit);
+                enemy.lastHealth = health;
+                if (health > 0 && enemy.kind != EnemyKind::WhiteWolfos && enemy.tier != MoveTier::Crawl &&
+                    NearExplosion(play, actor->world.pos) && Rand_ZeroOne() < kCrawlerChance) {
+                    MakeCrawler(enemy);
+                }
+                if (who == 1 && health > 0) {
+                    enemy.hitBy = 0; // used: Link's next hit is his own
+                }
+            }
+            if (health == 0) {
+                OnEnemyKilled(play, player, enemy, who);
+            }
+        }
+
+        if (!enemy.killCounted) {
+            Target target = TargetFor(actor, player);
+            float dist = target.dist;
+
+            if (actor->id == ACTOR_EN_RD) {
+                // Keep the Redead grab from ever starting: these undead swipe instead.
+                reinterpret_cast<EnRd*>(actor)->grabWaitTimer = 5;
+            }
+            ZombieActor_SetTier(actor, enemy.tier);
+            ZombieActor_SetTearing(actor, false);
+            if (--enemy.vocalTimer <= 0) {
+                enemy.vocalTimer = static_cast<int>((3.0f + Rand_ZeroOne() * 5.0f) * kFps);
+                Vocalize(enemy, false);
+            }
+            if (sRun.playerCount < 2 && enemy.swipeTimer > 0) {
+                enemy.swipeTimer--; // co-op counts it down with player 2's swipes
+            }
+
+            // Undead outside a barricade stay there, tearing boards, until the window is open.
+            if (enemy.window >= 0) {
+                enemy.cameIn = enemy.window;
+            }
+            if (enemy.window >= 0 && Barricades_HoldEnemy(enemy, PullSpeed(enemy.tier) * slow)) {
+                enemy.closestDist = dist;
+                ZombieActor_SetTearing(actor, enemy.tearTimer > 0);
+                TrySwipeLink(play, player, enemy, kWindowSwipeReach);
+                // Counted by the hold: frames spent short of the boards, caught on something.
+                if (dist > kLostDist || enemy.stuckFrames > kStuckFrames) {
+                    Actor_Kill(actor);
+                    ForgetEnemy(i, true);
+                    continue;
+                }
+                KeepHome(enemy, target.pos);
+                enemy.lastPos = actor->world.pos;
+                i++;
+                continue;
+            }
+
+            // On a Black Ops map the undead walk the map's rooms (ZombiesNav.cpp): through
+            // doors and up the stairs, not straight at a player through a wall or a floor.
+            // Close by on the same floor they go straight in.
+            Vec3f navTo;
+            float navDist;
+            // Caught on something: one node at a time round it.
+            if (Nav_Ready() && Nav_Steer(play, actor->world.pos, &navTo, &navDist, enemy.stuckFrames > 20 ? 1 : 4)) {
+                bool sameFloor = fabsf(target.pos.y - actor->world.pos.y) < 45.0f;
+                enemy.cameIn = -1;
+                if (navDist > 80.0f || !sameFloor) {
+                    target.yaw = Math_Vec3f_Yaw(&actor->world.pos, &navTo);
+                    dist = std::max(dist, navDist);
+                }
+                // Held at a stair's riser: up onto the next tread, as a Black Ops zombie steps.
+                float rise = navTo.y - actor->world.pos.y;
+                if (enemy.stuckFrames > 10 && rise > 3.0f && rise < 40.0f && actor->freezeTimer == 0) {
+                    actor->world.pos.y += std::min(rise, 4.0f);
+                    actor->velocity.y = 0.0f;
+                }
+            } else if (Nav_Ready() && enemy.cameIn >= 0 && enemy.cameIn < static_cast<int>(sRun.windows.size())) {
+                // Off the walk grid just after its window opened: in through the window.
+                const Window& w = sRun.windows[enemy.cameIn];
+                Vec3f in = { w.pos.x + Math_SinS(w.yaw) * 60.0f, w.pos.y, w.pos.z + Math_CosS(w.yaw) * 60.0f };
+                target.yaw = Math_Vec3f_Yaw(&actor->world.pos, &in);
+                dist = std::max(dist, Math_Vec3f_DistXZ(&actor->world.pos, &in) + kStuckMinDist);
+            }
+
+            if (dist < enemy.closestDist - kStuckProgress || dist < kStuckMinDist) {
+                enemy.closestDist = std::min(enemy.closestDist, dist);
+                enemy.stuckFrames = 0;
+            } else if (actor->freezeTimer == 0) {
+                enemy.stuckFrames++;
+            }
+            if (dist > kLostDist || enemy.stuckFrames > kStuckFrames) {
+                Actor_Kill(actor);
+                ForgetEnemy(i, true);
+                continue;
+            }
+
+            // Song of Storms: undead move at half speed in the rain.
+            if (slow < 1.0f) {
+                actor->world.pos.x = enemy.lastPos.x + (actor->world.pos.x - enemy.lastPos.x) * slow;
+                actor->world.pos.z = enemy.lastPos.z + (actor->world.pos.z - enemy.lastPos.z) * slow;
+            }
+
+            // Horde Pull: OoT enemies idle until Link is close. Zombies always know where he is,
+            // and walk, run or sprint at him depending on the round.
+            // Player 2 is only ours to chase: undead go all the way to them to swipe.
+            float stopDist = target.partner                 ? kPullStopDistPartner
+                             : IsSwiper(enemy)              ? kPullStopDistSwiper
+                             : enemy.tier == MoveTier::Walk ? kPullStopDistWalk
+                                                            : kPullStopDistFast;
+            if (IsSwiper(enemy) || enemy.tier == MoveTier::Crawl) {
+                TrySwipeLink(play, player, enemy, kSwipeReach);
+            }
+            if ((hordePull || target.partner || ZombieActor_Is(actor)) && dist > stopDist && actor->freezeTimer == 0 &&
+                !ZombieActor_Busy(actor)) {
+                s16 yaw = target.yaw;
+                float speed = PullSpeed(enemy.tier) * slow;
+                actor->world.pos.x += Math_SinS(yaw) * speed;
+                actor->world.pos.z += Math_CosS(yaw) * speed;
+                actor->shape.rot.y = yaw;
+            }
+            Arena_KeepOut(&actor->world.pos); // closed debris and doors hold the undead too
+
+            KeepHome(enemy, target.pos);
+        }
+
+        enemy.lastPos = actor->world.pos;
+        i++;
+    }
+}
+
+static void KillAllEnemies(PlayState* play, bool explode, int who = 0) {
+    for (TrackedEnemy& enemy : sRun.enemies) {
+        if (enemy.actor->update == nullptr) {
+            continue;
+        }
+        if (explode) {
+            Vec3f zero = { 0, 0, 0 };
+            EffectSsBomb2_SpawnLayered(play, &enemy.actor->world.pos, &zero, &zero, 100, 19);
+            enemy.killCounted = true;
+            sRun.players[who].kills++;
+        }
+        Actor_Kill(enemy.actor);
+    }
+    if (!explode) {
+        sRun.enemies.clear();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Power-ups
+
+static s16 PowerUpDropParams(PowerUp type) {
+    switch (type) {
+        case PowerUp::MaxAmmo:
+            return ITEM00_MAGIC_LARGE;
+        case PowerUp::InstaKill:
+            return ITEM00_RUPEE_RED;
+        case PowerUp::DoublePoints:
+            return ITEM00_RUPEE_ORANGE;
+        case PowerUp::Nuke:
+            return ITEM00_BOMBS_A;
+        case PowerUp::Carpenter:
+            return ITEM00_STICK; // a plank of wood
+        case PowerUp::FireSale:
+        default:
+            return ITEM00_RUPEE_PURPLE;
+    }
+}
+
+static void SpawnPowerUp(PlayState* play, const Vec3f& pos, PowerUp type) {
+    Actor* drop = Actor_Spawn(&play->actorCtx, play, ACTOR_EN_ITEM00, pos.x, pos.y + 30.0f, pos.z, 0, 0, 0,
+                              PowerUpDropParams(type));
+    if (drop == nullptr) {
+        return;
+    }
+    drop->room = -1;
+    sRun.drops.push_back({ drop, drop->draw, type, kPowerUpSeconds * kFps });
+    if (!Sound_Play("powerup_spawn", &drop->world.pos)) {
+        Sfx_PlaySfxCentered(NA_SE_SY_TRE_BOX_APPEAR);
+    }
+}
+
+void RefillAmmo() {
+    if (INV_CONTENT(ITEM_STICK) == ITEM_STICK) {
+        AMMO(ITEM_STICK) = static_cast<s8>(CUR_CAPACITY(UPG_STICKS));
+    }
+    if (INV_CONTENT(ITEM_NUT) == ITEM_NUT) {
+        AMMO(ITEM_NUT) = static_cast<s8>(CUR_CAPACITY(UPG_NUTS));
+    }
+    if (INV_CONTENT(ITEM_SLINGSHOT) == ITEM_SLINGSHOT) {
+        AMMO(ITEM_SLINGSHOT) = static_cast<s8>(CUR_CAPACITY(UPG_BULLET_BAG));
+    }
+    if (INV_CONTENT(ITEM_BOW) == ITEM_BOW) {
+        AMMO(ITEM_BOW) = static_cast<s8>(CUR_CAPACITY(UPG_QUIVER));
+    }
+    if (INV_CONTENT(ITEM_BOMB) == ITEM_BOMB) {
+        AMMO(ITEM_BOMB) = static_cast<s8>(CUR_CAPACITY(UPG_BOMB_BAG));
+    }
+    if (INV_CONTENT(ITEM_BOMBCHU) == ITEM_BOMBCHU) {
+        AMMO(ITEM_BOMBCHU) = 50;
+    }
+    if (gSaveContext.isMagicAcquired && gPlayState != nullptr) {
+        Magic_Fill(gPlayState);
+    }
+}
+
+static void ActivatePowerUp(PlayState* play, PowerUp type, int who) {
+    Announce(PowerUpName(type));
+    // Black Ops: the grab, then each power-up's own sting.
+    static const char* const kSting[] = { "powerup_max_ammo", "powerup_insta_kill", "powerup_double_points",
+                                          "powerup_nuke", "powerup_carpenter", "powerup_fire_sale" };
+    bool grabbed = Sound_Play("powerup_grab");
+    if (static_cast<int>(type) < 6) {
+        Sound_Play(kSting[static_cast<int>(type)]);
+    }
+    if (!grabbed) {
+        Sfx_PlaySfxCentered(NA_SE_SY_GET_ITEM);
+    }
+
+    switch (type) {
+        case PowerUp::MaxAmmo:
+            RefillAmmo();
+            Guns_MaxAmmo();
+            if (sRun.partner.bombBag) {
+                Coop_GiveBombs(Coop_MaxBombs());
+            }
+            break;
+        case PowerUp::Nuke:
+            KillAllEnemies(play, true, who);
+            if (!Sound_Play("powerup_nuke_flash")) {
+                Sfx_PlaySfxCentered(NA_SE_IT_BOMB_EXPLOSION);
+            }
+            for (int i = 0; i < sRun.playerCount; i++) {
+                AwardPoints(i, kPointsNuke); // everyone gets these
+            }
+            break;
+        case PowerUp::Carpenter:
+            Barricades_RepairAll();
+            if (!Sound_Play("powerup_carpenter_end")) {
+                Sfx_PlaySfxCentered(NA_SE_EV_WOOD_HIT);
+            }
+            for (int i = 0; i < sRun.playerCount; i++) {
+                AwardPoints(i, kPointsCarpenter); // everyone gets these
+            }
+            break;
+        default:
+            sRun.powerUpFrames[static_cast<int>(type)] = kPowerUpSeconds * kFps;
+            break;
+    }
+}
+
+static void UpdateDrops(PlayState* play, Player* player) {
+    for (size_t i = 0; i < sRun.drops.size();) {
+        ActiveDrop& drop = sRun.drops[i];
+        if (drop.actor->update == nullptr) {
+            // The drop killed itself. If Link is standing on it, he picked it up.
+            PowerUp type = drop.type;
+            bool pickedUp = Math_Vec3f_DistXZ(&drop.actor->world.pos, &player->actor.world.pos) < 60.0f;
+            sRun.drops.erase(sRun.drops.begin() + i);
+            if (pickedUp) {
+                ActivatePowerUp(play, type, 0);
+            }
+            continue;
+        }
+        // Player 2 picks drops up by walking over them; the drop itself only knows Link.
+        if (Coop_Active() && sRun.partner.actor != nullptr && !sRun.partner.downed && !sRun.partner.bledOut &&
+            Math_Vec3f_DistXZ(&drop.actor->world.pos, &sRun.partner.actor->world.pos) < 40.0f &&
+            fabsf(drop.actor->world.pos.y - sRun.partner.actor->world.pos.y) < 60.0f) {
+            PowerUp type = drop.type;
+            Actor* actor = drop.actor;
+            sRun.drops.erase(sRun.drops.begin() + i);
+            Actor_Kill(actor);
+            ActivatePowerUp(play, type, 1);
+            continue;
+        }
+        drop.framesLeft--;
+        Sound_Keep(drop.actor, "powerup_loop", &drop.actor->world.pos);
+        // Blink for the last five seconds, like the Black Ops drops.
+        if (drop.framesLeft < 5 * kFps) {
+            drop.actor->draw = ((drop.framesLeft / 2) % 2 == 0) ? drop.draw : nullptr;
+        }
+        if (drop.framesLeft <= 0) {
+            Actor* actor = drop.actor;
+            sRun.drops.erase(sRun.drops.begin() + i);
+            Actor_Kill(actor);
+            continue;
+        }
+        i++;
+    }
+
+    // Black Ops hums under Insta-Kill and Double Points while they last.
+    for (PowerUp p : { PowerUp::InstaKill, PowerUp::DoublePoints }) {
+        int& frames = sRun.powerUpFrames[static_cast<int>(p)];
+        if (frames > 0) {
+            Sound_Keep(&frames, p == PowerUp::InstaKill ? "powerup_insta_loop" : "powerup_double_loop", nullptr, 0.5f);
+        }
+    }
+    for (int& frames : sRun.powerUpFrames) {
+        if (frames > 0 && --frames == 0 && !Sound_Play("powerup_end")) {
+            Sfx_PlaySfxCentered(NA_SE_SY_CANCEL); // a timed power-up ran out
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Rounds
+
+static bool sLastOneCalled = false;
+
+static void StartRound(int round) {
+    sRun.round = round;
+    sLastOneCalled = false;
+    // Nacht der Untoten has no hellhound rounds in Black Ops, so the Black Ops map has no
+    // Wolfos rounds either.
+    bool dogsAllowed = sRun.layout == nullptr || !sRun.layout->blackOps;
+    sRun.dogRound = dogsAllowed && CVarOn(CVAR_ZOMBIES("WolfosRounds"), 1) && round == sRun.nextDogRound;
+    sRun.dropTracker.NewRound();
+    sRun.repairPointsThisRound = 0;
+
+    if (sRun.dogRound) {
+        sRun.dogRoundIndex++;
+        sRun.toSpawn = DogsForRound(sRun.dogRoundIndex, sRun.playerCount);
+        sRun.nextDogRound = NextDogRound(round, Rand_ZeroOne());
+        Announce("WOLFOS ROUND", 4);
+        if (!Sound_Play("dog_round_start")) {
+            Sfx_PlaySfxCentered(NA_SE_EN_WOLFOS_CRY);
+        }
+    } else {
+        sRun.toSpawn = ZombiesForRound(round, sRun.playerCount);
+        Announce("ROUND " + std::to_string(round), 4);
+        if (!Sound_Play("round_start")) {
+            Sfx_PlaySfxCentered(NA_SE_EN_REDEAD_CRY);
+        }
+    }
+
+    // Everyone starts the round on full health.
+    gSaveContext.health = gSaveContext.healthCapacity;
+    // Black Ops gives two grenades a round; here, two bombs.
+    if (INV_CONTENT(ITEM_BOMB) == ITEM_BOMB && round > 1) {
+        AMMO(ITEM_BOMB) = static_cast<s8>(std::min<int>(AMMO(ITEM_BOMB) + 2, CUR_CAPACITY(UPG_BOMB_BAG)));
+    }
+
+    Extras_OnRoundStart(sRun.dogRound);
+    if (gPlayState != nullptr) {
+        Coop_OnRoundStart(gPlayState, GET_PLAYER(gPlayState));
+        if (round > 1 && sRun.partner.bombBag) {
+            Coop_GiveBombs(2);
+        }
+    }
+
+    sRun.spawnTimer = 2 * kFps;
+    sRun.phase = Phase::Active;
+}
+
+static void EndRound(PlayState* play) {
+    if (sRun.dogRound) {
+        // The last Wolfos always drops Max Ammo.
+        SpawnPowerUp(play, sRun.lastKillPos, PowerUp::MaxAmmo);
+    }
+    Announce("ROUND " + std::to_string(sRun.round) + " SURVIVED", 3);
+    Extras_OnRoundEnd();
+    if (!Sound_Play("round_end")) {
+        Sfx_PlaySfxCentered(NA_SE_SY_CORRECT_CHIME);
+    }
+    sRun.phase = Phase::Intermission;
+    sRun.phaseTimer = 10 * kFps;
+}
+
+static void UpdateActiveRound(PlayState* play, Player* player) {
+    int maxAlive = CVarGetInteger(CVAR_ZOMBIES("MaxAlive"), 24);
+    if (sRun.dogRound) {
+        maxAlive = std::min(maxAlive, kDogsAlivePerPlayer * std::max(sRun.playerCount, 1));
+    }
+    int alive = static_cast<int>(sRun.enemies.size());
+
+    if (sRun.toSpawn > 0 && alive < maxAlive) {
+        if (--sRun.spawnTimer <= 0) {
+            EnemyKind kind = sRun.dogRound ? EnemyKind::WhiteWolfos : PickEnemy(sRun.round, Rand_ZeroOne(), IS_DAY);
+            if (SpawnEnemy(play, player, kind)) {
+                sRun.toSpawn--;
+                sRun.spawnTimer = static_cast<int>(SpawnDelaySeconds(sRun.round) * kFps);
+            } else {
+                // No floor found this frame; try again shortly.
+                sRun.spawnTimer = kFps / 4;
+            }
+        }
+    }
+
+    if (sRun.toSpawn == 0 && sRun.enemies.size() == 1 && !sLastOneCalled && !sRun.dogRound) {
+        sLastOneCalled = true;
+        // Black Ops: from round 3 the last zombie of a round sprints.
+        TrackedEnemy& last = sRun.enemies[0];
+        if (sRun.round >= 3 && last.tier != MoveTier::Crawl) {
+            last.tier = MoveTier::Sprint;
+        }
+        Sfx_PlaySfxCentered(NA_SE_VO_NAVY_CALL); // Navi: one left
+    }
+    if (sRun.toSpawn == 0 && sRun.enemies.empty()) {
+        EndRound(play);
+    }
+}
+
+static void ForceNight() {
+    if (CVarOn(CVAR_ZOMBIES("ForceNight"), 1)) {
+        gSaveContext.dayTime = 0; // midnight
+        gSaveContext.nightFlag = 1;
+    }
+}
+
+static void StartRun(PlayState* play, Player* player) {
+    sLinkFell = false;
+    sFairies = CountFairies();
+    sLinkHealthLast = gSaveContext.health;
+    sLinkSinceHit = kRegenDelayFrames;
+    sRun = Run();
+    sRun.phase = Phase::Intro;
+    sRun.zombiesOnly = ZombiesOnly();
+    sRun.phaseTimer = 4 * kFps;
+    sRun.sceneNum = play->sceneNum;
+    sRun.origin = player->actor.world.pos;
+    sRun.originYaw = player->actor.shape.rot.y;
+    sRun.playerCount = Coop_Enabled() ? 2 : 1;
+    for (int i = 0; i < sRun.playerCount; i++) {
+        sRun.players[i].points = CVarGetInteger(CVAR_ZOMBIES("StartingPoints"), kStartingPoints);
+    }
+    int startRound = std::max(CVarGetInteger(CVAR_ZOMBIES("StartingRound"), 1), 1);
+    sRun.nextDogRound = FirstDogRound(Rand_ZeroOne()) + startRound - 1;
+
+    TakeSnapshot();
+    if (ZombiesOnly()) {
+        GiveLoadout(play);
+    }
+    ForceNight();
+    Bounds_Scan(play);
+    Arena_Start(play);
+    Stations_NewRun();
+    Guns_NewRun(play);
+    Stations_Place(play);
+    Barricades_Place(play);
+    Extras_OnRunStart(play);
+    Coop_StartRun(play, player);
+
+    Announce(sRun.layout != nullptr ? sRun.layout->name : "ZOMBIES OF TIME", 4);
+    Sfx_PlaySfxCentered(NA_SE_VO_NAVY_HELLO);
+}
+
+static void EndRun(const std::string& reason, bool linkIsDead) {
+    if (!IsRunActive()) {
+        return;
+    }
+    // Black Ops counts the round you reached: dying in round 1 survived 1 round.
+    int survived = sRun.round;
+    int previousBest = CVarGetInteger(CVAR_ZOMBIES("BestRound"), 0);
+    // A run that skipped ahead with Starting Round doesn't count for the best.
+    bool counts = CVarGetInteger(CVAR_ZOMBIES("StartingRound"), 1) <= 1;
+    if (counts && survived > previousBest) {
+        CVarSetInteger(CVAR_ZOMBIES("BestRound"), survived);
+        Ship::Context::GetRawInstance()->GetWindow()->GetGui()->SaveConsoleVariablesNextFrame();
+    }
+
+    if (gPlayState != nullptr) {
+        KillAllEnemies(gPlayState, false);
+        for (ActiveDrop& drop : sRun.drops) {
+            Actor_Kill(drop.actor);
+        }
+    }
+    sRun.enemies.clear();
+    sRun.drops.clear();
+    Stations_Clear();
+    Sound_StopAll();
+    Sound_Play("game_over");
+    Extras_OnRunEnd(gPlayState, linkIsDead);
+    Coop_EndRun(gPlayState);
+    Guns_EndRun();
+
+    // Zombies Only hands out a fresh loadout every run, so it always puts the file back.
+    if (sRun.zombiesOnly || !CVarOn(CVAR_ZOMBIES("KeepItems"), 0)) {
+        RestoreSnapshot(linkIsDead, true);
+    } else {
+        DiscardSnapshot();
+    }
+
+    bool coop = sRun.playerCount >= 2;
+    Lobby_SetResults(reason, survived, sRun.players[0].kills, sRun.players[0].totalEarned,
+                     coop ? sRun.players[1].kills : -1, sRun.players[1].totalEarned, counts && survived > previousBest);
+    sRun.phase = Phase::GameOver;
+    sRun.phaseTimer = (ZombiesOnly() ? 4 : 8) * kFps;
+    Announce(reason + ": YOU SURVIVED " + std::to_string(survived) + (survived == 1 ? " ROUND" : " ROUNDS"), 8);
+}
+
+static bool LinkIsDying(PlayState* play) {
+    s16 state = play->gameOverCtx.state;
+    return state >= GAMEOVER_DEATH_START && state <= GAMEOVER_DEATH_MENU;
+}
+
+static bool CanStartRun(PlayState* play, Player* player) {
+    return !Player_InCsMode(play) && play->msgCtx.msgMode == MSGMODE_NONE && play->transitionMode == TRANS_MODE_OFF &&
+           (player->actor.bgCheckFlags & 1);
+}
+
+static u16 BuyButton() {
+    return CVarGetInteger(CVAR_ZOMBIES("BuyButton"), 0) == 1 ? BTN_DDOWN : BTN_L;
+}
+
+const char* BuyButtonName() {
+    return CVarGetInteger(CVAR_ZOMBIES("BuyButton"), 0) == 1 ? "DPAD DOWN" : "L";
+}
+
+// The buy button is read before the game sees it: during a run, an L press goes to the
+// mode alone, so buying doesn't also toggle the minimap.
+static bool sBuyPressed = false;
+
+bool BuyPressed(PlayState* play) {
+    (void)play;
+    return sBuyPressed;
+}
+
+bool BuyHeld(PlayState* play) {
+    return CHECK_BTN_ALL(play->state.input[0].cur.button, BuyButton());
+}
+
+int GetBuyers(PlayState* play, Player* player, Buyer* out) {
+    int count = 0;
+    if (!sRun.linkDown.downed && !sRun.linkDown.bledOut) {
+        Buyer& link = out[count++];
+        link.index = 0;
+        link.pos = player->actor.world.pos;
+        link.pressed = BuyPressed(play);
+        link.held = BuyHeld(play);
+        link.busy = Player_InCsMode(play);
+        link.prompt = &sRun.prompt;
+    }
+    if (Coop_Buyer(play, &out[count])) {
+        count++;
+    }
+    return count;
+}
+
+static void OnGameStateMainStart() {
+    PlayState* play = gPlayState;
+    Pause_OnMainStart(play);
+    if (play == nullptr) {
+        sBuyPressed = false;
+        return;
+    }
+    Coop_OnMainStart(play);
+    Input& input = play->state.input[0];
+    sBuyPressed = CHECK_BTN_ALL(input.press.button, BuyButton());
+    if (IsRunActive() && BuyButton() == BTN_L) {
+        input.press.button &= ~static_cast<CONTROLLERBUTTONS_T>(BTN_L);
+    }
+}
+
+static bool sStationsNeedPlacing = false;
+static bool sLeftArena = false;
+
+static void OnPlayerUpdate() {
+    PlayState* play = gPlayState;
+    if (play == nullptr) {
+        return;
+    }
+    Player* player = GET_PLAYER(play);
+    // Black Ops sounds: where the players hear from, and Nacht der Untoten's ambience.
+    Sound_Update(play, IsRunActive() && BoMap_Active(play));
+
+    if (sRun.announcement.framesLeft > 0) {
+        sRun.announcement.framesLeft--;
+    }
+    for (size_t i = 0; i < sRun.popups.size();) {
+        if (--sRun.popups[i].framesLeft <= 0) {
+            sRun.popups.erase(sRun.popups.begin() + i);
+        } else {
+            i++;
+        }
+    }
+
+    if (sLeftArena) {
+        sLeftArena = false;
+        EndRun("YOU LEFT THE ARENA", false);
+    }
+
+    switch (sRun.phase) {
+        case Phase::Inactive:
+            sRun.prompt.clear();
+            if (ZombiesOnly()) {
+                Lobby_Update(play, player);
+                return;
+            }
+            if (CanStartRun(play, player)) {
+                sRun.prompt = std::string(BuyButtonName()) + ": START ZOMBIES OF TIME";
+                if (BuyPressed(play)) {
+                    StartRun(play, player);
+                }
+            }
+            return;
+        case Phase::GameOver:
+            sRun.prompt.clear();
+            if (--sRun.phaseTimer <= 0) {
+                sRun.phase = Phase::Inactive;
+            }
+            return;
+        default:
+            break;
+    }
+
+    // Co-op: Link goes down for player 2 to revive instead of dying.
+    if (play->gameOverCtx.state == GAMEOVER_DEATH_START && Coop_OnLinkDeath(play, player)) {
+        // handled
+    } else if (LinkIsDying(play)) {
+        EndRun("GAME OVER", true);
+        return;
+    }
+
+    // Time keeps running in the field and the ranch; the run stays at midnight.
+    ForceNight();
+
+    if (sStationsNeedPlacing) {
+        sStationsNeedPlacing = false;
+        Bounds_Scan(play);
+        Stations_Place(play);
+    }
+    Bounds_Update(play, player);
+
+    if (sRun.stormFrames > 0) {
+        sRun.stormFrames--;
+    }
+
+    sRun.prompt.clear();
+    sRun.partner.prompt.clear();
+    Coop_Update(play, player);
+    UpdateEnemies(play, player);
+    UpdateLinkHealth(player);
+    UpdateDrops(play, player);
+    UpdateSoloFairy();
+    Stations_Update(play, player);
+    Arena_Update(play, player);
+    Barricades_Update(play, player);
+    Extras_Update(play, player);
+    Guns_Update(play, player); // after the stations, so the buy button goes to them first
+
+    switch (sRun.phase) {
+        case Phase::Intro:
+            // Some entrances (the ranch gate) finish walking Link in after the run has
+            // moved him to the start; put him back until he stays.
+            if (sRun.layout != nullptr && Math_Vec3f_DistXZ(&player->actor.world.pos, &sRun.origin) > 150.0f) {
+                player->actor.world.pos = sRun.origin;
+                player->actor.prevPos = sRun.origin;
+                player->unk_450.x = sRun.origin.x;
+                player->unk_450.z = sRun.origin.z;
+                player->actor.home.pos = sRun.origin;
+            }
+            if (--sRun.phaseTimer <= 0) {
+                StartRound(std::max(CVarGetInteger(CVAR_ZOMBIES("StartingRound"), 1), 1));
+            }
+            break;
+        case Phase::Intermission:
+            if (--sRun.phaseTimer <= 0) {
+                ForceNight();
+                StartRound(sRun.round + 1);
+            }
+            break;
+        case Phase::Active:
+            UpdateActiveRound(play, player);
+            break;
+        default:
+            break;
+    }
+}
+
+static void OnActorDestroy(void* refActor) {
+    Actor* actor = static_cast<Actor*>(refActor);
+    Stations_OnActorDestroy(actor);
+    Extras_OnActorDestroy(actor);
+    Coop_OnActorDestroy(actor);
+    for (size_t i = 0; i < sRun.enemies.size(); i++) {
+        if (sRun.enemies[i].actor == actor) {
+            ForgetEnemy(i, !sRun.enemies[i].killCounted);
+            return;
+        }
+    }
+    for (size_t i = 0; i < sRun.drops.size(); i++) {
+        if (sRun.drops[i].actor == actor) {
+            sRun.drops.erase(sRun.drops.begin() + i);
+            return;
+        }
+    }
+}
+
+static void OnSceneInit(int16_t sceneNum) {
+    if (gPlayState != nullptr) {
+        BoMap_OnSceneInit(gPlayState);
+    }
+    Lobby_OnSceneInit(sceneNum);
+    if (!IsRunActive() || sRun.phase == Phase::GameOver) {
+        if (sRun.phase == Phase::GameOver) {
+            sRun.phase = Phase::Inactive;
+        }
+        return;
+    }
+    if (sceneNum != sRun.sceneNum) {
+        // Ended from the first player update: Link and the interface aren't set up yet.
+        sLeftArena = true;
+        return;
+    }
+    // Same scene reloaded (a void out or a room reset): every actor was unloaded.
+    sRun.enemies.clear();
+    sRun.drops.clear();
+    sRun.partner.actor = nullptr; // Coop_Update spawns player 2 again
+    Extras_OnSceneReload();
+    sStationsNeedPlacing = true;
+}
+
+static void OnOcarinaSong() {
+    if (!IsRunActive() || gPlayState == nullptr) {
+        return;
+    }
+    switch (gPlayState->msgCtx.lastPlayedSong) {
+        case OCARINA_SONG_SUNS:
+            if (CVarOn(CVAR_ZOMBIES("ForceNight"), 1)) {
+                gSaveContext.sunsSongState = SUNSSONG_INACTIVE; // power, not daybreak
+            }
+            if (!sRun.powerOn) {
+                sRun.powerOn = true;
+                Announce("THE POWER IS ON");
+                Sfx_PlaySfxCentered(NA_SE_EV_DIAMOND_SWITCH);
+            }
+            break;
+        case OCARINA_SONG_STORMS:
+            if (sRun.stormFrames == 0) {
+                sRun.stormFrames = 20 * kFps;
+                Announce("THE STORM SLOWS THE HORDE");
+            }
+            break;
+        case OCARINA_SONG_LULLABY:
+            if (!sRun.papUnlocked) {
+                sRun.papUnlocked = true;
+                Announce("PACK-A-PUNCH UNSEALED");
+                Sfx_PlaySfxCentered(NA_SE_SY_CORRECT_CHIME);
+            }
+            break;
+        default:
+            break;
+    }
+}
+
+static void OnGameFrameUpdate() {
+    if (gPlayState == nullptr) {
+        return;
+    }
+    BoMap_Update(gPlayState);
+    Lobby_OnFrame(gPlayState);
+    Hud_Draw(); // every frame: it also hands OoT's own HUD back when a run ends
+}
+
+void Lobby_StartRunHere(PlayState* play) {
+    StartRun(play, GET_PLAYER(play));
+}
+
+void Run_Quit() {
+    EndRun("YOU QUIT", false);
+}
+
+// The game was reset or another file is loading: the actors are gone with the old
+// scene, so the run is dropped without touching them and the real items go back.
+static void AbandonRun() {
+    Sound_StopAll();
+    if (IsRunActive()) {
+        sRun.enemies.clear();
+        sRun.drops.clear();
+        sRun.partner.actor = nullptr;
+        Stations_Forget();
+        Coop_Reset();
+        Extras_OnSceneReload();
+        RestoreSnapshot(false, false);
+    }
+    sRun.phase = Phase::Inactive;
+    sRun.prompt.clear();
+    sRun.announcement.framesLeft = 0;
+    sStationsNeedPlacing = false;
+    sLeftArena = false;
+}
+
+// Registered whatever the settings, so a file left mid-run or by Zombies Only is put
+// right even after the mode is turned off.
+static void OnLoadGame(int32_t fileNum) {
+    AbandonRun();
+    sSavedDuringRun = false;
+    if (ReadSnapshotFile(fileNum)) {
+        sSavedDuringRun = true; // a crash or reset mid-run: the file may hold the loadout
+        RestoreSnapshot(false, false);
+    }
+    // After the items: the snapshot's equips are the ones Link had at the run's age.
+    if (ApplyFileState(fileNum) && !ZombiesOnly()) {
+        Save_SaveFile();
+    }
+    if (ZombiesOnly()) {
+        WriteFileState(fileNum); // before the menu changes Link's age
+    } else {
+        DeleteFileState(fileNum);
+    }
+    if (CVarOn(CVAR_ZOMBIES("Enabled"), 0) || ZombiesOnly()) {
+        Lobby_OnLoadGame();
+    }
+}
+
+static void OnSaveFile(int32_t fileNum, int32_t sectionID) {
+    (void)sectionID;
+    if (sLoadoutHeld) {
+        sSavedDuringRun = true;
+    } else if (sDeleteAfterSave.exchange(false)) {
+        DeleteSnapshotFile(fileNum);
+    }
+}
+
+static void RegisterSaveHooks() {
+    GameInteractor::Instance->RegisterGameHook<GameInteractor::OnLoadGame>(OnLoadGame);
+    GameInteractor::Instance->RegisterGameHook<GameInteractor::OnSaveFile>(OnSaveFile);
+    GameInteractor::Instance->RegisterGameHook<GameInteractor::OnDeleteFile>([](int32_t fileNum) {
+        DeleteSnapshotFile(fileNum);
+        DeleteFileState(fileNum);
+    });
+}
+
+static RegisterShipInitFunc saveHooksInit(RegisterSaveHooks, {});
+
+static void RegisterZombies() {
+    bool enabled = CVarOn(CVAR_ZOMBIES("Enabled"), 0) || ZombiesOnly();
+
+    if (!enabled && IsRunActive()) {
+        EndRun("ZOMBIES OFF", false);
+        sRun.phase = Phase::Inactive;
+    }
+    if (!enabled) {
+        Coop_Reset();
+    }
+    if (!ZombiesOnly()) {
+        Lobby_Close(gPlayState);
+        // Switched off before any map changed Link's age: nothing to put back later.
+        FileState state;
+        if (gPlayState != nullptr && ReadFileState(gSaveContext.fileNum, &state) &&
+            state.linkAge == gSaveContext.linkAge) {
+            DeleteFileState(gSaveContext.fileNum);
+        }
+    } else if (gPlayState != nullptr && gSaveContext.fileNum >= 0 && gSaveContext.fileNum < 3 &&
+               !std::filesystem::exists(FileStatePath(gSaveContext.fileNum))) {
+        // Switched on with a file already loaded: note Link's age before the menu changes it.
+        WriteFileState(gSaveContext.fileNum);
+    }
+    if (!enabled) {
+        sRun.prompt.clear();
+        sRun.announcement.framesLeft = 0;
+    }
+
+    COND_HOOK(OnPlayerUpdate, enabled, OnPlayerUpdate);
+    COND_HOOK(OnActorDestroy, enabled, OnActorDestroy);
+    COND_HOOK(OnSceneInit, enabled, OnSceneInit);
+    COND_HOOK(OnOcarinaSongAction, enabled, OnOcarinaSong);
+    COND_HOOK(OnGameFrameUpdate, enabled, OnGameFrameUpdate);
+    // One hook each for the draw, so the order is fixed: the guns pose both players
+    // before the world draw and put them back only after player 2's view is drawn.
+    COND_HOOK(OnPlayDrawBegin, enabled, [] {
+        Coop_DrawBegin();
+        Guns_DrawBegin();
+    });
+    COND_HOOK(OnPlayDrawEnd, enabled, [] {
+        Barricades_Draw();
+        Coop_DrawEnd();
+        Guns_DrawEnd();
+    });
+    COND_HOOK(OnExitGame, enabled, [](int32_t) { AbandonRun(); });
+    COND_HOOK(OnGameStateMainStart, enabled, OnGameStateMainStart);
+
+    // Power-up drops wear item models but give only the power-up.
+    COND_VB_SHOULD(VB_GIVE_ITEM_FROM_ITEM_00, enabled, {
+        Actor* item = va_arg(args, Actor*);
+        for (size_t i = 0; i < sRun.drops.size(); i++) {
+            if (sRun.drops[i].actor == item) {
+                PowerUp type = sRun.drops[i].type;
+                sRun.drops.erase(sRun.drops.begin() + static_cast<long>(i));
+                *should = false;
+                Actor_Kill(item);
+                if (gPlayState != nullptr) {
+                    ActivatePowerUp(gPlayState, type, 0);
+                }
+                break;
+            }
+        }
+    });
+
+    // The pause screen can't save mid-run: the file would keep the run's loadout.
+    // Zombies Only: never from its menus either.
+    COND_VB_SHOULD(VB_BE_ABLE_TO_SAVE, enabled, {
+        if (IsRunActive() || ZombiesOnly()) {
+            *should = false;
+        }
+    });
+
+    // Stamin-Up: Link runs 25% faster.
+    COND_VB_SHOULD(VB_PLAYER_MODIFY_RUN_SPEED, enabled, {
+        [[maybe_unused]] Player* player = va_arg(args, Player*);
+        f32* speedTarget = va_arg(args, f32*);
+        if (IsRunActive() && sRun.players[0].perks[PERK_STAMIN_UP]) {
+            *speedTarget *= 1.25f;
+        }
+    });
+}
+
+static RegisterShipInitFunc initFunc(RegisterZombies, { CVAR_ZOMBIES("Enabled"), CVAR_ZOMBIES("ZombiesOnly") });
+
+} // namespace Zombies

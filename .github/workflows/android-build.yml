@@ -1,0 +1,79 @@
+# The Android build of Zombies of Time.
+#
+# Official SoH has no Android version, so this builds on linkzenic's Android port
+# of SoH 9.3.0 (pinned below), applies the Zombies of Time engine patches (mod/patches
+# and mod/patches-android), adds the mode, and produces a debug APK. It installs as its
+# own app, "Zombies of Time" (com.tdprinting.zombiesoftime), next to any SoH app, keeps
+# its data in /storage/emulated/0/ZombiesOfTime, and asks for your own Ocarina of Time
+# ROM like any SoH build. No game data is included.
+name: Android build
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SOH_ANDROID_REPO: linkzenic/Shipwright-Android
+  SOH_ANDROID_REF: v9.3.0-android.1
+
+jobs:
+  # Follows the port's own release workflow (android-standard-release.yml at the pinned tag),
+  # without the release signing: a debug APK signs itself.
+  build-android:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out the SoH Android port
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SOH_ANDROID_REPO }}
+          ref: ${{ env.SOH_ANDROID_REF }}
+          submodules: recursive
+          path: soh-android
+      - name: Apply Android engine support
+        working-directory: soh-android
+        run: |
+          git -C libultraship apply --check ../CMake/patches/libultraship-android.patch
+          git -C libultraship apply ../CMake/patches/libultraship-android.patch
+      - name: Turn the port into Zombies of Time
+        run: ./scripts/apply.sh --android soh-android
+      - name: Install host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libzip-dev libpng-dev zlib1g-dev
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Android toolchain
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;26.0.10792818" "cmake;3.31.5" "platforms;android-31" "build-tools;35.0.0"
+      - name: Generate the support archive
+        working-directory: soh-android
+        run: |
+          cmake -S . -B build-host-tools -G Ninja -DSOH_TOOLS_ONLY=ON -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-host-tools --target GenerateSohOtr --parallel 4
+          test -s build-host-tools/soh/soh.o2r
+      - name: Build APK
+        working-directory: soh-android/Android
+        env:
+          CMAKE_BUILD_PARALLEL_LEVEL: '4'
+        run: ./gradlew :app:assembleDebug --console=plain --max-workers=4
+      - name: Collect APK
+        run: |
+          APK=$(find soh-android/Android/app/build/outputs/apk/debug -name '*.apk' | head -1)
+          test -n "$APK"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt2" dump badging "$APK" > badging.txt
+          grep -q "^package: name='com.tdprinting.zombiesoftime'" badging.txt
+          grep -q "^application-label:'Zombies of Time'" badging.txt
+          cp "$APK" zombies-of-time-android.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zombies-of-time-android
+          path: zombies-of-time-android.apk
+          if-no-files-found: error
