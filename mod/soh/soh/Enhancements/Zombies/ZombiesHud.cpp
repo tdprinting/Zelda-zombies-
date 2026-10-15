@@ -5,7 +5,9 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cmath>
 #include <cstring>
+#include <string>
 
 #include <libultraship/bridge/consolevariablebridge.h>
 
@@ -44,6 +46,138 @@ extern "C" void ZombiesHud_DrawPrinter(PlayState* play, void (*drawContents)(Gfx
     CLOSE_DISPS(play->state.gfxCtx);
 }
 
+// ---------------------------------------------------------------------------
+// The round counter, drawn like Black Ops' red chalk: tally marks up to five, then
+// numerals. The chalk textures are generated here (our own art, no game assets), with a
+// fixed seed so they look hand drawn but never flicker.
+
+extern "C" Gfx* Gfx_TextureIA8(Gfx* displayListHead, void* texture, s16 textureWidth, s16 textureHeight,
+                               s16 rectLeft, s16 rectTop, s16 rectWidth, s16 rectHeight, u16 dsdx, u16 dtdy);
+
+static constexpr int kStrokeW = 8, kStrokeH = 32;
+static constexpr int kSlashW = 32, kSlashH = 32;
+static constexpr int kDigitW = 16, kDigitH = 24;
+static u8 sStrokeTex[kStrokeH][kStrokeW];
+static u8 sSlashTex[kSlashH][kSlashW];
+static u8 sDigitTex[10][kDigitH][kDigitW];
+static bool sChalkReady = false;
+
+static u32 sChalkSeed = 0x2F6E2B1u;
+static int ChalkRand(int n) {
+    sChalkSeed = sChalkSeed * 1664525u + 1013904223u;
+    return static_cast<int>((sChalkSeed >> 16) % static_cast<u32>(n));
+}
+
+// IA8: high nibble intensity, low nibble alpha. Chalk is full white with grainy alpha
+// that thins towards the stroke's edges.
+static u8 ChalkTexel(int coverage) {
+    if (coverage <= 0) {
+        return 0;
+    }
+    int alpha = std::clamp(coverage - ChalkRand(5), 0, 15);
+    return static_cast<u8>(0xF0 | alpha);
+}
+
+// 5x7 numerals, one bit per column (bit 4 is the left column).
+static const u8 kDigits5x7[10][7] = {
+    { 0x0E, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0E }, { 0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E },
+    { 0x0E, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1F }, { 0x1F, 0x02, 0x04, 0x02, 0x01, 0x11, 0x0E },
+    { 0x02, 0x06, 0x0A, 0x12, 0x1F, 0x02, 0x02 }, { 0x1F, 0x10, 0x1E, 0x01, 0x01, 0x11, 0x0E },
+    { 0x06, 0x08, 0x10, 0x1E, 0x11, 0x11, 0x0E }, { 0x1F, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08 },
+    { 0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E }, { 0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C },
+};
+
+static void MakeChalk() {
+    // A vertical stroke that wanders a little, wider in the middle.
+    float centre = kStrokeW / 2.0f;
+    for (int y = 0; y < kStrokeH; y++) {
+        centre = std::clamp(centre + (ChalkRand(3) - 1) * 0.35f, 3.0f, kStrokeW - 3.0f);
+        float half = (y < 2 || y > kStrokeH - 3) ? 1.2f : 2.2f;
+        for (int x = 0; x < kStrokeW; x++) {
+            float d = std::fabs(x + 0.5f - centre);
+            sStrokeTex[y][x] = ChalkTexel(d < half ? 15 - static_cast<int>(d * 3) : 0);
+        }
+    }
+    // The fifth mark, struck from bottom left to top right.
+    for (int y = 0; y < kSlashH; y++) {
+        for (int x = 0; x < kSlashW; x++) {
+            float d = std::fabs((x + 0.5f) - (kSlashW - 1 - y + 0.5f)) * 0.7071f;
+            sSlashTex[y][x] = ChalkTexel(d < 1.8f ? 15 - static_cast<int>(d * 4) : 0);
+        }
+    }
+    // Numerals: each font pixel becomes a grainy 3x3 blob, rows nudged sideways.
+    for (int digit = 0; digit < 10; digit++) {
+        std::memset(sDigitTex[digit], 0, sizeof(sDigitTex[digit]));
+        for (int row = 0; row < 7; row++) {
+            int nudge = ChalkRand(2);
+            for (int col = 0; col < 5; col++) {
+                if (!(kDigits5x7[digit][row] & (0x10 >> col))) {
+                    continue;
+                }
+                for (int py = 0; py < 3; py++) {
+                    for (int px = 0; px < 3; px++) {
+                        int x = 1 + col * 3 + px - 1 + nudge;
+                        int y = 1 + row * 3 + py;
+                        if (x >= 0 && x < kDigitW && y < kDigitH) {
+                            sDigitTex[digit][y][x] = ChalkTexel(13);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    sChalkReady = true;
+}
+
+// Draws the round at (x, y), the top left of a counter `height` pixels tall, in N64
+// screen space. `flash` (0-1) blends from white back to red, as Black Ops does when the
+// round changes.
+extern "C" void ZombiesHud_DrawRound(PlayState* play, int round, int x, int y, int height, float flash) {
+    if (round <= 0) {
+        return;
+    }
+    if (!sChalkReady) {
+        MakeChalk();
+    }
+    OPEN_DISPS(play->state.gfxCtx);
+    Gfx_SetupDL_39Overlay(play->state.gfxCtx);
+    gDPSetCombineLERP(OVERLAY_DISP++, PRIMITIVE, ENVIRONMENT, TEXEL0, ENVIRONMENT, TEXEL0, 0, PRIMITIVE, 0,
+                      PRIMITIVE, ENVIRONMENT, TEXEL0, ENVIRONMENT, TEXEL0, 0, PRIMITIVE, 0);
+    u8 r = static_cast<u8>(150 + 105 * flash);
+    u8 g = static_cast<u8>(8 + 200 * flash);
+    u8 b = static_cast<u8>(8 + 200 * flash);
+    gDPSetPrimColor(OVERLAY_DISP++, 0, 0, r, g, b, 235);
+    gDPSetEnvColor(OVERLAY_DISP++, 0, 0, 0, 0);
+
+    // Texture rectangles scale by the step per pixel, in 5.10 fixed point.
+    auto step = [](int texSize, int drawSize) { return static_cast<u16>((texSize << 10) / std::max(drawSize, 1)); };
+    if (round <= 5) {
+        int strokeW = height / 4;
+        int gap = height / 4;
+        for (int i = 0; i < std::min(round, 4); i++) {
+            int sx = x + i * gap;
+            int sy = y + (i % 2); // not quite level, like chalk
+            OVERLAY_DISP = Gfx_TextureIA8(OVERLAY_DISP, sStrokeTex, kStrokeW, kStrokeH, sx, sy, strokeW, height,
+                                          step(kStrokeW, strokeW), step(kStrokeH, height));
+        }
+        if (round == 5) {
+            int w = gap * 4;
+            OVERLAY_DISP = Gfx_TextureIA8(OVERLAY_DISP, sSlashTex, kSlashW, kSlashH, x - gap / 2, y, w, height,
+                                          step(kSlashW, w), step(kSlashH, height));
+        }
+    } else {
+        int digitW = height * kDigitW / kDigitH;
+        std::string text = std::to_string(round);
+        for (size_t i = 0; i < text.size(); i++) {
+            int digit = text[i] - '0';
+            OVERLAY_DISP = Gfx_TextureIA8(OVERLAY_DISP, sDigitTex[digit], kDigitW, kDigitH,
+                                          x + static_cast<int>(i) * (digitW - 1), y, digitW, height,
+                                          step(kDigitW, digitW), step(kDigitH, height));
+        }
+    }
+    CLOSE_DISPS(play->state.gfxCtx);
+}
+
 namespace Zombies {
 
 static constexpr int kCols = 40;
@@ -63,19 +197,6 @@ static void PrintRight(GfxPrint* printer, int rightCol, int row, const std::stri
 }
 
 // Black Ops draws rounds 1-5 as chalk tally marks.
-static std::string RoundLabel(int round) {
-    if (round <= 0) {
-        return "";
-    }
-    if (round <= 4) {
-        return std::string(round, 'I');
-    }
-    if (round == 5) {
-        return "IIII/";
-    }
-    return std::to_string(round);
-}
-
 static void DrawPerks(GfxPrint* printer, const PlayerState& ps, int row) {
     static const char* perkTags[PERK_COUNT] = { "JUG", "REV", "DTP", "STM" };
     std::string perks;
@@ -161,8 +282,6 @@ static void DrawContents(GfxPrint* printer) {
     if (inRun) {
         // Round, bottom left above the rupee counter, blood red. Split, it sits on the line
         // between the halves, shared by both.
-        GfxPrint_SetColor(printer, 200, 20, 20, 255);
-        PrintAt(printer, 2, split ? 14 : 24, RoundLabel(run.round));
 
         DrawPerks(printer, run.players[0], split ? 12 : 22);
         DrawPoints(printer, 0, split ? 13 : 26, split ? 10 : 22);
@@ -197,7 +316,7 @@ static void DrawContents(GfxPrint* printer) {
         }
         if (!timers.empty()) {
             GfxPrint_SetColor(printer, 120, 200, 255, 255);
-            PrintCentered(printer, split ? 15 : 22, timers); // bottom centre, as Black Ops shows them
+            PrintCentered(printer, split ? 15 : 21, timers); // bottom centre, as Black Ops shows them
         }
     }
 
@@ -225,12 +344,36 @@ static void DrawContents(GfxPrint* printer) {
     }
 }
 
+// The round counter flashes white for a moment when the round changes.
+static int sShownRound = 0;
+static int sFlashFrames = 0;
+static constexpr int kFlashFrames = 50;
+
 void Hud_Draw() {
     PlayState* play = gPlayState;
     if (play == nullptr || play->pauseCtx.state != 0) {
         return;
     }
     ZombiesHud_DrawPrinter(play, DrawContents);
+
+    const Run& run = GetRun();
+    bool inRun = run.phase == Phase::Active || run.phase == Phase::Intermission || run.phase == Phase::Intro;
+    if (!inRun) {
+        sShownRound = 0;
+        return;
+    }
+    if (run.round != sShownRound) {
+        sFlashFrames = sShownRound == 0 ? 0 : kFlashFrames;
+        sShownRound = run.round;
+    }
+    if (sFlashFrames > 0) {
+        sFlashFrames--;
+    }
+    // Bottom left, between the perks and the rupees. Split, it sits on the line between
+    // the halves, shared by both players.
+    bool split = Coop_SplitView();
+    ZombiesHud_DrawRound(play, run.round, 16, split ? 106 : 185, split ? 16 : 22,
+                         static_cast<float>(sFlashFrames) / kFlashFrames);
 }
 
 } // namespace Zombies
