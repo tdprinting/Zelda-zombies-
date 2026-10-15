@@ -45,7 +45,8 @@ struct Station {
 };
 
 static Station sStations[static_cast<int>(StationType::Count)];
-static int sChestUses = 0;
+static int sChestUses = 0; // prizes since the chest last moved
+static bool sChestMoved = false;
 static bool sPapSword = false;
 
 static bool NeedsPower(StationType type) {
@@ -220,10 +221,12 @@ void Stations_Place(PlayState* play) {
 // re-places the stations but keeps both.
 void Stations_NewRun() {
     sChestUses = 0;
+    sChestMoved = false;
     sPapSword = false;
 }
 
 static void MoveChest(PlayState* play) {
+    sChestMoved = true;
     int index = static_cast<int>(StationType::MysteryChest);
     Station& chest = sStations[index];
     if (chest.torch != nullptr) {
@@ -603,6 +606,10 @@ static void GiveFairyBottle() {
     }
 }
 
+bool Stations_ChestMoved() {
+    return sChestMoved;
+}
+
 bool Stations_ChestPlaced() {
     return sStations[static_cast<int>(StationType::MysteryChest)].placed;
 }
@@ -839,7 +846,7 @@ static bool BuyForPartner(PlayState* play, Station& station, const Offer& offer)
             return true;
         case StationType::MysteryChest: {
             sChestUses++;
-            if (sChestUses > 4 && !PowerUpActive(PowerUp::FireSale) && Rand_ZeroOne() < 1.0f / 6.0f) {
+            if (sChestUses > 8 && !PowerUpActive(PowerUp::FireSale) && Rand_ZeroOne() < 1.0f / 6.0f) {
                 GetRun().players[1].points += offer.cost; // refund, not earnings
                 Announce("THE CHEST MOVED", 3);
                 Sfx_PlaySfxCentered(NA_SE_VO_SK_LAUGH);
@@ -902,7 +909,7 @@ static void Buy(PlayState* play, Station& station, const Offer& offer, int who) 
         case StationType::MysteryChest: {
             sChestUses++;
             // The Keaton laugh is our teddy bear: after a few uses the chest may move on.
-            if (sChestUses > 4 && !PowerUpActive(PowerUp::FireSale) && Rand_ZeroOne() < 1.0f / 6.0f) {
+            if (sChestUses > 8 && !PowerUpActive(PowerUp::FireSale) && Rand_ZeroOne() < 1.0f / 6.0f) {
                 run.players[who].points += offer.cost; // refund, not earnings: no Double Points
                 Announce("THE CHEST MOVED", 3);
                 Sfx_PlaySfxCentered(NA_SE_VO_SK_LAUGH);

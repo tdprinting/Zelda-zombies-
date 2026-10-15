@@ -37,10 +37,10 @@ player's own ROM.
 | Points: 10 per hit, 60 kill, 100 headshot, 130 knife | 10 per hit, 60 kill, 100 kill with an arrow, seed or hookshot, 130 kill with a sword | |
 | Start with 500 points | 500 | |
 | Wall buys | **Armory** station: the next item for Link's age he doesn't have, then an ammo refill (500) once he has them all | Child: Slingshot, Boomerang, Bombs. Adult: Bow, Bombs, Hookshot, Megaton Hammer |
-| Mystery Box (950) | **Mystery Chest** (950): random weapon | Pool: Bombchus (Monkey Bomb), Fire/Ice Arrows, Din's Fire (Thundergun), Light Arrows (Ray Gun, rare), Biggoron Sword (rare), Longshot, Hammer. Child pool swaps in Slingshot, Boomerang, Bombs. After four uses, each roll has a 1 in 6 chance of Skull Kid laughing (the teddy bear): the points come back and the chest moves |
+| Mystery Box (950) | **Mystery Chest** (950): random weapon | Pool: Bombchus (Monkey Bomb), Fire/Ice Arrows, Din's Fire (Thundergun), Light Arrows (Ray Gun, rare), Biggoron Sword (rare), Longshot, Hammer. Child pool swaps in Slingshot, Boomerang, Bombs. After eight prizes, each roll has a 1 in 6 chance of Skull Kid laughing (the teddy bear): the points come back and the chest moves |
 | Juggernog | **Juggernog Milk** (2500): Double Defense | |
 | Quick Revive | **Fairy Revive** (500 solo): a bottled fairy | A fairy in a bottle is OoT's own self-revive. Fills an empty bottle, else adds a bottle, else replaces the first bottle's contents. Can be bought again once the fairy is used |
-| Double Tap | **Double Tap** (2000): undead lose twice the HP per hit | |
+| Double Tap | **Double Tap** (2000): every third hit lands twice, about the third more damage Black Ops' faster fire gives | |
 | Stamin-Up | **Stamin-Up** (2000): Link runs 25% faster | |
 | Power switch | **Power** station: free, lights the perk and Pack-a-Punch torches | Playing the Sun's Song anywhere also turns the power on |
 | Pack-a-Punch (5000) | **Pack-a-Punch** (5000): upgrades one item | Checks the C buttons first. Bow: bigger quiver, then Light Arrows. Slingshot: bigger seed bag. Bombs: bigger bag. Hookshot: Longshot. Then the sword: Biggoron Sword (adult), then a Punched Blade whose hits land twice. Then the Mirror Shield (adult) |
@@ -50,7 +50,7 @@ player's own ROM.
 | Insta-Kill (30s) | Every undead dies in one hit | |
 | Double Points (30s) | All points ×2 | |
 | Nuke | Every undead on the map explodes, +400 points | |
-| Fire Sale (30s) | Mystery Chest costs 10 | |
+| Fire Sale (30s) | Mystery Chest costs 10 | Only drops once the chest has moved, as in Black Ops |
 | Barricades: 6 boards per window, zombies tear them off, players repair for 10 points each | **Barricades**: boarded windows (two posts and six planks), two or three per zone on the hand-made maps and four around the start point anywhere else. Undead spawn outside one and are held there, tearing a board every 1.5 seconds, until it is open. Hold the buy button at a window to put a board back every 0.6 seconds for 10 points, up to 500 points of repairs per round | Wolfos rounds ignore the windows, like hellhounds. The planks are the small wooden crate's model squashed flat. The windows are not solid: Link can walk around them, the undead can't |
 | Doors and debris | **Debris** piles between the zones of an authored arena (1000 points into the second zone; 1000 or 1250 into the third) | Clearing one opens that zone's stations and windows. See [Kakariko Graveyard](#kakariko-graveyard) |
 | Round chime, Samantha's voice | OoT sound effects | Round start: Redead scream. Round end: puzzle-solved chime. Power-up: item get jingle |

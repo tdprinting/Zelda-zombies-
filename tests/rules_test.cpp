@@ -89,7 +89,9 @@ static void TestMoveTiers() {
     EXPECT_TRUE(PickMoveTier(1, 0.99f) == MoveTier::Walk);
     EXPECT_TRUE(PickMoveTier(4, 0.0f) == MoveTier::Walk);
     EXPECT_TRUE(PickMoveTier(4, 0.99f) == MoveTier::Run);
-    EXPECT_TRUE(PickMoveTier(8, 0.5f) == MoveTier::Run);
+    EXPECT_TRUE(PickMoveTier(8, 0.0f) == MoveTier::Run);
+    EXPECT_TRUE(PickMoveTier(2, 0.0f) == MoveTier::Walk);
+    EXPECT_TRUE(PickMoveTier(2, 0.99f) == MoveTier::Run);
     EXPECT_TRUE(PickMoveTier(8, 0.99f) == MoveTier::Sprint);
     EXPECT_TRUE(PickMoveTier(11, 0.0f) == MoveTier::Sprint);
     EXPECT_TRUE(PullSpeed(MoveTier::Sprint) > PullSpeed(MoveTier::Run));

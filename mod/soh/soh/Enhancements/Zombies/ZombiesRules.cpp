@@ -85,7 +85,10 @@ int DogsForRound(int dogRoundIndex, int players) {
 }
 
 MoveTier PickMoveTier(int round, float roll) {
-    int speed = std::max(round, 1) * 8 + static_cast<int>((roll - 0.5f) * 30.0f);
+    // Black Ops rolls each zombie's speed upward from the round's base, never below it:
+    // base + 0..34. Round 1's base is 1, so round 1 is all walkers.
+    int base = round <= 1 ? 1 : round * 8;
+    int speed = base + std::min(static_cast<int>(roll * 35.0f), 34);
     if (speed <= 35) {
         return MoveTier::Walk;
     }

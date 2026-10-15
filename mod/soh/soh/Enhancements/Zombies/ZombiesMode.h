@@ -288,6 +288,7 @@ namespace Zombies {
 void Stations_Place(PlayState* play);
 void Stations_Clear();
 bool Stations_ChestPlaced();
+bool Stations_ChestMoved(); // Black Ops only drops a Fire Sale once the box has moved
 void Stations_Forget();
 void Stations_NewRun(); // chest uses and the Punched Blade start over // the scene is gone: drop the torches without
                         // killing them

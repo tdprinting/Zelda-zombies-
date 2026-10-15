@@ -491,8 +491,9 @@ static void OnEnemyKilled(PlayState* play, Player* player, TrackedEnemy& enemy, 
     sRun.lastKillPos = enemy.actor->world.pos;
 
     if (sRun.dropTracker.OnKill(ps.totalEarned, Rand_ZeroOne())) {
-        SpawnPowerUp(play, enemy.actor->world.pos,
-                     PickPowerUp(Rand_ZeroOne(), Stations_ChestPlaced(), Barricades_AnyBroken()));
+        SpawnPowerUp(
+            play, enemy.actor->world.pos,
+            PickPowerUp(Rand_ZeroOne(), Stations_ChestPlaced() && Stations_ChestMoved(), Barricades_AnyBroken()));
     }
 }
 
@@ -534,8 +535,11 @@ static void UpdateEnemies(PlayState* play, Player* player) {
                 // Double Tap and a Pack-a-Punched blade each land the hit again. The extra damage
                 // never finishes an enemy off, because its own death check already ran this frame.
                 // Player 2's Punched Blade already doubles their sword's own damage.
-                int repeats = (sRun.players[who].perks[PERK_DOUBLE_TAP] ? 1 : 0) +
-                              (who == 0 && Stations_PapSword() && player->meleeWeaponState != 0 ? 1 : 0);
+                // Double Tap fires a third faster in Black Ops: here every third hit lands twice.
+                static int sDoubleTapHits[kMaxPlayers] = {};
+                bool doubleTap = sRun.players[who].perks[PERK_DOUBLE_TAP] && ++sDoubleTapHits[who] % 3 == 0;
+                int repeats =
+                    (doubleTap ? 1 : 0) + (who == 0 && Stations_PapSword() && player->meleeWeaponState != 0 ? 1 : 0);
                 if (repeats > 0 && health > 1) {
                     health = static_cast<s16>(std::max(1, health - damage * repeats));
                     actor->colChkInfo.health = static_cast<u8>(health);
