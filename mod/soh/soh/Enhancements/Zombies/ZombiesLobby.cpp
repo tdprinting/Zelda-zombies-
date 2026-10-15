@@ -127,7 +127,7 @@ static int MapIndex() {
 }
 
 static int PreferredAge() {
-    return CVarGetInteger(CVAR_ZOMBIES("LobbyAge"), LINK_AGE_CHILD) == LINK_AGE_ADULT ? LINK_AGE_ADULT : LINK_AGE_CHILD;
+    return CVarGetInteger(CVAR_ZOMBIES("LobbyAge"), LINK_AGE_ADULT) == LINK_AGE_CHILD ? LINK_AGE_CHILD : LINK_AGE_ADULT;
 }
 
 // The age Link will be on the chosen map: some maps only exist for one age.
