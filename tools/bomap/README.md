@@ -48,7 +48,15 @@ bomap gameanim  zombie_cod5_prototype.ff viewmodel_kar98_fire kar98k_fire.zzanim
                 --model zombie_cod5_prototype.ff viewmodel_zombie_kar98k_rifle --attach-tag tag_weapon
 bomap gamemodel zombie_cod5_prototype.ff '*63' board.zzmodel        a brush model of the map (a barricade board)
 bomap mapgeo    zombie_cod5_prototype.ff nacht.zzmap --main <Black Ops>/main
+bomap gamemodel zombie_cod5_prototype.ff zombie_treasure_box box.zzmodel --main <Black Ops>/main   the Mystery Box
+bomap fx        common_zombie.ff misc/fx_zombie_powerup_on                what a particle effect holds
+bomap gamefx    common_zombie.ff misc/fx_zombie_powerup_on powerup.zzfx --main <Black Ops>/main
 ```
+
+Particle effects are in `docs/ZZFX_FORMAT.md`. The game draws each effect role
+(`fx_box_beam`, `fx_muzzle_flash`, `fx_explosion`, ...) from the file the manifest
+names, and falls back to a look built in code when there is none. Effect sprites
+whose images aren't found are drawn as procedural shapes.
 
 The formats are in `docs/ZZMODEL_FORMAT.md` and `docs/ZZMAP_FORMAT.md`. Black Ops
 streams character, weapon and world textures from the `.iwd` archives in `main/`,

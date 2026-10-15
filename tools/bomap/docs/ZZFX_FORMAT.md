@@ -41,7 +41,7 @@ struct {
   u8  category        0 looping (spawns over time), 1 one-shot, 2 emitted (by moving particles; drawn as one-shot)
   u8  render          0 camera-facing quad, 1 stretched along its movement (or +X when still), 2 flat, facing +X
   u8  blend           0 alpha blend, 1 additive, 2 multiply
-  u8  shape           fallback when image is -1: 0 soft dot, 1 puff, 2 streak, 3 ring, 4 wide glow
+  u8  shape           fallback when image is -1: 0 soft dot, 1 puff, 2 streak, 3 ring, 4 wide glow, 5 ray
   s32 image           index into images, or -1
   u8  atlasCols       sprite sheet columns (1, 2, 4, 8, 16)
   u8  atlasRows

@@ -18,6 +18,9 @@
 //                   the game's animation file; the models give the bind pose
 //   bomap mapgeo <zone> <out.zzmap> [--main <dir>] [--scale s] [--large] [--no-props] [--exposure e]
 //                   the game's map file, with the lightmaps and lights baked into vertex colours
+//   bomap fx <zone> <effect>                          what a particle effect holds
+//   bomap gamefx <zone> <effect> <out.zzfx> [--main <dir>]   the game's particle file
+//                   (docs/ZZFX_FORMAT.md); weapons lists each gun's flash and trail effects
 //   bomap hud <zone>... --out <dir> [--main <dir>]   the zombies HUD images (chalk marks, points
 //                   bar, perk and power-up icons, low health overlay) as <dir>/<material>.png,
 //                   for the game's zombies/hud/ folder
