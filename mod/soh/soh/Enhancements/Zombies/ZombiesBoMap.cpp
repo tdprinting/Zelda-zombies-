@@ -191,8 +191,8 @@ static bool BuildCollision(BoMap& map, const std::vector<std::array<u16, 3>>& tr
         const Vec3s& a = map.colVerts[tris[i][0]];
         const Vec3s& b = map.colVerts[tris[i][1]];
         const Vec3s& c = map.colVerts[tris[i][2]];
-        float ux = b.x - a.x, uy = b.y - a.y, uz = b.z - a.z;
-        float vx = c.x - a.x, vy = c.y - a.y, vz = c.z - a.z;
+        float ux = static_cast<float>(b.x - a.x), uy = static_cast<float>(b.y - a.y), uz = static_cast<float>(b.z - a.z);
+        float vx = static_cast<float>(c.x - a.x), vy = static_cast<float>(c.y - a.y), vz = static_cast<float>(c.z - a.z);
         float nx = uy * vz - uz * vy;
         float ny = uz * vx - ux * vz;
         float nz = ux * vy - uy * vx;

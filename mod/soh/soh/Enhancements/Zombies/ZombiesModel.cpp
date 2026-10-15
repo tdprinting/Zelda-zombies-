@@ -424,14 +424,14 @@ static void SampleLocal(const ZAnim* anim, const ModelBone& bone, float sec, Xfo
     if (anim->looping && anim->frameCount > 1) {
         frame = fmodf(frame, static_cast<float>(anim->frameCount));
         if (frame < 0) {
-            frame += anim->frameCount;
+            frame += static_cast<float>(anim->frameCount);
         }
     } else {
         frame = std::clamp(frame, 0.0f, last);
     }
     u32 f0 = static_cast<u32>(frame);
     u32 f1 = anim->looping ? (f0 + 1) % anim->frameCount : std::min(f0 + 1, anim->frameCount - 1);
-    float t = frame - f0;
+    float t = frame - static_cast<float>(f0);
     for (const AnimBone& b : anim->bones) {
         if (b.name != bone.name) {
             continue;
