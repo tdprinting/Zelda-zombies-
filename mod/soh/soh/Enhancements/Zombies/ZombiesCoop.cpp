@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "soh/ActorDB.h"
+#include "soh/frame_interpolation.h"
 
 extern "C" {
 #include "objects/gameplay_keep/gameplay_keep.h"
@@ -35,7 +36,6 @@ extern "C" {
 #include "seqcmd.h"
 #include "sequence.h"
 #include "variables.h"
-#include "soh/frame_interpolation.h"
 extern PlayState* gPlayState;
 void func_800AA550(View* view);
 extern u32 D_80116068[ACTORCAT_MAX]; // which of Link's states freeze each actor category
