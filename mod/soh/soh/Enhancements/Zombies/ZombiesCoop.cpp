@@ -60,14 +60,19 @@ static constexpr int kReviveFrames = 3 * kFps;
 static constexpr float kReviveRange = 80.0f;
 static constexpr int kBaseHealth = 48;      // three hearts, like Link's starting life
 static constexpr int kJuggernogHealth = 80; // five hearts
-static constexpr int kSwipeDamage = 16;     // one heart: three hits down, five with Juggernog
-static constexpr int kSwipeFrames = 24;     // an undead swipes at most this often
+static constexpr int kSwipeFrames = 24; // an undead swipes at most this often
 static constexpr float kSwipeReach = 55.0f;
+static constexpr float kWindowSwipeReach = 95.0f; // through the boards
+static constexpr int kRegenDelayFrames = 50;      // as Link's: health back after 2.5 seconds
 static constexpr int kInvincibleFrames = 30;
 static constexpr float kRunSpeed = 6.0f;
 static constexpr float kCamDist = 260.0f;
 static constexpr float kCamHeight = 110.0f;
 static constexpr int kMaxBombs = 20;
+
+static bool BlackOpsHealth() {
+    return CVarGetInteger(CVAR_ZOMBIES("BlackOpsHealth"), 1) != 0;
+}
 
 bool Coop_Enabled() {
     return CVarGetInteger(CVAR_ZOMBIES("Players"), 1) >= 2;
@@ -920,16 +925,21 @@ void Coop_Update(PlayState* play, Player* player) {
     if (PartnerStanding() && partner.invincible == 0 && run.phase == Phase::Active) {
         Actor* me = partner.actor;
         for (TrackedEnemy& enemy : run.enemies) {
-            if (enemy.killCounted || enemy.window >= 0 || enemy.swipeTimer > 0 || enemy.actor == nullptr ||
+            if (enemy.killCounted || enemy.swipeTimer > 0 || enemy.actor == nullptr ||
                 enemy.actor->colChkInfo.health == 0) {
                 continue;
             }
             float dist = Math_Vec3f_DistXZ(&enemy.actor->world.pos, &me->world.pos);
-            if (dist > kSwipeReach || fabsf(enemy.actor->world.pos.y - me->world.pos.y) > 60.0f) {
+            float reach = enemy.window >= 0 ? kWindowSwipeReach : kSwipeReach;
+            if (dist > reach || fabsf(enemy.actor->world.pos.y - me->world.pos.y) > 60.0f) {
                 continue;
             }
             enemy.swipeTimer = kSwipeFrames;
-            partner.health -= kSwipeDamage;
+            // Black Ops health: two hits down, five with Juggernog. Off, a heart a hit.
+            partner.health = BlackOpsHealth() ? HealthAfterHit(partner.health, partner.healthCapacity,
+                                                               run.players[1].perks[PERK_JUGGERNOG])
+                                              : partner.health - 16;
+            partner.sinceHit = 0;
             partner.invincible = kInvincibleFrames;
             s16 away = Math_Vec3f_Yaw(&enemy.actor->world.pos, &me->world.pos);
             me->world.pos.x += Math_SinS(away) * 20.0f;
@@ -940,6 +950,16 @@ void Coop_Update(PlayState* play, Player* player) {
                 DownPartner();
             }
             break;
+        }
+    }
+
+    // Player 2's health comes back a few seconds after their last hit.
+    if (BlackOpsHealth() && PartnerStanding() && partner.health > 0) {
+        if (partner.sinceHit < kRegenDelayFrames) {
+            partner.sinceHit++;
+        } else if (partner.health < partner.healthCapacity) {
+            partner.health =
+                std::min(partner.healthCapacity, partner.health + std::max(partner.healthCapacity / 10, 4));
         }
     }
 

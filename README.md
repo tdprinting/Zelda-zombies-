@@ -73,7 +73,7 @@ blade, and every perk. Player 2's controls: stick to move, **B** sword,
 **R** throw a bomb, **A** buy, repair and revive, right stick (or C-left and
 C-right) to turn the camera, **Z** to put it behind you.
 
-Co-op follows Black Ops' rules. A player who runs out of hearts goes down
+Co-op follows Black Ops' rules. A player who takes two hits (five with Juggernog) goes down
 and loses some points and their perks. The other has 45 seconds to hold the
 buy button next to them for 3 seconds to revive them (half that with Fairy
 Revive); otherwise they bleed out and come back at the start of the next

@@ -43,6 +43,7 @@ enum class MoveTier {
     Walk,
     Run,
     Sprint,
+    Crawl, // legs blown off by an explosive
 };
 
 enum class PowerUp {
@@ -75,6 +76,18 @@ int PointsForKill(KillType type);
 int FirstDogRound(float roll);
 int NextDogRound(int currentDogRound, float roll);
 int DogsForRound(int dogRoundIndex, int players);
+
+// Black Ops health: a fixed number of hits puts a player down whatever hits them, two
+// normally and five with Juggernog, and health comes back in full a few seconds after
+// the last hit. A hit costs this much of capacity (rounded up).
+int HitStep(int capacity, bool juggernog);
+// Health left after one hit, from health before it. A sliver under a quarter of a step
+// counts as down, so a part-regenerated player still goes down on schedule.
+int HealthAfterHit(int health, int capacity, bool juggernog);
+
+// A Wolfos's health on a Wolfos round: fixed for the round, not the round number's scaling,
+// as hellhounds have their own health curve.
+uint8_t DogHealth(int dogRoundIndex, int baseHp);
 
 // Move tier for one zombie. Black Ops rolls round * 8 plus some random spread
 // against walk (<= 35) and run (<= 70) cut-offs. roll is any value in [0, 1).

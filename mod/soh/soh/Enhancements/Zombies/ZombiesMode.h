@@ -91,7 +91,9 @@ struct TrackedEnemy {
     int window = -1;    // barricade it is tearing through, or -1 once it is inside
     int hitBy = 0;      // player 2's last hit on it: 0 none, 1 sword, 2 bomb
     int hitFrames = 0;  // frames since player 2 last hit it
-    int swipeTimer = 0; // frames until it can hit player 2 again
+    int swipeTimer = 0; // frames until it can swipe at anyone again
+    int tearTimer = 0;  // frames spent on the board it is pulling off
+    int vocalTimer = 0; // frames until its next moan
 };
 
 // Player 2 in split-screen co-op: a second Link with their own health, points and
@@ -115,6 +117,7 @@ struct Partner {
     int downFrames = 0;   // frames left before bleeding out
     int reviveFrames = 0; // progress of player 1's revive
     int invincible = 0;
+    int sinceHit = 0; // frames since last hit: health comes back after a few seconds
     std::string prompt;
 };
 
@@ -142,7 +145,6 @@ struct Window {
     s16 yaw;        // facing into the arena
     Vec3f spawnPos; // outside, where undead climb out of the ground
     int boards = kBoardsPerWindow;
-    int tearTimer = 0;
     bool beingTorn = false; // an undead is at the boards this frame
     int repairTimer = 0;
     int fallingBoard = 0; // frames left on the last torn board's fall

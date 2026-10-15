@@ -84,6 +84,23 @@ int DogsForRound(int dogRoundIndex, int players) {
     return perPlayer * players;
 }
 
+int HitStep(int capacity, bool juggernog) {
+    int hits = juggernog ? 5 : 2;
+    return std::max(1, (capacity + hits - 1) / hits);
+}
+
+int HealthAfterHit(int health, int capacity, bool juggernog) {
+    int step = HitStep(capacity, juggernog);
+    int left = health - step;
+    return left * 4 < step ? 0 : left;
+}
+
+uint8_t DogHealth(int dogRoundIndex, int baseHp) {
+    // Hellhounds get tougher each dog round, not each round: half again per dog round.
+    int hp = baseHp + (baseHp * std::max(dogRoundIndex - 1, 0)) / 2;
+    return static_cast<uint8_t>(std::clamp(hp, 1, 255));
+}
+
 MoveTier PickMoveTier(int round, float roll) {
     // Black Ops rolls each zombie's speed upward from the round's base, never below it:
     // base + 0..34. Round 1's base is 1, so round 1 is all walkers.
@@ -104,6 +121,8 @@ float PullSpeed(MoveTier tier) {
             return 6.0f;
         case MoveTier::Run:
             return 4.0f;
+        case MoveTier::Crawl:
+            return 1.0f;
         default:
             return 2.0f;
     }

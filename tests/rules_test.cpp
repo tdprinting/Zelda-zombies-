@@ -173,7 +173,36 @@ static void TestRepairPoints() {
     EXPECT_EQ(RepairPoints(800), 0);
 }
 
+static void TestBoHealth() {
+    // Three hearts: two hits down, five with Juggernog.
+    EXPECT_EQ(HealthAfterHit(48, 48, false), 24);
+    EXPECT_EQ(HealthAfterHit(24, 48, false), 0);
+    int h = 80;
+    int hits = 0;
+    while (h > 0) {
+        h = HealthAfterHit(h, 80, true);
+        hits++;
+    }
+    EXPECT_EQ(hits, 5);
+    h = 48;
+    hits = 0;
+    while (h > 0) {
+        h = HealthAfterHit(h, 48, true);
+        hits++;
+    }
+    EXPECT_EQ(hits, 5);
+    // Twenty hearts is still two hits.
+    EXPECT_EQ(HealthAfterHit(HealthAfterHit(320, 320, false), 320, false), 0);
+    // Part-regenerated: still goes down on the second hit.
+    EXPECT_EQ(HealthAfterHit(30, 48, false), 6);
+    EXPECT_EQ(DogHealth(1, 8), 8);
+    EXPECT_EQ(DogHealth(3, 8), 16);
+    EXPECT_EQ(DogHealth(500, 8), 255);
+    EXPECT_TRUE(PullSpeed(MoveTier::Crawl) < PullSpeed(MoveTier::Walk));
+}
+
 int main() {
+    TestBoHealth();
     TestRoundSizes();
     TestSpawnDelay();
     TestHealth();

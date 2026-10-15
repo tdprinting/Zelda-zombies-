@@ -204,8 +204,20 @@ bool Barricades_HoldEnemy(TrackedEnemy& enemy, float speed) {
     }
     actor->shape.rot.y = w.yaw;
 
+    // Each undead at the boards pulls its own off, as in Black Ops: two at a window
+    // open it twice as fast.
     if (len < kTearReach) {
         w.beingTorn = true;
+        if (actor->freezeTimer == 0 && ++enemy.tearTimer >= kTearFrames) {
+            enemy.tearTimer = 0;
+            w.boards--;
+            w.fallingBoard = kFallFrames;
+            if (gPlayState != nullptr) {
+                SoundSource_PlaySfxAtFixedWorldPos(gPlayState, &w.pos, 20, NA_SE_EV_WOODBOX_BREAK);
+            }
+        }
+    } else {
+        enemy.tearTimer = 0;
     }
     // Waiting in line behind another at the boards is fine; caught on a wall or a fence on
     // the way is not, and the caller replaces it once this runs out.
@@ -239,16 +251,6 @@ void Barricades_Update(PlayState* play, Player* player) {
     for (Window& w : run.windows) {
         if (w.fallingBoard > 0) {
             w.fallingBoard--;
-        }
-        if (w.beingTorn && w.boards > 0) {
-            if (--w.tearTimer <= 0) {
-                w.boards--;
-                w.fallingBoard = kFallFrames;
-                w.tearTimer = kTearFrames;
-                SoundSource_PlaySfxAtFixedWorldPos(play, &w.pos, 20, NA_SE_EV_WOODBOX_BREAK);
-            }
-        } else {
-            w.tearTimer = kTearFrames;
         }
         w.beingTorn = false;
     }

@@ -25,6 +25,8 @@ extern "C" {
 #include "functions.h"
 #include "macros.h"
 #include "variables.h"
+#include "overlays/actors/ovl_En_Bom/z_en_bom.h"
+#include "overlays/actors/ovl_En_Rd/z_en_rd.h"
 extern PlayState* gPlayState;
 void Save_SaveFile(void);
 }
@@ -49,6 +51,19 @@ static constexpr int kStuckFrames = 15 * 20;
 static constexpr float kStuckProgress = 50.0f;
 static constexpr float kFallOutDepth = 1500.0f; // below the start point: fell out of the map
 static constexpr float kStuckMinDist = 110.0f;
+// Redeads and Gibdos come all the way in to swipe: their own attack is a grab, which
+// Black Ops zombies don't do.
+static constexpr float kPullStopDistSwiper = 40.0f;
+// Undead swipes, as in Black Ops: a hit at arm's length every so often, through the
+// boards too while a window is still up.
+static constexpr float kSwipeReach = 55.0f;
+static constexpr float kWindowSwipeReach = 95.0f; // from outside the boards to just inside
+static constexpr int kSwipeFrames = 24;
+// Black Ops health comes back about two and a half seconds after the last hit, quickly.
+static constexpr int kRegenDelayFrames = 50;
+static constexpr float kCrawlerChance = 0.3f; // an explosive that doesn't kill takes the legs
+// Hellhounds: at most two per player on the field at once.
+static constexpr int kDogsAlivePerPlayer = 2;
 
 static Run sRun;
 
@@ -333,7 +348,7 @@ struct EnemySpec {
 static EnemySpec GetEnemySpec(EnemyKind kind) {
     // Redead/Gibdo high byte is the switch flag set on death; 0x3F is a temp flag
     // so a kill never opens anything in the arena. Bit 0x80 of it disables the scream.
-    s16 rdFlags = CVarOn(CVAR_ZOMBIES("RedeadScream"), 1) ? 0x3F : 0xBF;
+    s16 rdFlags = CVarOn(CVAR_ZOMBIES("RedeadScream"), 0) ? 0x3F : 0xBF;
     switch (kind) {
         case EnemyKind::Stalchild:
             return { ACTOR_EN_SKB, 1, 2 };
@@ -410,15 +425,31 @@ static bool SpawnEnemy(PlayState* play, Player* player, EnemyKind kind) {
     }
     // Room -1 keeps the undead alive when Link walks into another room of the arena.
     actor->room = -1;
-    u8 hp = ScaleHealth(spec.baseHp, sRun.round, CVarGetInteger(CVAR_ZOMBIES("HealthScaling"), 100));
+    bool dog = kind == EnemyKind::WhiteWolfos;
+    u8 hp = dog && sRun.dogRound
+                ? DogHealth(sRun.dogRoundIndex, spec.baseHp)
+                : ScaleHealth(spec.baseHp, sRun.round, CVarGetInteger(CVAR_ZOMBIES("HealthScaling"), 100));
     actor->colChkInfo.health = hp;
 
-    // Wolfos are already fast; undead get a Black Ops move tier for the round.
-    MoveTier tier = kind == EnemyKind::WhiteWolfos ? MoveTier::Walk : PickMoveTier(sRun.round, Rand_ZeroOne());
-    sRun.enemies.push_back({ actor, kind, tier, static_cast<s16>(hp), actor->world.pos, false,
-                             Math_Vec3f_DistXZ(&pos, &player->actor.world.pos), 0, window });
-    // Dust where the undead claws out of the ground.
-    Actor_SpawnFloorDustRing(play, actor, &pos, 30.0f, 7, 4.0f, 60, 6, 0);
+    // Hellhounds always sprint; undead get a Black Ops move tier for the round.
+    MoveTier tier = dog ? MoveTier::Sprint : PickMoveTier(sRun.round, Rand_ZeroOne());
+    TrackedEnemy tracked = { actor, kind, tier, static_cast<s16>(hp), actor->world.pos, false,
+                             Math_Vec3f_DistXZ(&pos, &player->actor.world.pos), 0, window };
+    tracked.vocalTimer = static_cast<int>((1.0f + Rand_ZeroOne() * 4.0f) * kFps);
+    sRun.enemies.push_back(tracked);
+    if (dog) {
+        // Hellhounds arrive in a lightning strike.
+        static Color_RGBA8 sBoltPrim = { 255, 255, 255, 255 };
+        static Color_RGBA8 sBoltEnv = { 120, 160, 255, 255 };
+        Vec3f bolt = { pos.x, pos.y + 20.0f, pos.z };
+        EffectSsLightning_Spawn(play, &bolt, &sBoltPrim, &sBoltEnv, 255, static_cast<s16>(Rand_ZeroOne() * 0x10000),
+                                8, 3);
+        Environment_AddLightningBolts(play, 1);
+        SoundSource_PlaySfxAtFixedWorldPos(play, &pos, 40, NA_SE_EV_LIGHTNING);
+    } else {
+        // Dust where the undead claws out of the ground.
+        Actor_SpawnFloorDustRing(play, actor, &pos, 30.0f, 7, 4.0f, 60, 6, 0);
+    }
     return true;
 }
 
@@ -535,6 +566,98 @@ static void OnEnemyKilled(PlayState* play, Player* player, TrackedEnemy& enemy, 
     }
 }
 
+static bool IsSwiper(EnemyKind kind) {
+    return kind == EnemyKind::Redead || kind == EnemyKind::Gibdo;
+}
+
+// Groans while they shamble, as Black Ops zombies do.
+static void Vocalize(TrackedEnemy& enemy, bool attack) {
+    u16 sfx;
+    switch (enemy.kind) {
+        case EnemyKind::Redead:
+        case EnemyKind::Gibdo:
+            sfx = attack ? NA_SE_EN_REDEAD_ATTACK : NA_SE_EN_REDEAD_AIM;
+            break;
+        case EnemyKind::WhiteWolfos:
+            sfx = attack ? NA_SE_EN_WOLFOS_ATTACK : NA_SE_EN_WOLFOS_CRY;
+            break;
+        default:
+            sfx = attack ? NA_SE_EN_STALKID_ATTACK : NA_SE_EN_STAL_WARAU;
+            break;
+    }
+    Audio_PlayActorSound2(enemy.actor, sfx);
+}
+
+// An undead in reach of Link swipes at him: the Redead's grab and the scream's freeze
+// are off, and undead held at a window reach through the boards.
+static void TrySwipeLink(PlayState* play, Player* player, TrackedEnemy& enemy, float reach) {
+    Actor* actor = enemy.actor;
+    if (enemy.swipeTimer > 0 || player->invincibilityTimer != 0 || gSaveContext.health <= 0 ||
+        (player->stateFlags1 & PLAYER_STATE1_DEAD) || actor->freezeTimer > 0) {
+        return;
+    }
+    if (actor->xzDistToPlayer > reach || fabsf(actor->world.pos.y - player->actor.world.pos.y) > 60.0f) {
+        return;
+    }
+    enemy.swipeTimer = kSwipeFrames;
+    actor->shape.rot.y = actor->yawTowardsPlayer;
+    // Any damage at all: Black Ops health below turns it into one hit's worth.
+    Actor_SetPlayerKnockbackSmall(play, actor, 4.0f, actor->yawTowardsPlayer, 4.0f, 8);
+    Vocalize(enemy, true);
+}
+
+// Explosions this frame, for crawlers.
+static bool NearExplosion(PlayState* play, const Vec3f& pos) {
+    for (Actor* a = play->actorCtx.actorLists[ACTORCAT_EXPLOSIVE].head; a != nullptr; a = a->next) {
+        if (a->id != ACTOR_EN_BOM || a->params != BOMB_EXPLOSION) {
+            continue;
+        }
+        EnBom* bomb = reinterpret_cast<EnBom*>(a);
+        float radius = bomb->explosionCollider.elements[0].dim.worldSphere.radius + 40.0f;
+        if (Math_Vec3f_DistXYZ(&a->world.pos, const_cast<Vec3f*>(&pos)) < radius) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void MakeCrawler(TrackedEnemy& enemy) {
+    enemy.tier = MoveTier::Crawl;
+    // Down on the ground, dragging itself along.
+    enemy.actor->scale.y *= 0.45f;
+}
+
+// Black Ops health for Link: two hits down (five with Juggernog), whoever lands them,
+// and it all comes back a few seconds after the last one.
+static int sLinkHealthLast = 0;
+static int sLinkSinceHit = 0;
+
+static void UpdateLinkHealth(Player* player) {
+    int health = gSaveContext.health;
+    int capacity = gSaveContext.healthCapacity;
+    if (!CVarOn(CVAR_ZOMBIES("BlackOpsHealth"), 1) || capacity <= 0) {
+        sLinkHealthLast = health;
+        return;
+    }
+    bool jug = sRun.players[0].perks[PERK_JUGGERNOG];
+    if (health < sLinkHealthLast && health > 0) {
+        health = HealthAfterHit(sLinkHealthLast, capacity, jug);
+        if (health <= 0) {
+            health = 0; // OoT plays out the fall from here: fairy, down or game over
+        }
+        gSaveContext.health = static_cast<s16>(health);
+        sLinkSinceHit = 0;
+    } else if (health > 0 && !(player->stateFlags1 & PLAYER_STATE1_DEAD)) {
+        if (sLinkSinceHit < kRegenDelayFrames) {
+            sLinkSinceHit++;
+        } else if (health < capacity) {
+            health = std::min(capacity, health + std::max(capacity / 10, 4));
+            gSaveContext.health = static_cast<s16>(health);
+        }
+    }
+    sLinkHealthLast = gSaveContext.health;
+}
+
 static void UpdateEnemies(PlayState* play, Player* player) {
     bool hordePull = CVarOn(CVAR_ZOMBIES("HordePull"), 1);
     float slow = sRun.stormFrames > 0 ? 0.5f : 1.0f;
@@ -584,6 +707,10 @@ static void UpdateEnemies(PlayState* play, Player* player) {
                 }
                 AwardPoints(who, kPointsPerHit);
                 enemy.lastHealth = health;
+                if (health > 0 && enemy.kind != EnemyKind::WhiteWolfos && enemy.tier != MoveTier::Crawl &&
+                    NearExplosion(play, actor->world.pos) && Rand_ZeroOne() < kCrawlerChance) {
+                    MakeCrawler(enemy);
+                }
                 if (who == 1 && health > 0) {
                     enemy.hitBy = 0; // used: Link's next hit is his own
                 }
@@ -597,9 +724,22 @@ static void UpdateEnemies(PlayState* play, Player* player) {
             Target target = TargetFor(actor, player);
             float dist = target.dist;
 
+            if (IsSwiper(enemy.kind)) {
+                // Keep the Redead grab from ever starting: these undead swipe instead.
+                reinterpret_cast<EnRd*>(actor)->grabWaitTimer = 5;
+            }
+            if (--enemy.vocalTimer <= 0) {
+                enemy.vocalTimer = static_cast<int>((3.0f + Rand_ZeroOne() * 5.0f) * kFps);
+                Vocalize(enemy, false);
+            }
+            if (sRun.playerCount < 2 && enemy.swipeTimer > 0) {
+                enemy.swipeTimer--; // co-op counts it down with player 2's swipes
+            }
+
             // Undead outside a barricade stay there, tearing boards, until the window is open.
             if (enemy.window >= 0 && Barricades_HoldEnemy(enemy, PullSpeed(enemy.tier) * slow)) {
                 enemy.closestDist = dist;
+                TrySwipeLink(play, player, enemy, kWindowSwipeReach);
                 // Counted by the hold: frames spent short of the boards, caught on something.
                 if (dist > kLostDist || enemy.stuckFrames > kStuckFrames) {
                     Actor_Kill(actor);
@@ -634,8 +774,12 @@ static void UpdateEnemies(PlayState* play, Player* player) {
             // and walk, run or sprint at him depending on the round.
             // Player 2 is only ours to chase: undead go all the way to them to swipe.
             float stopDist = target.partner                 ? kPullStopDistPartner
+                             : IsSwiper(enemy.kind)         ? kPullStopDistSwiper
                              : enemy.tier == MoveTier::Walk ? kPullStopDistWalk
                                                             : kPullStopDistFast;
+            if (IsSwiper(enemy.kind) || enemy.tier == MoveTier::Crawl) {
+                TrySwipeLink(play, player, enemy, kSwipeReach);
+            }
             if ((hordePull || target.partner) && dist > stopDist && actor->freezeTimer == 0) {
                 s16 yaw = target.yaw;
                 float speed = PullSpeed(enemy.tier) * slow;
@@ -826,7 +970,7 @@ static void StartRound(int round) {
         Sfx_PlaySfxCentered(NA_SE_EN_REDEAD_CRY);
     }
 
-    // Zelda twist: hearts come back at the start of each round instead of regenerating.
+    // Everyone starts the round on full health.
     gSaveContext.health = gSaveContext.healthCapacity;
     // Black Ops gives two grenades a round; here, two bombs.
     if (INV_CONTENT(ITEM_BOMB) == ITEM_BOMB && round > 1) {
@@ -858,7 +1002,10 @@ static void EndRound(PlayState* play) {
 }
 
 static void UpdateActiveRound(PlayState* play, Player* player) {
-    int maxAlive = CVarGetInteger(CVAR_ZOMBIES("MaxAlive"), 8);
+    int maxAlive = CVarGetInteger(CVAR_ZOMBIES("MaxAlive"), 24);
+    if (sRun.dogRound) {
+        maxAlive = std::min(maxAlive, kDogsAlivePerPlayer * std::max(sRun.playerCount, 1));
+    }
     int alive = static_cast<int>(sRun.enemies.size());
 
     if (sRun.toSpawn > 0 && alive < maxAlive) {
@@ -876,6 +1023,11 @@ static void UpdateActiveRound(PlayState* play, Player* player) {
 
     if (sRun.toSpawn == 0 && sRun.enemies.size() == 1 && !sLastOneCalled && !sRun.dogRound) {
         sLastOneCalled = true;
+        // Black Ops: from round 3 the last zombie of a round sprints.
+        TrackedEnemy& last = sRun.enemies[0];
+        if (sRun.round >= 3 && last.tier != MoveTier::Crawl) {
+            last.tier = MoveTier::Sprint;
+        }
         Sfx_PlaySfxCentered(NA_SE_VO_NAVY_CALL); // Navi: one left
     }
     if (sRun.toSpawn == 0 && sRun.enemies.empty()) {
@@ -893,6 +1045,8 @@ static void ForceNight() {
 static void StartRun(PlayState* play, Player* player) {
     sLinkFell = false;
     sFairies = CountFairies();
+    sLinkHealthLast = gSaveContext.health;
+    sLinkSinceHit = kRegenDelayFrames;
     sRun = Run();
     sRun.phase = Phase::Intro;
     sRun.zombiesOnly = ZombiesOnly();
@@ -1104,6 +1258,7 @@ static void OnPlayerUpdate() {
     sRun.partner.prompt.clear();
     Coop_Update(play, player);
     UpdateEnemies(play, player);
+    UpdateLinkHealth(player);
     UpdateDrops(play, player);
     UpdateSoloFairy();
     Stations_Update(play, player);

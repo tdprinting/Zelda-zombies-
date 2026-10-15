@@ -68,8 +68,13 @@ static void RegisterZombiesWidgets() {
     SohGui::mSohMenu->AddWidget(path, "Difficulty", WIDGET_SEPARATOR_TEXT);
     SohGui::mSohMenu->AddWidget(path, "Max Undead Alive: %d", WIDGET_CVAR_SLIDER_INT)
         .CVar(CVAR_ZOMBIES("MaxAlive"))
-        .Options(IntSliderOptions().Min(2).Max(24).DefaultValue(8).Format("%d").Tooltip(
-            "How many undead can be up at once. Black Ops allows 24; OoT arenas feel crowded past 10."));
+        .Options(IntSliderOptions().Min(2).Max(24).DefaultValue(24).Format("%d").Tooltip(
+            "How many undead can be up at once. Black Ops allows 24. Lower it if the game slows down."));
+    SohGui::mSohMenu->AddWidget(path, "Black Ops Health", WIDGET_CVAR_CHECKBOX)
+        .CVar(CVAR_ZOMBIES("BlackOpsHealth"))
+        .Options(CheckboxOptions().DefaultValue(true).Tooltip(
+            "Two hits put you down (five with Juggernog), however many hearts you have, and health comes back "
+            "a few seconds after the last hit. Off: OoT hearts, refilled each round."));
     SohGui::mSohMenu->AddWidget(path, "Health Scaling: %d%%", WIDGET_CVAR_SLIDER_INT)
         .CVar(CVAR_ZOMBIES("HealthScaling"))
         .Options(IntSliderOptions().Min(0).Max(300).Step(10).DefaultValue(100).Format("%d%%").Tooltip(
@@ -112,8 +117,9 @@ static void RegisterZombiesWidgets() {
             "Undead always shamble toward Link instead of waiting for him to come close."));
     SohGui::mSohMenu->AddWidget(path, "Redead Scream", WIDGET_CVAR_CHECKBOX)
         .CVar(CVAR_ZOMBIES("RedeadScream"))
-        .Options(CheckboxOptions().DefaultValue(true).Tooltip(
-            "Redeads and Gibdos freeze Link with their scream, as in the base game."));
+        .Options(CheckboxOptions().DefaultValue(false).Tooltip(
+            "Redeads and Gibdos freeze Link with their scream, as in the base game. Off by default: Black Ops "
+            "zombies don't stun you."));
     SohGui::mSohMenu->AddWidget(path, "Force Night", WIDGET_CVAR_CHECKBOX)
         .CVar(CVAR_ZOMBIES("ForceNight"))
         .Options(CheckboxOptions().DefaultValue(true).Tooltip(

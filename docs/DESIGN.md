@@ -28,9 +28,14 @@ player's own ROM.
 | Black Ops Zombies | Zombies of Time | Notes |
 | --- | --- | --- |
 | Zombie | Stalchild (rounds 1+), Redead (3+), Gibdo (6+), big Stalchild (10+) | Mix shifts toward tougher undead each round |
-| Hellhound round | Wolfos round: White Wolfos only | First on round 5 to 7, then every 4 to 5 rounds. Six per player in the first two, eight per player after that. The last Wolfos always drops Max Ammo |
+| Hellhound round | Wolfos round: White Wolfos only | First on round 5 to 7, then every 4 to 5 rounds. Six per player in the first two, eight per player after that, at most two per player on the field at once. Each one arrives in a lightning strike and always sprints. Their health is set by the Wolfos round (half again each time), not the round number. The last Wolfos always drops Max Ammo |
 | Round count | `ceil(24 + 3 × m) × early-round factor` | `m = max(1, round/5)`; co-op uses `6 × m` per extra player in place of solo's `3 × m`, and from round 10 `m ×= round × 0.15`. Rounds 1 to 5 use 25%, 30%, 50%, 70%, 90% |
-| Max zombies alive (24) | Slider, default 8 | OoT's actor budget and arena sizes are smaller |
+| Max zombies alive (24) | Slider, default 24 | Lower it if a phone slows down |
+| Player health: two hits down, five with Juggernog, regenerates | **Black Ops Health** (on): two hits put Link or player 2 down, five with Juggernog, however many hearts they have; health comes back in full 2.5 seconds after the last hit | Off: OoT hearts and damage, refilled each round |
+| Zombie melee swipe | Undead swipe at arm's length; the Redead/Gibdo grab and scream freeze are off (the scream is a setting). Stalchildren and Wolfos keep their own attacks | Undead held at a window swipe through the boards at anyone standing just inside |
+| Last zombie sprints (from round 3) | Same | |
+| Crawlers | A bomb blast that doesn't kill an undead takes its legs 30% of the time: it drops low and crawls at half walking speed | |
+| Moans | Each undead groans every 3 to 8 seconds and cries out when it swipes, with OoT's own Redead, Stalchild and Wolfos sounds | |
 | Spawn delay `2.0s × 0.95^(round − 1)` | Same curve, floor 0.25s | |
 | Zombie move speed (`round × 8` plus spread; walk ≤ 35, run ≤ 70, sprint above) | Same roll per undead, applied through Horde Pull at 2 / 4 / 6 units per frame | Round 1 is all walkers; from round 9 every undead sprints |
 | Zombie health +100 per round, then ×1.1 | Health multiplier on each enemy's own HP: `1 + 0.15 × (round − 1)` to round 10, then ×1.08 per round | Capped at 255 (OoT stores HP in one byte). Slider scales it |
@@ -51,7 +56,7 @@ player's own ROM.
 | Double Points (30s) | All points ×2 | |
 | Nuke | Every undead on the map explodes, +400 points for every player | |
 | Fire Sale (30s) | Mystery Chest costs 10 | Only drops once the chest has moved, as in Black Ops |
-| Barricades: 6 boards per window, zombies tear them off, players repair for 10 points each | **Barricades**: boarded windows (two posts and six planks), two or three per zone on the hand-made maps and four around the start point anywhere else. Undead spawn outside one and are held there, tearing a board every 1.5 seconds, until it is open. Hold the buy button at a window to put a board back every 0.6 seconds for 10 points, up to 500 points of repairs per round | Wolfos rounds ignore the windows, like hellhounds. The planks are the small wooden crate's model squashed flat. The windows are not solid: Link can walk around them, the undead can't |
+| Barricades: 6 boards per window, zombies tear them off, players repair for 10 points each | **Barricades**: boarded windows (two posts and six planks), two or three per zone on the hand-made maps and four around the start point anywhere else. Undead spawn outside one and are held there until it is open; each one at the boards tears one off every 1.5 seconds, so two at a window open it twice as fast. Hold the buy button at a window to put a board back every 0.6 seconds for 10 points, up to 500 points of repairs per round | Wolfos rounds ignore the windows, like hellhounds. The planks are the small wooden crate's model squashed flat. The windows are not solid: Link can walk around them, the undead can't |
 | Doors and debris | **Debris** piles between the zones of an authored arena (1000 points into the second zone; 1000 or 1250 into the third) | Clearing one opens that zone's stations and windows. See [Kakariko Graveyard](#kakariko-graveyard) |
 | Round chime, Samantha's voice | OoT sound effects | Round start: Redead scream. Round end: puzzle-solved chime. Power-up: item get jingle |
 
@@ -65,9 +70,10 @@ Ocarina of Time rather than Black Ops:
   button). The Song of Storms brings the game's own rainstorm, and the horde
   moves at half speed for 20 seconds. Zelda's Lullaby unseals Pack-a-Punch;
   a file that hasn't learned the Lullaby yet only needs the power on.
-- **Hearts, not regen.** Black Ops heals on its own; here Link heals the
-  Zelda way: whatever the undead drop, the Fairy Fountain, and a full heart
-  refill at the start of each round.
+- **Hearts, Black Ops style.** Hearts are still drawn, but by default
+  they behave like Black Ops health (two hits down, regenerating). With
+  Black Ops Health off, Link heals the Zelda way: whatever the undead drop,
+  the Fairy Fountain, and a full refill at the start of each round.
 - **Magic is a resource.** Din's Fire, Nayru's Love and magic arrows draw on
   the magic meter, which only Max Ammo and magic jars refill.
 - **Navi is Samantha.** Navi greets each run; round, power-up and power
@@ -177,7 +183,8 @@ All under Enhancements > Zombies of Time, stored as
 | --- | --- |
 | Zombies Only | on |
 | Enabled (the mode inside the normal game) | off |
-| Max Undead Alive | 8 |
+| Max Undead Alive | 24 |
+| Black Ops Health | on |
 | Health Scaling | 100% |
 | Starting Points | 500 |
 | Starting Round | 1 |
@@ -187,7 +194,7 @@ All under Enhancements > Zombies of Time, stored as
 | Show Coordinates | off |
 | Horde Pull (undead always walk toward Link) | on |
 | Force Night | on |
-| Redead Scream (Redeads and Gibdos freeze Link) | on |
+| Redead Scream (Redeads and Gibdos freeze Link) | off |
 | Buy Button (L / D-pad Down) | L |
 | Keep Items After Run | off |
 | Best Round (read only) | |
@@ -260,8 +267,7 @@ Code layout:
    Ranch and Hyrule Field, each with three zones. What's left is solid debris
    (collision, so Link can't walk around it).
 3. **Polish:** a zombies music track built from OoT sequences, perk jingles,
-   crawlers (undead that lose their legs to bombs), and a boss round (Dead
-   Hand or Iron Knuckle).
+   and a boss round (Dead Hand or Iron Knuckle).
 4. **Split-screen co-op (this PR).** Asked for by Tee. Ocarina of Time
    assumes exactly one Link and one camera, so co-op is built around that
    without patching the engine (`ZombiesCoop.cpp`):
