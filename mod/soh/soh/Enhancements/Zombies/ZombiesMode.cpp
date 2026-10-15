@@ -485,23 +485,30 @@ static Target TargetFor(Actor* actor, Player* player) {
 // dying, that's a down as in Black Ops: points and perks go. Drinking it to heal just
 // uses it up.
 static bool sLinkFell = false;
+static int sFairies = 0; // bottled fairies Link held last frame
+
+static int CountFairies() {
+    int count = 0;
+    for (int slot = SLOT_BOTTLE_1; slot <= SLOT_BOTTLE_4; slot++) {
+        count += gSaveContext.inventory.items[slot] == ITEM_FAIRY;
+    }
+    return count;
+}
 
 static void UpdateSoloFairy() {
     if (sRun.playerCount >= 2) {
         return;
     }
-    bool& perk = sRun.players[0].perks[PERK_FAIRY_REVIVE];
     if (gSaveContext.health <= 0) {
         sLinkFell = true;
     }
-    if (Inventory_HasSpecificBottle(ITEM_FAIRY)) {
-        perk = true;
-    } else if (perk) {
-        if (sLinkFell) {
-            LoseOnDown(0);
-        }
-        perk = false;
+    int fairies = CountFairies();
+    if (fairies < sFairies && sLinkFell) {
+        LoseOnDown(0); // one fairy saved him: that's a down
+        sLinkFell = false;
     }
+    sFairies = fairies;
+    sRun.players[0].perks[PERK_FAIRY_REVIVE] = fairies > 0;
     if (gSaveContext.health > 0) {
         sLinkFell = false;
     }
@@ -885,6 +892,7 @@ static void ForceNight() {
 
 static void StartRun(PlayState* play, Player* player) {
     sLinkFell = false;
+    sFairies = CountFairies();
     sRun = Run();
     sRun.phase = Phase::Intro;
     sRun.zombiesOnly = ZombiesOnly();
