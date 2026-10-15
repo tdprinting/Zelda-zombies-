@@ -213,8 +213,8 @@ static std::unique_ptr<FxDef> LoadFx(const std::string& path) {
             v.sizeRand[1] = r.Get<float>();
             v.roll = r.Get<float>();
         }
-        if (!r.Ok()) {
-            return nullptr;
+        if (!r.Ok() || e.vis.empty()) {
+            return nullptr; // an emitter with no look samples has nothing to draw
         }
         // Keep the counts sane: a looping emitter at most every frame, a burst at most 64.
         if (e.category == 0) {
@@ -253,7 +253,7 @@ static std::unique_ptr<FxDef> LoadFx(const std::string& path) {
             }
         }
     }
-    return std::move(def);
+    return def;
 }
 
 // ---------------------------------------------------------------------------

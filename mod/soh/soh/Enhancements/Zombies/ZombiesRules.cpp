@@ -130,22 +130,22 @@ float PullSpeed(MoveTier tier) {
 
 EnemyKind PickEnemy(int round, float roll, bool isDay) {
     // Stalchildren burrow away in daylight, so day runs use Redeads in their place.
-    EnemyKind small = isDay ? EnemyKind::Redead : EnemyKind::Stalchild;
+    EnemyKind weakest = isDay ? EnemyKind::Redead : EnemyKind::Stalchild;
 
     if (round <= 2) {
-        return small;
+        return weakest;
     }
     if (round <= 5) {
-        return roll < 0.7f ? small : EnemyKind::Redead;
+        return roll < 0.7f ? weakest : EnemyKind::Redead;
     }
     if (round <= 9) {
         if (roll < 0.4f) {
-            return small;
+            return weakest;
         }
         return roll < 0.8f ? EnemyKind::Redead : EnemyKind::Gibdo;
     }
     if (roll < 0.25f) {
-        return small;
+        return weakest;
     }
     if (roll < 0.55f) {
         return EnemyKind::Redead;

@@ -7,3 +7,15 @@ build-bomap/
 *.z64
 *.n64
 *.v64
+
+# Black Ops data and what the importers make from it (never commit: Activision assets)
+*.ff
+*.iwd
+*.zzmap
+*.zzmodel
+*.zzanim
+*.zzfx
+nacht.json
+# The importers' output folder. Anchored: an unanchored zombies/ would also match
+# mod/.../Enhancements/Zombies/ on a case-insensitive checkout.
+/zombies/

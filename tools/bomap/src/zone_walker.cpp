@@ -276,7 +276,6 @@ int Walker::AssetPtr(size_t at, int off, uint32_t type, bool listed) {
         }
     } else if (v != 0) {
         auto it = mAliases.find(v);
-        if (it == mAliases.end() && getenv("BOMAP_DEBUG")) fprintf(stderr, "miss type %u token %08x (block %u off %u)\n", type, v, (v - 1) >> 29, (v - 1) & 0x1FFFFFFF);
         index = it != mAliases.end() ? it->second : -1;
         if (at != kNoData && index >= 0) {
             mOut.assetAt[at + off] = index;

@@ -102,17 +102,17 @@ static bool LinkStanding() {
 // Player 2's controller. Read before the game updates, then cleared, so the second
 // controller can't drive the game's own debug frame advance (R + D-pad Down).
 
-static u16 sCur = 0;
-static u16 sPress = 0;
+static CONTROLLERBUTTONS_T sCur = 0;
+static CONTROLLERBUTTONS_T sPress = 0;
 static s8 sStickX = 0;
 static s8 sStickY = 0;
 static s8 sRightX = 0;
 
-static bool Pressed(u16 button) {
+static bool Pressed(CONTROLLERBUTTONS_T button) {
     return (sPress & button) != 0;
 }
 
-static bool Held(u16 button) {
+static bool Held(CONTROLLERBUTTONS_T button) {
     return (sCur & button) == button;
 }
 

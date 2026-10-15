@@ -370,8 +370,10 @@ extern "C" void ZombiesBarricades_Draw(PlayState* play) {
     using namespace Zombies;
     const Run& run = GetRun();
 
-    // Black Ops' own boards when the player has imported them.
-    std::vector<std::string> boards = Model_Manifest("board_model");
+    // Black Ops' own boards when the player has imported them. The manifest is read once
+    // per session, so its answer is looked up once too.
+    static const std::vector<std::string> sBoards = Model_Manifest("board_model");
+    const std::vector<std::string>& boards = sBoards;
     ZModel* boardModel = boards.empty() ? nullptr : Model_Get(boards[0]);
     Gfx* boardDl = Model_RigidDl(boardModel);
     Vec3f boardLo, boardHi;

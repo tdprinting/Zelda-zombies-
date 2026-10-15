@@ -35,6 +35,7 @@
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
 #include "soh/Enhancements/game-interactor/GameInteractor_Hooks.h"
 #include "soh/ShipInit.hpp"
+#include "soh/ObjectExtension/ActorListIndex.h"
 
 extern "C" {
 #include "functions.h"
@@ -84,14 +85,13 @@ struct BoMesh {
 struct BoMap {
     bool loaded = false;
     float scale = 1.0f;
-    Vec3s spawn = {};
-    s16 spawnYaw = 0;
 
     std::vector<Vec3s> colVerts;
     std::vector<CollisionPoly> colPolys;
     std::vector<SurfaceType> surfaces;
     CamData camData = {};
     CollisionHeader colHeader = {};
+    Vec3i colGrid = {}; // lookup cells per axis, fitted to kMaxNodes on load
 
     std::vector<BoImage> images;
     std::vector<BoMaterial> materials;
@@ -108,6 +108,7 @@ struct BoMap {
 static BoMap sMap;
 static bool sTriedLoad = false;
 static bool sSelected = false; // the lobby picked the Black Ops map
+static bool sInScene = false;  // the current scene got the map's collision
 
 // ---------------------------------------------------------------------------
 // Reading the converted file
@@ -585,6 +586,8 @@ static void BuildLayout(BoMap& map, const std::vector<Entity>& ents) {
     }
 }
 
+static bool FitCollisionGrid(const CollisionHeader* header, Vec3i* grid);
+
 static bool LoadFile(BoMap& map) {
     std::ifstream file(BoMap_Path(), std::ios::binary);
     if (!file) {
@@ -598,10 +601,11 @@ static bool LoadFile(BoMap& map) {
         return false;
     }
     map.scale = r.Get<float>();
-    map.spawn.x = r.Get<s16>();
-    map.spawn.y = r.Get<s16>();
-    map.spawn.z = r.Get<s16>();
-    map.spawnYaw = r.Get<s16>();
+    // The file's player spawn (x, y, z, yaw): unused, Link enters through the graveyard's
+    // own entrance and the layout places everything else.
+    for (int i = 0; i < 4; i++) {
+        r.Get<s16>();
+    }
 
     u32 nv = r.Count(6);
     map.colVerts.resize(nv);
@@ -704,7 +708,7 @@ static bool LoadFile(BoMap& map) {
     if (!r.Ok()) {
         return false;
     }
-    if (!BuildCollision(map, tris, surf, flags)) {
+    if (!BuildCollision(map, tris, surf, flags) || !FitCollisionGrid(&map.colHeader, &map.colGrid)) {
         return false;
     }
     BuildDisplayLists(map);
@@ -726,8 +730,9 @@ static bool EnsureLoaded() {
 // ---------------------------------------------------------------------------
 // In the game
 
+// Only in Zombies Only, where the lobby and runs live: the normal game keeps its graveyard.
 void BoMap_Select(bool selected) {
-    sSelected = selected;
+    sSelected = selected && ZombiesOnly();
     if (selected && !sMap.loaded) {
         sTriedLoad = false; // pick up a map converted since the last try
     }
@@ -738,7 +743,7 @@ bool BoMap_Selected() {
 }
 
 bool BoMap_Active(PlayState* play) {
-    return sSelected && play != nullptr && play->sceneNum == SCENE_GRAVEYARD && sMap.loaded;
+    return sSelected && sInScene && play != nullptr && play->sceneNum == SCENE_GRAVEYARD && sMap.loaded;
 }
 
 const ArenaLayout* BoMap_Layout() {
@@ -779,26 +784,32 @@ static size_t LookupNodesNeeded(const CollisionHeader* header, const Vec3i& amou
     return total;
 }
 
+// Each polygon takes a lookup node in every cell its box (plus OoT's 50 unit overlap)
+// reaches. Cells start at kCellSize and grow until the worst case fits the u16 node ids;
+// false when even the coarsest grid doesn't (the map then fails to import).
+static bool FitCollisionGrid(const CollisionHeader* header, Vec3i* grid) {
+    float cellSize = kCellSize;
+    for (int tries = 0; tries < 32; tries++, cellSize *= 1.25f) {
+        auto cells = [&](s16 lo, s16 hi, int minCells, int maxCells) {
+            return std::clamp(static_cast<int>(static_cast<float>(hi - lo) / cellSize) + 1, minCells, maxCells);
+        };
+        grid->x = cells(header->minBounds.x, header->maxBounds.x, 4, 64);
+        grid->y = cells(header->minBounds.y, header->maxBounds.y, 2, 16);
+        grid->z = cells(header->minBounds.z, header->maxBounds.z, 4, 64);
+        if (LookupNodesNeeded(header, *grid) <= kMaxNodes) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static void AllocateCollision(PlayState* play, CollisionHeader* header) {
     CollisionContext* colCtx = &play->colCtx;
     colCtx->colHeader = header;
     colCtx->dyna.polyNodesMax = 1000;
     colCtx->dyna.polyListMax = 1024;
     colCtx->dyna.vtxListMax = 1024;
-    // Each polygon takes a lookup node in every cell its box (plus OoT's 50 unit overlap)
-    // reaches. Cells start at kCellSize and grow until the worst case fits the u16 node ids.
-    float cellSize = kCellSize;
-    for (int tries = 0; tries < 32; tries++, cellSize *= 1.25f) {
-        auto cells = [&](s16 lo, s16 hi, int minCells, int maxCells) {
-            return std::clamp(static_cast<int>(static_cast<float>(hi - lo) / cellSize) + 1, minCells, maxCells);
-        };
-        colCtx->subdivAmount.x = cells(header->minBounds.x, header->maxBounds.x, 4, 64);
-        colCtx->subdivAmount.y = cells(header->minBounds.y, header->maxBounds.y, 2, 16);
-        colCtx->subdivAmount.z = cells(header->minBounds.z, header->maxBounds.z, 4, 64);
-        if (LookupNodesNeeded(header, colCtx->subdivAmount) <= kMaxNodes) {
-            break;
-        }
-    }
+    colCtx->subdivAmount = sMap.colGrid;
     size_t lookupSize =
         colCtx->subdivAmount.x * sizeof(StaticLookup) * colCtx->subdivAmount.y * colCtx->subdivAmount.z;
     colCtx->lookupTbl = static_cast<StaticLookup*>(THA_AllocEndAlign(&play->state.tha, lookupSize, ~1));
@@ -823,16 +834,20 @@ static void AllocateCollision(PlayState* play, CollisionHeader* header) {
 }
 
 void BoMap_OnSceneInit(PlayState* play) {
-    if (!sSelected || play->sceneNum != SCENE_GRAVEYARD || !EnsureLoaded()) {
+    sInScene = false;
+    if (!sSelected || !ZombiesOnly() || play->sceneNum != SCENE_GRAVEYARD || !EnsureLoaded()) {
         return;
     }
+    sInScene = true;
     AllocateCollision(play, &sMap.colHeader);
     // None of the graveyard's own actors: its graves, signs and doors aren't on the map.
     play->numSetupActors = 0;
     play->transiActorCtx.numActors = 0;
 }
 
-// Actors the rooms spawn when they load: everything but Link and Navi goes.
+// Actors the rooms spawn when they load go; the hook runs right after the room's actor
+// list spawned. Only those are touched (they carry an actor list index): player 2,
+// stations, zombies and drops are the mode's own, spawned with Actor_Spawn.
 void BoMap_OnSpawnActors(PlayState* play) {
     if (!BoMap_Active(play)) {
         return;
@@ -842,7 +857,9 @@ void BoMap_OnSpawnActors(PlayState* play) {
             continue;
         }
         for (Actor* a = play->actorCtx.actorLists[cat].head; a != nullptr; a = a->next) {
-            Actor_Kill(a);
+            if (GetActorListIndex(a) >= 0) {
+                Actor_Kill(a);
+            }
         }
     }
 }

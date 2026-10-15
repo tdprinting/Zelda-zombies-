@@ -923,6 +923,21 @@ static bool BuyForPartner(PlayState* play, Station& station, const Offer& offer)
     }
 }
 
+// The roll GunBoxPick turns into this gun for these holdings, -1 when it can't come up
+// (the player already holds it).
+static int BoxRollFor(const PlayerGuns& guns, GunId gun) {
+    int roll = 0;
+    for (int i = 1; i < static_cast<int>(GunId::Count); i++) {
+        GunId id = static_cast<GunId>(i);
+        int weight = guns.Has(id) ? 0 : GunInfo(id).boxWeight;
+        if (id == gun) {
+            return weight > 0 ? roll : -1;
+        }
+        roll += weight;
+    }
+    return -1;
+}
+
 // The chest's roll for the imported Mystery Box (ZombiesBox.cpp), made as its cycle ends:
 // false when the bear comes up instead (the buyer gets their points back).
 static bool RollBox(int who, int cost, BoxPrize* prize) {
@@ -940,8 +955,11 @@ static bool RollBox(int who, int cost, BoxPrize* prize) {
     if (gun != GunId::None) {
         prize->label = GunName(gun, false);
         prize->gunBoName = GunInfo(gun).boName;
-        prize->give = [who, roll](PlayState* p) {
-            const char* name = Guns_ChestGive(p, who, roll);
+        // The gun shown is the gun given: the roll is redone against what the player holds
+        // when they take it (a wall buy in between shifts the other guns' rolls).
+        prize->give = [who, gun](PlayState* p) {
+            int at = BoxRollFor(Guns_Of(who), gun);
+            const char* name = at >= 0 ? Guns_ChestGive(p, who, at) : nullptr;
             if (name != nullptr) {
                 Announce(name, 3);
             }

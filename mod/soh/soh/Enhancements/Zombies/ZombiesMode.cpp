@@ -1201,7 +1201,7 @@ static void OnGameStateMainStart() {
     Input& input = play->state.input[0];
     sBuyPressed = CHECK_BTN_ALL(input.press.button, BuyButton());
     if (IsRunActive() && BuyButton() == BTN_L) {
-        input.press.button &= static_cast<u16>(~BTN_L);
+        input.press.button &= ~static_cast<CONTROLLERBUTTONS_T>(BTN_L);
     }
 }
 

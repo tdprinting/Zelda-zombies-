@@ -368,7 +368,7 @@ static void Adjust(int item, int delta) {
 
 // D-pad or stick to move, left/right to change a value, A to pick, B to go back.
 static void HandleMenuInput(PlayState* play, const Input& input) {
-    u16 press = static_cast<u16>(input.press.button);
+    CONTROLLERBUTTONS_T press = input.press.button;
     s8 stickY = input.rel.stick_y;
     s8 stickX = input.rel.stick_x;
     if (sStickCooldown > 0) {
@@ -468,7 +468,7 @@ void Pause_OnMainStart(PlayState* play) {
     }
     Input& input = play->state.input[0];
     if (Lobby_IsOpen()) {
-        input.press.button &= static_cast<u16>(~BTN_START); // no Zelda pause screen behind the menu
+        input.press.button &= ~static_cast<CONTROLLERBUTTONS_T>(BTN_START); // no Zelda pause screen behind the menu
     }
     if (sSwallowInput) {
         sSwallowInput = false;
@@ -555,6 +555,7 @@ void Lobby_OnLoadGame() {
     sWarpPending = false;
     sResults.pending = false;
     if (!ZombiesOnly()) {
+        BoMap_Select(false); // the normal game keeps its own graveyard
         return;
     }
     gSaveContext.entranceIndex = kMaps[MapIndex()].entrance;
