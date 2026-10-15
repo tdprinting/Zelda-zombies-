@@ -5,6 +5,7 @@
 // Stations, the HUD and the menu live in the other Zombies*.cpp files.
 
 #include "ZombiesMode.h"
+#include "ZombiesGuns.h"
 
 #include <libultraship/bridge/consolevariablebridge.h>
 
@@ -414,6 +415,11 @@ static bool SpawnEnemy(PlayState* play, Player* player, EnemyKind kind) {
     }
 
     EnemySpec spec = GetEnemySpec(kind);
+    // Undead are Black Ops zombies when the player has imported the model.
+    if (kind != EnemyKind::WhiteWolfos && CVarOn(CVAR_ZOMBIES("BlackOpsZombies"), 1) && ZombieActor_Available()) {
+        spec.actorId = ZombieActor_Id();
+        spec.params = 0;
+    }
     s16 yaw = Math_Vec3f_Yaw(&pos, &player->actor.world.pos);
 
     // Actor_Spawn refuses enemies in a room whose clear flag is set.
@@ -436,6 +442,7 @@ static bool SpawnEnemy(PlayState* play, Player* player, EnemyKind kind) {
     TrackedEnemy tracked = { actor, kind, tier, static_cast<s16>(hp), actor->world.pos, false,
                              Math_Vec3f_DistXZ(&pos, &player->actor.world.pos), 0, window };
     tracked.vocalTimer = static_cast<int>((1.0f + Rand_ZeroOne() * 4.0f) * kFps);
+    tracked.maxHealth = static_cast<s16>(hp);
     sRun.enemies.push_back(tracked);
     if (dog) {
         // Hellhounds arrive in a lightning strike.
@@ -464,6 +471,9 @@ static void ForgetEnemy(size_t index, bool escaped) {
 static KillType CurrentKillType(Player* player) {
     if (player->meleeWeaponState != 0) {
         return KillType::Melee;
+    }
+    if (Guns_FiredRecently(0)) {
+        return KillType::Ranged;
     }
     switch (player->heldItemAction) {
         case PLAYER_IA_BOW:
@@ -566,8 +576,8 @@ static void OnEnemyKilled(PlayState* play, Player* player, TrackedEnemy& enemy, 
     }
 }
 
-static bool IsSwiper(EnemyKind kind) {
-    return kind == EnemyKind::Redead || kind == EnemyKind::Gibdo;
+static bool IsSwiper(const TrackedEnemy& enemy) {
+    return enemy.kind == EnemyKind::Redead || enemy.kind == EnemyKind::Gibdo || ZombieActor_Is(enemy.actor);
 }
 
 // Groans while they shamble, as Black Ops zombies do.
@@ -601,6 +611,7 @@ static void TrySwipeLink(PlayState* play, Player* player, TrackedEnemy& enemy, f
     }
     enemy.swipeTimer = kSwipeFrames;
     actor->shape.rot.y = actor->yawTowardsPlayer;
+    ZombieActor_Attack(actor);
     // Any damage at all: Black Ops health below turns it into one hit's worth.
     Actor_SetPlayerKnockbackSmall(play, actor, 4.0f, actor->yawTowardsPlayer, 4.0f, 8);
     Vocalize(enemy, true);
@@ -623,8 +634,10 @@ static bool NearExplosion(PlayState* play, const Vec3f& pos) {
 
 static void MakeCrawler(TrackedEnemy& enemy) {
     enemy.tier = MoveTier::Crawl;
-    // Down on the ground, dragging itself along.
-    enemy.actor->scale.y *= 0.45f;
+    if (!ZombieActor_Is(enemy.actor)) {
+        // Down on the ground, dragging itself along. The Black Ops zombie has its own crawl.
+        enemy.actor->scale.y *= 0.45f;
+    }
 }
 
 // Black Ops health for Link: two hits down (five with Juggernog), whoever lands them,
@@ -692,6 +705,9 @@ static void UpdateEnemies(PlayState* play, Player* player) {
             s16 health = actor->colChkInfo.health;
             int who = Coop_Credit(enemy);
             if (health < enemy.lastHealth) {
+                if (who == 0) {
+                    health = static_cast<s16>(Guns_ScaleItemHit(play, player, enemy, health)); // Zelda items keep up
+                }
                 s16 damage = enemy.lastHealth - health;
                 // Double Tap and a Pack-a-Punched blade each land the hit again. The extra damage
                 // never finishes an enemy off, because its own death check already ran this frame.
@@ -724,10 +740,12 @@ static void UpdateEnemies(PlayState* play, Player* player) {
             Target target = TargetFor(actor, player);
             float dist = target.dist;
 
-            if (IsSwiper(enemy.kind)) {
+            if (actor->id == ACTOR_EN_RD) {
                 // Keep the Redead grab from ever starting: these undead swipe instead.
                 reinterpret_cast<EnRd*>(actor)->grabWaitTimer = 5;
             }
+            ZombieActor_SetTier(actor, enemy.tier);
+            ZombieActor_SetTearing(actor, false);
             if (--enemy.vocalTimer <= 0) {
                 enemy.vocalTimer = static_cast<int>((3.0f + Rand_ZeroOne() * 5.0f) * kFps);
                 Vocalize(enemy, false);
@@ -739,6 +757,7 @@ static void UpdateEnemies(PlayState* play, Player* player) {
             // Undead outside a barricade stay there, tearing boards, until the window is open.
             if (enemy.window >= 0 && Barricades_HoldEnemy(enemy, PullSpeed(enemy.tier) * slow)) {
                 enemy.closestDist = dist;
+                ZombieActor_SetTearing(actor, enemy.tearTimer > 0);
                 TrySwipeLink(play, player, enemy, kWindowSwipeReach);
                 // Counted by the hold: frames spent short of the boards, caught on something.
                 if (dist > kLostDist || enemy.stuckFrames > kStuckFrames) {
@@ -774,13 +793,14 @@ static void UpdateEnemies(PlayState* play, Player* player) {
             // and walk, run or sprint at him depending on the round.
             // Player 2 is only ours to chase: undead go all the way to them to swipe.
             float stopDist = target.partner                 ? kPullStopDistPartner
-                             : IsSwiper(enemy.kind)         ? kPullStopDistSwiper
+                             : IsSwiper(enemy)              ? kPullStopDistSwiper
                              : enemy.tier == MoveTier::Walk ? kPullStopDistWalk
                                                             : kPullStopDistFast;
-            if (IsSwiper(enemy.kind) || enemy.tier == MoveTier::Crawl) {
+            if (IsSwiper(enemy) || enemy.tier == MoveTier::Crawl) {
                 TrySwipeLink(play, player, enemy, kSwipeReach);
             }
-            if ((hordePull || target.partner) && dist > stopDist && actor->freezeTimer == 0) {
+            if ((hordePull || target.partner || ZombieActor_Is(actor)) && dist > stopDist && actor->freezeTimer == 0 &&
+                !ZombieActor_Busy(actor)) {
                 s16 yaw = target.yaw;
                 float speed = PullSpeed(enemy.tier) * slow;
                 actor->world.pos.x += Math_SinS(yaw) * speed;
@@ -877,6 +897,7 @@ static void ActivatePowerUp(PlayState* play, PowerUp type, int who) {
     switch (type) {
         case PowerUp::MaxAmmo:
             RefillAmmo();
+            Guns_MaxAmmo();
             if (sRun.partner.bombBag) {
                 Coop_GiveBombs(Coop_MaxBombs());
             }
@@ -1069,6 +1090,7 @@ static void StartRun(PlayState* play, Player* player) {
     Bounds_Scan(play);
     Arena_Start(play);
     Stations_NewRun();
+    Guns_NewRun(play);
     Stations_Place(play);
     Barricades_Place(play);
     Extras_OnRunStart(play);
@@ -1103,6 +1125,7 @@ static void EndRun(const std::string& reason, bool linkIsDead) {
     Stations_Clear();
     Extras_OnRunEnd(gPlayState, linkIsDead);
     Coop_EndRun(gPlayState);
+    Guns_EndRun();
 
     // Zombies Only hands out a fresh loadout every run, so it always puts the file back.
     if (sRun.zombiesOnly || !CVarOn(CVAR_ZOMBIES("KeepItems"), 0)) {
@@ -1265,6 +1288,7 @@ static void OnPlayerUpdate() {
     Arena_Update(play, player);
     Barricades_Update(play, player);
     Extras_Update(play, player);
+    Guns_Update(play, player); // after the stations, so the buy button goes to them first
 
     switch (sRun.phase) {
         case Phase::Intro:

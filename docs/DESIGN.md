@@ -39,18 +39,19 @@ player's own ROM.
 | Spawn delay `2.0s × 0.95^(round − 1)` | Same curve, floor 0.25s | |
 | Zombie move speed (`round × 8` plus spread; walk ≤ 35, run ≤ 70, sprint above) | Same roll per undead, applied through Horde Pull at 2 / 4 / 6 units per frame | Round 1 is all walkers; from round 9 every undead sprints |
 | Zombie health +100 per round, then ×1.1 | Health multiplier on each enemy's own HP: `1 + 0.15 × (round − 1)` to round 10, then ×1.08 per round | Capped at 255 (OoT stores HP in one byte). Slider scales it |
-| Points: 10 per hit, 60 kill, 100 headshot, 130 knife | 10 per hit, 60 kill, 100 kill with an arrow, seed or hookshot, 130 kill with a sword | |
+| Points: 10 per hit, 60 kill, 100 headshot, 130 knife | 10 per hit, 60 kill, 100 kill with a gun, arrow, seed or hookshot, 130 kill with a sword | A gun hit too small to show on an undead's health still pays its 10 |
 | Start with 500 points | 500 | |
-| Wall buys | **Armory** station: the next item for Link's age he doesn't have, then an ammo refill (500) once he has them all | Child: Slingshot, Boomerang, Bombs. Adult: Bow, Bombs, Hookshot, Megaton Hammer |
-| Mystery Box (950) | **Mystery Chest** (950): random weapon | Pool: Bombchus (Monkey Bomb), Fire/Ice Arrows, Din's Fire (Thundergun), Light Arrows (Ray Gun, rare), Biggoron Sword (rare), Longshot, Hammer. Child pool swaps in Slingshot, Boomerang, Bombs. Skull Kid laughing is the teddy bear: the points come back and the chest moves. As in Black Ops it never happens in the first four uses since the last move, is a 15% chance on uses 5 to 8, is certain from the ninth if the chest has never moved, and otherwise is 30% (50% from the 14th use) |
+| Starting pistol | **M1911** on the guns' C button | See [Guns](#guns) |
+| Wall buys | **Armory** station, a rack: **R** steps through it. First the next Zelda item for Link's age he doesn't have (an ammo refill, 500, once he has them all), then the wall guns at Black Ops prices, and their ammo at half price (4500 once Pack-a-Punched) | Child: Slingshot, Boomerang, Bombs. Adult: Bow, Bombs, Hookshot, Megaton Hammer. Guns: Olympia and M14 (500), MP5K and MP40 (1000) once the second zone is open, AK74u (1200) and Stakeout (1500) once the third is |
+| Mystery Box (950) | **Mystery Chest** (950): random weapon | Pool: Bombchus (Monkey Bomb), Fire/Ice Arrows, Din's Fire (Thundergun), Light Arrows (rare), Biggoron Sword (rare), Longshot, Hammer, and the box guns (Spectre, Galil, Commando, FAMAS, HK21, RPK, and the Ray Gun, rarest). Child pool swaps in Slingshot, Boomerang, Bombs. Never a gun Link already holds. About half of all prizes are guns (weights: Zelda items 1 to 4 each, box guns 3, Ray Gun 1, so the Ray Gun is about 1 in 38). Skull Kid laughing is the teddy bear: the points come back and the chest moves. As in Black Ops it never happens in the first four uses since the last move, is a 15% chance on uses 5 to 8, is certain from the ninth if the chest has never moved, and otherwise is 30% (50% from the 14th use) |
 | Juggernog | **Juggernog Milk** (2500): Double Defense | |
 | Quick Revive | **Fairy Revive**. Solo (500, no power needed): a bottled fairy. Co-op (1500): revives take half as long | Solo: a fairy in a bottle is OoT's own self-revive. Fills an empty bottle, else adds a bottle, else replaces the first bottle's contents. Using it counts as a down (5% of points and the perks go), and it sells out after three buys. Co-op has no self-revive |
 | Double Tap | **Double Tap** (2000): every third hit lands twice, about the third more damage Black Ops' faster fire gives | |
 | Stamin-Up | **Stamin-Up** (2000): Link runs 25% faster | |
 | Power switch | **Power** station: free, lights the perk and Pack-a-Punch torches | Playing the Sun's Song anywhere also turns the power on |
-| Pack-a-Punch (5000) | **Pack-a-Punch** (5000): upgrades one item | Checks the C buttons first. Bow: bigger quiver, then Light Arrows. Slingshot: bigger seed bag. Bombs: bigger bag. Hookshot: Longshot. Then the sword: Biggoron Sword (adult), then a Punched Blade whose hits land twice. Then the Mirror Shield (adult) |
+| Pack-a-Punch (5000) | **Pack-a-Punch** (5000): upgrades one item | The gun in hand first, if Link fired it more recently than he used a Zelda item: more damage, a bigger clip and reserve, a new name, full ammo. Otherwise the C buttons (and the gun last, when nothing else is left). Bow: bigger quiver, then Light Arrows. Slingshot: bigger seed bag. Bombs: bigger bag. Hookshot: Longshot. Then the sword: Biggoron Sword (adult), then a Punched Blade whose hits land twice. Then the Mirror Shield (adult) |
 | Power-ups (3% plus point-based drops on the team's points, 4 per round max) | Same drop logic; each power-up is a floating drop, dealt from a shuffled deck as in Black Ops | Max Ammo = big magic jar, Insta-Kill = red rupee, Double Points = gold rupee, Nuke = bomb drop, Fire Sale = purple rupee |
-| Max Ammo | Refills sticks, nuts, seeds, arrows, bombs, bombchus and magic | |
+| Max Ammo | Refills sticks, nuts, seeds, arrows, bombs, bombchus and magic, and every gun's reserve | As in Black Ops the clip in the gun is left alone |
 | Carpenter | Deku Stick drop: every window gets all six boards back, +200 points for every player | Only drops while a window is missing boards |
 | Insta-Kill (30s) | Every undead dies in one hit | |
 | Double Points (30s) | All points ×2 | |
@@ -86,6 +87,151 @@ Ocarina of Time rather than Black Ops:
   a Fairy Fountain station to top up hearts between rounds, so OoT's
   currency and Zombies points both have a job.
 
+## Guns
+
+Tee asked for the Call of Duty: Black Ops guns in Link's hands, with Black Ops' ammo
+system, in the Armory and the Mystery Chest beside the Zelda items, and for the Zelda
+items to stay worth using. The gameplay facts (damage, clips, reserves, fire rates,
+reloads, prices, box odds) are written into our own table in `ZombiesGunTable.cpp`. No
+Black Ops code or assets are in the repository.
+
+### Controls
+
+Third person stays the main view, on OoT's own camera.
+
+- **The gun button** (C-Left, a setting) is the guns' alone during a run: items can't be
+  equipped on it (one put there moves to a free button). Press to fire; hold for the
+  automatics. An empty clip reloads by itself, as in Black Ops.
+- **Hip-fire** goes where Link faces, with a little aim assist (12 degrees, line of
+  sight), like a Black Ops console. **Z-targeting** aims at the locked-on undead.
+- **C-Up**, OoT's own first-person look, is aiming down the sights: a viewmodel (Link's
+  gloved hand and the gun) in the lower right with walk bob, idle sway, recoil kick and
+  a reload dip, a crosshair, and a quarter of the hip-fire spread. Link can walk while
+  aiming at 60% of his walk: with SoH's right-stick aiming on, the left stick moves and
+  the right stick aims; without it, the stick turns the view left and right as usual and
+  its forward/back walks. Movement goes through Link's normal movement, so walls stop him.
+  A, B or R leave first person as usual.
+- **The buy button** (L) reloads when there's nothing to buy, and holding it swaps guns,
+  like Black Ops' use/reload button. At the Armory, **R** steps through the rack.
+- Pressing the gun button with a Zelda item in hand puts the item away first. While Link
+  climbs, swims, carries, swings, shields or aims the bow, the gun stays down.
+
+Two guns, as in Black Ops (the data has room for a third, for a Mule Kick perk later).
+Buying or finding a gun with both slots full replaces the one in hand.
+
+### How a bullet hits
+
+A shot is a hitscan ray (shotguns fire eight) from Link's chest, or from his eyes in
+first person, to the first wall (`BgCheck_EntityLineTest1`), tested against each tracked
+undead's collider cylinder. The top 22% of the cylinder is the head (headshot
+multiplier). Rifles pass through two undead and machine guns three, the second and later
+taking 75%. Shotgun pellets weaken past a quarter of their range. The Ray Gun fires a
+green bolt (45 units a frame, in three steps so it can't skip through an undead) that
+bursts on the first undead or wall; Mustang & Sally rounds burst where they hit.
+
+Damage is in Black Ops units and is turned into OoT health so that **shots-to-kill match
+Black Ops at every round**, whatever the enemy:
+`hp = damage × enemy's full health / Black Ops zombie health on this round`, where Black
+Ops zombie health is 150 on round 1, +100 a round to round 9, then ×1.1 a round (the
+Health Scaling slider scales that growth as it does ours). Fractions carry to the next
+hit. The damage goes onto `colChkInfo.health`; the mode's hit tracking pays the points
+next frame and counts gun kills as ranged kills (100). A gun kill ends with OoT's own
+enemy death flames and a drop, since zeroing an enemy's health doesn't start its own
+death. Insta-Kill and Double Tap work on gun hits as on any other.
+
+### The guns
+
+Damage per bullet (per pellet for shotguns) in Black Ops units; fire rate is frames
+between shots at OoT's 20 updates a second; reload is frames from empty (a reload with
+rounds left takes 80%). Wall zone is the arena zone that has to be open first on the
+hand-made maps.
+
+| Gun | Class | Damage | Head | Clip + reserve | Fire | Reload | Where | Pack-a-Punched |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| M1911 | Pistol | 20 | ×2 | 8 + 80 | 3 | 32 | start | Mustang & Sally: 100 + 600 splash, 12 + 50 |
+| Olympia | Shotgun | 60 ×8 | ×1.5 | 2 + 38 | 6 | 54 | wall 500 | Hades: 120 ×8, 2 + 60 |
+| M14 | Rifle | 105 | ×2.5 | 8 + 92 | 3 | 38 | wall 500 | Mnesia: 250, 15 + 135 |
+| MP5K | SMG | 75 | ×2 | 30 + 120 | 1.5 | 48 | wall 1000, zone 2 | MP115 Kollider: 120, 40 + 200 |
+| MP40 | SMG | 90 | ×2 | 32 + 192 | 2.3 | 50 | wall 1000, zone 2 | The Afterburner: 150, 64 + 384 |
+| AK74u | SMG | 100 | ×2 | 20 + 160 | 1.6 | 46 | wall 1200, zone 3 | AK74fu2: 160, 40 + 280 |
+| Stakeout | Shotgun | 80 ×8 | ×1.5 | 6 + 54 | 9 | 60 | wall 1500, zone 3 | Raid: 160 ×8, 10 + 72 |
+| Spectre | SMG | 75 | ×2 | 30 + 120 | 1.2 | 44 | chest 3 | Phantasm: 120, 45 + 270 |
+| Galil | Rifle | 100 | ×2.5 | 35 + 315 | 1.8 | 56 | chest 3 | Lamentation: 150, 50 + 400 |
+| Commando | Rifle | 110 | ×2.5 | 30 + 270 | 1.6 | 42 | chest 3 | Predator: 160, 40 + 400 |
+| FAMAS | Rifle | 100 | ×2.5 | 30 + 210 | 1.4 | 52 | chest 3 | G16-GL35: 150, 45 + 360 |
+| HK21 | LMG | 130 | ×2 | 125 + 500 | 1.8 | 100 | chest 3 | H115 Oscillator: 200, 150 + 750 |
+| RPK | LMG | 130 | ×2 | 100 + 400 | 1.6 | 90 | chest 3 | R115 Resonator: 200, 125 + 500 |
+| Ray Gun | Launcher | 1000 + 300 splash | | 20 + 160 | 5 | 60 | chest 1 | Porter's X2 Ray Gun: 1500 + 500 splash, 40 + 200 |
+
+The Thundergun is Din's Fire (below), so it isn't a gun here. Wall ammo costs half the
+gun's price, 4500 once it's Pack-a-Punched; box guns only refill from Max Ammo, as in
+Black Ops.
+
+### Zelda items next to the guns
+
+OoT items do fixed damage, so on their own they'd lose to the guns early and beat them
+late. Each item has a Black Ops damage equivalent instead, matched to a gun of its tier
+by damage per second at OoT's own rate of use (`OotWeaponBoDamage` in
+`ZombiesRules.cpp`), turned into health the same way as a bullet, and never below the
+item's own damage, which carries it in the late rounds where Black Ops health outgrows
+ours. The sword is the knife and keeps its own damage.
+
+| Item | Black Ops equivalent | Tier it matches |
+| --- | --- | --- |
+| Slingshot | 250 | the child's M14 (Armory, 500) |
+| Bow | 500 | M14 / MP40 |
+| Fire Arrow | 1000, and it burns | |
+| Ice Arrow | 800, and it freezes | |
+| Light Arrow | 2000 | Ray Gun, paid in magic |
+| Boomerang | 300 | stuns, hits several, no ammo |
+| Hookshot / Longshot | 600 / 800 | stuns and pulls |
+| Megaton Hammer | 1500 | a Bowie knife and a half |
+| Deku Stick | 500 | until it breaks |
+| Bombs | 800 | a grenade: one-shots to round 7 |
+| Bombchus | 1000 | Monkey Bomb slot |
+| Din's Fire | kills anything in the blast | the Thundergun |
+| Sword during Nayru's Love | 1000 | Bowie knife |
+
+Hits to kill a Redead (8 HP at round 1), scaled (vanilla in brackets), against M14 body
+shots:
+
+| Round | 1 | 5 | 10 | 15 | 20 | 30 |
+| --- | --- | --- | --- | --- | --- | --- |
+| M14 (body) | 2 | 6 | 10 | 16 | 26 | 67 |
+| Slingshot | 1 (8) | 3 (13) | 4 (19) | 7 (28) | 11 (41) | 30 (88) |
+| Bow | 1 (4) | 2 (7) | 3 (10) | 4 (14) | 6 (21) | 15 (44) |
+| Fire Arrow | 1 (4) | 1 (7) | 2 (10) | 2 (14) | 3 (21) | 7 (44) |
+| Light Arrow | 1 (4) | 1 (7) | 1 (10) | 1 (14) | 2 (21) | 4 (44) |
+| Hookshot | 1 (8) | 1 (13) | 2 (19) | 3 (28) | 5 (41) | 11 (88) |
+| Hammer | 1 (2) | 1 (4) | 1 (5) | 2 (7) | 2 (11) | 5 (22) |
+| Bombs | 1 (2) | 1 (4) | 2 (5) | 3 (7) | 4 (11) | 9 (22) |
+
+Which item made a hit is read from the scene when the mode sees the health drop: a Din's
+Fire actor, a bomb explosion near the undead, Link's swing and what's in his hand, the
+item he's aiming, or the boomerang in flight. Player 2's hits keep their own damage.
+
+### Link with a gun
+
+Link's gun poses are our own keyframes: absolute rotations for his torso and arm joints
+per gun class (one hand for pistols and the Ray Gun, two for the rest), with aim, sprint,
+reload and lowered poses and a recoil kick (`kAdultPoses` in `ZombiesGuns.cpp`). Just
+before Link is drawn they are blended over his animated arms (sprint while running,
+reload and swap timelines, recoil after each shot), and his hand models are swapped for
+the gun; right after the draw everything is put back, so his own animations and items
+are untouched, and nothing changes when the gun is down (three seconds after its last
+use, or as soon as he swings, uses an item, climbs, swims or shields). The poses are a
+table, so a converted Black Ops viewmodel animation can drive the same joints later.
+
+Until the imported models exist Link holds an OoT stand-in: the hookshot (adult) or the
+slingshot (child), with OoT sounds (a bomb blast pitched up per gun class for shots,
+the sword sheath for a reload, the hookshot click when it's done, the magic arrow for
+the Ray Gun). `Guns_ImportedModel(boName)` is the seam for the imported renderer: it gets
+each gun's Black Ops asset name (`m1911_zm`, `ray_gun_zm`, ...) and returns null for now.
+
+Per-player gun state is kept for every player from the start; player 2's guns aren't
+wired to their controls yet (they keep their swords and bombs), and the viewmodel is off
+in split screen.
+
 ## Controls
 
 In the zombies-only game, runs start from the main menu. With Zombies Only off
@@ -110,6 +256,8 @@ SoH resolution:
 - Bottom left, above the rupees: the round number in red, as tally marks for
   rounds 1 to 5 and as a number after that, with owned perks above it.
 - Bottom right: points, with `+10` / `+60` stacking above them.
+- Bottom right, under the points: the gun in hand and its button, then `clip | reserve`, as
+  Black Ops shows ammo. A reload hint when the clip is low, and a crosshair while aiming.
 - Upper middle: round announcements and power-up names.
 - Top: active power-up and storm timers.
 - Lower middle: the prompt for the nearest station or damaged window.
@@ -196,6 +344,7 @@ All under Enhancements > Zombies of Time, stored as
 | Force Night | on |
 | Redead Scream (Redeads and Gibdos freeze Link) | off |
 | Buy Button (L / D-pad Down) | L |
+| Gun Button (C-Left / C-Down / C-Right) | C-Left |
 | Keep Items After Run | off |
 | Best Round (read only) | |
 
@@ -209,7 +358,7 @@ All under Enhancements > Zombies of Time, stored as
 - START during a run opens the run menu (Resume, Items, Controls, End Run).
 - Every run starts with the same kit:
   - the age's sword and shield
-  - a slingshot or a bow
+  - the M1911 on the gun button (the slingshot or bow is the Armory's first buy)
   - four bombs
   - the Fairy Ocarina, with Zelda's Lullaby, the Sun's Song and the Song of Storms
   - three hearts and 0 rupees
@@ -255,6 +404,8 @@ Code layout:
 | `ZombiesExtras.cpp` | Navi callouts, low-health warning and other touches |
 | `ZombiesBounds.cpp` | Keeps Link off the scene's exits during a run |
 | `ZombiesCoop.cpp` | Split-screen co-op: player 2, second view, downs and revives |
+| `ZombiesGuns.h/.cpp` | Black Ops guns: firing, reloads, the Armory rack and chest guns, Pack-a-Punch, Link's gun poses, the first-person viewmodel, OoT item round scaling, the imported-model seam |
+| `ZombiesGunTable.cpp` | The gun table and the pure ammo and slot rules, unit tested |
 | `ZombiesHud.cpp` | HUD drawing |
 | `ZombiesMenu.cpp` | Menu widgets |
 

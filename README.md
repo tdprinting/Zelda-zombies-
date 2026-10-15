@@ -1,8 +1,10 @@
 # Zombies of Time
 
-A Call of Duty: Black Ops style Zombies mode for The Legend of Zelda: Ocarina
-of Time, built as an enhancement for [Ship of Harkinian](https://github.com/HarbourMasters/Shipwright)
-(SoH), the PC port of Ocarina of Time.
+A Call of Duty: Black Ops style Zombies game for The Legend of Zelda: Ocarina
+of Time, built on the engine of [Ship of Harkinian](https://github.com/HarbourMasters/Shipwright)
+(SoH), the PC port of Ocarina of Time. It is its own install: it has its own
+program, window and data folder, so it sits next to a normal SoH install
+without touching SoH's saves or settings.
 
 Stalchildren, Redeads and Gibdos come at Link in endless rounds, with White
 Wolfos packs standing in for hellhounds. Kills earn points, and points buy
@@ -18,9 +20,11 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the full design.
 | Path | Contents |
 | --- | --- |
 | `mod/soh/soh/Enhancements/Zombies/` | The mode's source, laid out to drop into SoH's tree |
-| `Shipwright/` | Ship of Harkinian, pinned as a git submodule |
+| `mod/patches/` | Engine patches for SoH (the game's name, data folder and program name) |
+| `mod/patches-android/` | Extra patches for the Android port (app id, label, data folder) |
+| `Shipwright/` | Ship of Harkinian, pinned as a git submodule (left unmodified in git) |
 | `tests/` | Unit tests for the round, health and points formulas |
-| `scripts/apply.sh` | Copies the mode into the Shipwright checkout |
+| `scripts/apply.sh` | Applies the engine patches and copies the mode into the Shipwright checkout |
 | `docs/DESIGN.md` | Design and roadmap |
 
 No game data ships here. Like SoH itself, the build extracts Ocarina of Time's
@@ -31,15 +35,44 @@ reference for how its mechanics behave.
 
 1. Clone with submodules:
    `git clone --recursive https://github.com/tdprinting/Zelda-zombies-.git`
-2. Copy the mode into SoH: `./scripts/apply.sh`
-3. Build SoH as its [build guide](Shipwright/docs/BUILDING.md) describes, from
-   the `Shipwright/` folder.
-4. Run SoH, give it your ROM when asked, and load a save. **Zombies Only** is
+2. Patch SoH's engine and add the mode: `./scripts/apply.sh` (safe to run
+   again; patches already applied are skipped).
+3. Build as SoH's [build guide](Shipwright/docs/BUILDING.md) describes, from
+   the `Shipwright/` folder. The program is `ZombiesOfTime` (`ZombiesOfTime.exe`
+   on Windows).
+4. Run it, give it your ROM when asked, and load a save. **Zombies Only** is
    on by default, so the file goes straight to the Zombies of Time main menu.
 
 Every pull request also builds a Windows version and an Android APK in CI
 (the `zombies-of-time-windows` and `zombies-of-time-android` artifacts). Like
 SoH, both ask for your own ROM the first time they run.
+
+## Installing next to Ship of Harkinian
+
+Zombies of Time never shares files with SoH. It reads your ROM the same way
+SoH does and makes its own `oot.o2r` from it, in its own folder.
+
+| Platform | Program | Saves, settings (`shipofharkinian.json`), logs, `mods/` |
+| --- | --- | --- |
+| Windows | `ZombiesOfTime.exe` (window "Zombies of Time") | The folder you unzip it to. Unzip it to its own folder, not into SoH's. |
+| Linux | `ZombiesOfTime` | The folder you run it from; as an AppImage, `~/.local/share/zombiesoftime` |
+| Android | "Zombies of Time" app (`com.tdprinting.zombiesoftime`) | `/storage/emulated/0/ZombiesOfTime` (or an SD card folder you pick) |
+
+On Android it installs as a separate app beside SoH's. APKs built before this
+change installed as `com.linkzenic.soh.localtest` and used the `SOH93-Test`
+folder; uninstall that one and copy any saves you want from `SOH93-Test/Save`
+into `ZombiesOfTime/Save`.
+
+### Engine patches
+
+`mod/patches/*.patch` are changes to SoH's own code, applied by
+`scripts/apply.sh` with `git apply` (the `Shipwright/` submodule itself stays
+upstream SoH). Number new patches so they sort after the existing ones; a patch
+for a nested submodule such as libultraship goes in `mod/patches/libultraship/`.
+`scripts/apply.sh --android soh-android` does the same for the Android port,
+using a same-named file in `mod/patches-android/` in place of a shared patch
+whose context differs there. The script stops with an error if a patch no
+longer applies, for example after the submodule is updated.
 
 Run the formula tests with `./scripts/test.sh`.
 
@@ -62,7 +95,7 @@ lists everything.
 Set **Players** to **2** in the main menu and connect two gamepads. During a
 co-op run the second gamepad plays player 2 automatically (with the default
 layout if its port has none) and goes back to Link when the run ends. If port 2
-in SoH's controller settings already has a gamepad, that setup is used as is.
+in the controller settings already has a gamepad, that setup is used as is.
 The screen splits top and bottom like Black Ops: player 1 is Link on top,
 player 2 is a second Link in a red tunic below, with their own camera.
 

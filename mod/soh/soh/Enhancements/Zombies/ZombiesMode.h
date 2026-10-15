@@ -97,6 +97,10 @@ struct TrackedEnemy {
     int swipeTimer = 0; // frames until it can swipe at anyone again
     int tearTimer = 0;  // frames spent on the board it is pulling off
     int vocalTimer = 0; // frames until its next moan
+    // Guns (ZombiesGuns.cpp): full health when it spawned, and the fraction of a hit point
+    // the last bullet left over.
+    s16 maxHealth = 0;
+    float gunCarry = 0.0f;
 };
 
 // Player 2 in split-screen co-op: a second Link with their own health, points and
@@ -270,6 +274,16 @@ void Extras_Update(PlayState* play, Player* player);
 
 // Arenas (ZombiesArena.cpp)
 const ArenaLayout* Arena_ForScene(s16 sceneNum);
+
+// The Black Ops zombie drawn with the imported model (ZombiesZombie.cpp). The mode moves
+// it like the OoT undead; these tell it what it's doing so it can animate.
+bool ZombieActor_Available();
+s16 ZombieActor_Id();
+bool ZombieActor_Is(Actor* actor);
+bool ZombieActor_Busy(Actor* actor);
+void ZombieActor_SetTier(Actor* actor, MoveTier tier);
+void ZombieActor_SetTearing(Actor* actor, bool tearing);
+void ZombieActor_Attack(Actor* actor);
 
 // A Black Ops map converted from the player's own install (ZombiesBoMap.cpp).
 std::string BoMap_Path();

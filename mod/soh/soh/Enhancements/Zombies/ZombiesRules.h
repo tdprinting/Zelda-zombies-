@@ -137,4 +137,46 @@ int RepairPoints(int repairPointsThisRound);
 
 const char* PowerUpName(PowerUp p);
 
+// ---------------------------------------------------------------------------
+// Weapon damage. Gun damage is written in Black Ops units, against Black Ops zombie health
+// (150 on round 1, +100 a round to round 9, then x1.1 a round). A hit takes the same share
+// of one of our undead's health as it would of a Black Ops zombie's on that round, so
+// shots-to-kill match Black Ops at every round, whatever OoT enemy it is.
+
+int BoZombieHealth(int round);
+
+// HP a hit of boDamage takes off an enemy whose full health is maxHp. scalingPercent is
+// the Health Scaling slider, which scales Black Ops' growth the same way it scales ours.
+float BoDamageToHp(float boDamage, int maxHp, int round, int scalingPercent);
+
+// Zelda items, each given a Black Ops damage equivalent for its tier, so they keep up
+// with the guns as the rounds climb. The sword is the knife and keeps its own damage.
+enum class OotWeapon {
+    None,
+    Slingshot,
+    Bow,
+    FireArrow,
+    IceArrow,
+    LightArrow,
+    Boomerang,
+    Hookshot,
+    Longshot,
+    Hammer,
+    DekuStick,
+    Bomb,
+    Bombchu,
+    DinsFire,
+    NayrusBlade, // the sword while Nayru's Love is up
+    Count,
+};
+
+// Black Ops damage equivalent per hit, 0 for weapons left at their OoT damage.
+int OotWeaponBoDamage(OotWeapon weapon);
+const char* OotWeaponName(OotWeapon weapon);
+
+// Damage an OoT item's hit deals: its Black Ops equivalent turned into HP as for a gun,
+// never less than the item's own damage, which carries it in the late rounds where
+// Black Ops health outgrows ours.
+int ScaledItemDamage(int vanillaDamage, OotWeapon weapon, int maxHp, int round, int scalingPercent);
+
 } // namespace Zombies

@@ -2,6 +2,9 @@
 //   ./scripts/test.sh
 
 #include "../mod/soh/soh/Enhancements/Zombies/ZombiesRules.h"
+#include "../mod/soh/soh/Enhancements/Zombies/ZombiesGuns.h"
+
+#include <cmath>
 
 #include <cstdio>
 #include <cstdlib>
@@ -201,7 +204,155 @@ static void TestBoHealth() {
     EXPECT_TRUE(PullSpeed(MoveTier::Crawl) < PullSpeed(MoveTier::Walk));
 }
 
+static void TestBoZombieHealth() {
+    EXPECT_EQ(BoZombieHealth(1), 150);
+    EXPECT_EQ(BoZombieHealth(2), 250);
+    EXPECT_EQ(BoZombieHealth(9), 950);
+    EXPECT_EQ(BoZombieHealth(10), 1045); // x1.1 from round 10
+    EXPECT_EQ(BoZombieHealth(11), 1149);
+    EXPECT_TRUE(BoZombieHealth(200) > 0); // never overflows
+}
+
+// Shots for a gun to drop an enemy with maxHp, as the game counts them (whole HP with
+// the remainder carried to the next hit).
+static int ShotsToKill(float boDamage, int maxHp, int round) {
+    float perShot = BoDamageToHp(boDamage, maxHp, round, 100);
+    float dealt = 0.0f;
+    int shots = 0;
+    while (dealt + 1e-4f < static_cast<float>(maxHp) && shots < 100000) {
+        dealt += perShot;
+        shots++;
+    }
+    return shots;
+}
+
+static void TestGunDamageMatchesBlackOps() {
+    // Shots-to-kill match Black Ops whatever the enemy's own HP is.
+    for (int round : { 1, 5, 10, 20, 30 }) {
+        for (int maxHp : { 2, 8, 37, 255 }) {
+            for (float damage : { 20.0f, 105.0f, 1000.0f }) {
+                int bo = static_cast<int>(std::ceil(BoZombieHealth(round) / damage - 1e-4));
+                EXPECT_EQ(ShotsToKill(damage, maxHp, round), bo);
+            }
+        }
+    }
+    // M1911 on round 1: eight body shots, four to the head.
+    EXPECT_EQ(ShotsToKill(20.0f, 8, 1), 8);
+    EXPECT_EQ(ShotsToKill(20.0f * GunInfo(GunId::M1911).headshot, 8, 1), 4);
+    // Health Scaling at 0% keeps every round at round 1's toughness.
+    EXPECT_TRUE(std::fabs(BoDamageToHp(105.0f, 8, 25, 0) - BoDamageToHp(105.0f, 8, 1, 100)) < 1e-4f);
+}
+
+static void TestItemScaling() {
+    // Never below the item's own damage.
+    for (int w = 0; w < static_cast<int>(OotWeapon::Count); w++) {
+        for (int round : { 1, 10, 40 }) {
+            EXPECT_TRUE(ScaledItemDamage(2, static_cast<OotWeapon>(w), 30, round, 100) >= 2);
+        }
+    }
+    // The sword (knife) keeps OoT damage.
+    EXPECT_EQ(ScaledItemDamage(2, OotWeapon::None, 30, 5, 100), 2);
+    // Din's Fire is the Thundergun: one cast kills at any round and any health.
+    EXPECT_TRUE(ScaledItemDamage(4, OotWeapon::DinsFire, 255, 60, 100) >= 255);
+    // An arrow on round 1 kills a Redead (8 HP) in one, as an M14 headshot would.
+    EXPECT_TRUE(ScaledItemDamage(2, OotWeapon::Bow, 8, 1, 100) >= 8);
+    // Each item outdoes a wall gun of its tier per hit at every round, since it fires
+    // slower or costs magic. Round 15 Redead (8 HP base).
+    int hp = ScaleHealth(8, 15, 100);
+    auto gunHit = [&](GunId id) { return BoDamageToHp(GunInfo(id).base.damage, hp, 15, 100); };
+    EXPECT_TRUE(ScaledItemDamage(1, OotWeapon::Slingshot, hp, 15, 100) >= gunHit(GunId::M1911));
+    EXPECT_TRUE(ScaledItemDamage(2, OotWeapon::Bow, hp, 15, 100) >= gunHit(GunId::M14));
+    EXPECT_TRUE(ScaledItemDamage(2, OotWeapon::LightArrow, hp, 15, 100) >= gunHit(GunId::RayGun));
+    EXPECT_TRUE(ScaledItemDamage(4, OotWeapon::Hammer, hp, 15, 100) >= gunHit(GunId::Olympia) * 8);
+    // Late, Black Ops health outgrows ours and the item's own damage takes over.
+    EXPECT_EQ(ScaledItemDamage(2, OotWeapon::Bow, ScaleHealth(8, 60, 100), 60, 100), 2);
+}
+
+static void TestGunTable() {
+    for (int i = 1; i < static_cast<int>(GunId::Count); i++) {
+        GunId id = static_cast<GunId>(i);
+        const GunStats& g = GunInfo(id);
+        EXPECT_TRUE(g.id == id);
+        EXPECT_TRUE(g.base.clip > 0 && g.base.reserve > 0 && g.fireFrames >= 1.0f && g.reloadFrames > 0);
+        // Pack-a-Punch never makes a gun worse.
+        EXPECT_TRUE(g.pap.damage + g.pap.splash >= g.base.damage + g.base.splash);
+        EXPECT_TRUE(g.pap.clip >= g.base.clip);
+        EXPECT_TRUE(g.pap.name[0] != '\0' && g.boName[0] != '\0');
+        // Every gun comes from somewhere: start pistol, a wall or the chest.
+        EXPECT_TRUE(id == GunId::M1911 || g.wallCost > 0 || g.boxWeight > 0);
+    }
+    // Ray Gun: box only, rarest, projectile with splash, 20 + 160; Porter's X2 is 40 + 200.
+    const GunStats& ray = GunInfo(GunId::RayGun);
+    EXPECT_EQ(ray.wallCost, 0);
+    EXPECT_TRUE(ray.projectile && ray.base.splash > 0);
+    EXPECT_EQ(ray.base.clip, 20);
+    EXPECT_EQ(ray.base.reserve, 160);
+    EXPECT_EQ(ray.pap.clip, 40);
+    for (int i = 1; i < static_cast<int>(GunId::Count); i++) {
+        if (GunInfo(static_cast<GunId>(i)).boxWeight > 0) {
+            EXPECT_TRUE(ray.boxWeight <= GunInfo(static_cast<GunId>(i)).boxWeight);
+        }
+    }
+    // Black Ops wall prices, and ammo at half price (4500 once punched).
+    EXPECT_EQ(GunInfo(GunId::M14).wallCost, 500);
+    EXPECT_EQ(GunInfo(GunId::Olympia).wallCost, 500);
+    EXPECT_EQ(GunInfo(GunId::MP5K).wallCost, 1000);
+    EXPECT_EQ(GunInfo(GunId::AK74u).wallCost, 1200);
+    EXPECT_EQ(GunInfo(GunId::Stakeout).wallCost, 1500);
+    EXPECT_EQ(GunAmmoCost(GunId::M14, false), 250);
+    EXPECT_EQ(GunAmmoCost(GunId::M14, true), kPapAmmoCost);
+}
+
+static void TestGunSlots() {
+    PlayerGuns guns;
+    EXPECT_EQ(guns.Give(GunId::M1911), 0);
+    EXPECT_EQ(guns.Current().clip, 8);
+    EXPECT_EQ(guns.Current().reserve, 80);
+    // A second gun fills the empty slot and is drawn.
+    EXPECT_EQ(guns.Give(GunId::M14), 1);
+    EXPECT_EQ(guns.current, 1);
+    EXPECT_EQ(guns.Count(), 2);
+    // A third replaces the one in hand.
+    EXPECT_EQ(guns.Give(GunId::MP40), 1);
+    EXPECT_TRUE(guns.Has(GunId::M1911) && guns.Has(GunId::MP40) && !guns.Has(GunId::M14));
+    // Reload moves only what the clip has room for.
+    guns.Current().clip = 5;
+    EXPECT_TRUE(guns.CanReload());
+    EXPECT_EQ(guns.Reload(), 27);
+    EXPECT_EQ(guns.Current().clip, 32);
+    EXPECT_EQ(guns.Current().reserve, 192 - 27);
+    EXPECT_TRUE(!guns.CanReload());
+    // Running the reserve low: the last rounds go in.
+    guns.Current().clip = 0;
+    guns.Current().reserve = 10;
+    EXPECT_EQ(guns.Reload(), 10);
+    EXPECT_EQ(guns.Current().reserve, 0);
+    EXPECT_TRUE(!guns.CanReload());
+    // Max Ammo fills reserves and leaves clips alone.
+    guns.MaxAmmo();
+    EXPECT_EQ(guns.Current().reserve, 192);
+    EXPECT_EQ(guns.Current().clip, 10);
+    // Swapping goes to the other gun.
+    EXPECT_EQ(guns.NextSlot(), 0);
+    // Pack-a-Punch: new name, bigger clip, full.
+    guns.PackAPunch(1);
+    EXPECT_EQ(guns.slots[1].clip, 64);
+    EXPECT_TRUE(std::string(GunName(GunId::MP40, true)) == "THE AFTERBURNER");
+    // The chest never offers a gun you hold.
+    int total = GunBoxWeight(guns);
+    for (int roll = 0; roll < total; roll++) {
+        GunId id = GunBoxPick(guns, roll);
+        EXPECT_TRUE(id != GunId::None && !guns.Has(id));
+    }
+    EXPECT_TRUE(GunBoxPick(guns, total) == GunId::None);
+}
+
 int main() {
+    TestBoZombieHealth();
+    TestGunDamageMatchesBlackOps();
+    TestItemScaling();
+    TestGunTable();
+    TestGunSlots();
     TestBoHealth();
     TestRoundSizes();
     TestSpawnDelay();

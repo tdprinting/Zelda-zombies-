@@ -5,6 +5,7 @@
 // torches stay dark until the power is on.
 
 #include "ZombiesMode.h"
+#include "ZombiesGuns.h"
 
 #include <libultraship/bridge/consolevariablebridge.h>
 
@@ -312,6 +313,9 @@ static void AutoEquip(PlayState* play, u8 item) {
         }
     }
     for (int b = 1; b <= 3; b++) {
+        if (b == Guns_Button()) {
+            continue; // the guns' button
+        }
         if (gSaveContext.equips.buttonItems[b] == ITEM_NONE) {
             gSaveContext.equips.buttonItems[b] = item;
             gSaveContext.equips.cButtonSlots[b - 1] = SLOT(item);
@@ -375,8 +379,8 @@ static void GiveWeapon(PlayState* play, u8 item) {
     AutoEquip(play, item);
 }
 
-// Zombies-only starting kit, Black Ops style: a sword for the knife, a slingshot or bow
-// for the pistol, four bombs for the grenades, three hearts, and an ocarina with the
+// Zombies-only starting kit, Black Ops style: a sword for the knife, the M1911 (given by
+// the guns), four bombs for the grenades, three hearts, and an ocarina with the
 // three songs the mode uses. The run's save snapshot puts the real inventory back after.
 void GiveLoadout(PlayState* play) {
     bool adult = LINK_IS_ADULT;
@@ -410,8 +414,8 @@ void GiveLoadout(PlayState* play) {
     gSaveContext.equips.buttonItems[0] = adult ? ITEM_SWORD_MASTER : ITEM_SWORD_KOKIRI;
     Interface_LoadItemIcon1(play, 0);
 
-    GiveWeapon(play, adult ? ITEM_BOW : ITEM_SLINGSHOT);
-    AutoEquip(play, adult ? ITEM_BOW : ITEM_SLINGSHOT);
+    // The pistol is the M1911 on the guns' button (ZombiesGuns.cpp); the slingshot or bow
+    // is the Armory's first buy.
     Item_Give(play, ITEM_BOMB_BAG_20);
     AMMO(ITEM_BOMB) = 4;
     AutoEquip(play, ITEM_BOMB);
@@ -461,8 +465,8 @@ struct ChestPrize {
     int weight;
 };
 
-// Black Ops box analogues: Bombchus are the Monkey Bomb, Din's Fire the Thundergun,
-// Light Arrows the Ray Gun.
+// Black Ops box analogues: Bombchus are the Monkey Bomb, Din's Fire the Thundergun. The
+// guns (the Ray Gun among them) join these in the roll; see ZombiesGunTable.cpp.
 static const ChestPrize kChildChest[] = {
     { ITEM_BOMBCHU, "BOMBCHUS", 4 },  { ITEM_SLINGSHOT, "FAIRY SLINGSHOT", 3 }, { ITEM_BOOMERANG, "BOOMERANG", 3 },
     { ITEM_BOMB, "BOMBS", 3 },        { ITEM_DINS_FIRE, "DIN'S FIRE", 2 },      { ITEM_NAYRUS_LOVE, "NAYRU'S LOVE", 1 },
@@ -475,6 +479,16 @@ static const ChestPrize kAdultChest[] = {
     { ITEM_NAYRUS_LOVE, "NAYRU'S LOVE", 1 }, { ITEM_ARROW_LIGHT, "LIGHT ARROWS", 1 },
     { ITEM_SWORD_BGS, "BIGGORON SWORD", 1 },
 };
+
+static int ChestWeight() {
+    const ChestPrize* list = LINK_IS_ADULT ? kAdultChest : kChildChest;
+    int count = static_cast<int>(LINK_IS_ADULT ? std::size(kAdultChest) : std::size(kChildChest));
+    int total = 0;
+    for (int i = 0; i < count; i++) {
+        total += list[i].weight;
+    }
+    return total;
+}
 
 static const ChestPrize& RollChest() {
     const ChestPrize* list = LINK_IS_ADULT ? kAdultChest : kChildChest;
@@ -541,6 +555,10 @@ static PapUpgrade PapForItem(u8 item) {
 }
 
 static PapUpgrade FindPapUpgrade() {
+    // The gun in hand, when Link used it last: Black Ops punches what you're holding.
+    if (Guns_PapWanted(0)) {
+        return { Guns_PapName(0), [](PlayState* play) { Guns_PackAPunch(play, 0); } };
+    }
     for (int b = 1; b <= 3; b++) {
         PapUpgrade upgrade = PapForItem(gSaveContext.equips.buttonItems[b]);
         if (upgrade.apply != nullptr) {
@@ -559,6 +577,9 @@ static PapUpgrade FindPapUpgrade() {
                     Inventory_ChangeEquipment(EQUIP_TYPE_SHIELD, EQUIP_VALUE_SHIELD_MIRROR);
                     Player_SetEquipmentData(play, GET_PLAYER(play));
                 } };
+    }
+    if (Guns_PapWanted(0, true)) {
+        return { Guns_PapName(0), [](PlayState* play) { Guns_PackAPunch(play, 0); } };
     }
     return {};
 }
@@ -761,6 +782,10 @@ static Offer GetOffer(const Station& station, int who) {
                 }
                 break;
             }
+            // The rack's gun entries (R at the Armory), then its Zelda item.
+            if (Guns_ArmoryOffer(who, &offer.label, &offer.cost, &offer.available, &offer.unavailableReason)) {
+                break;
+            }
             const WeaponOffer* weapon = ArmoryOffer();
             if (weapon != nullptr) {
                 offer.label = weapon->name;
@@ -913,6 +938,9 @@ static void Buy(PlayState* play, Station& station, const Offer& offer, int who) 
     }
     switch (station.type) {
         case StationType::Armory: {
+            if (Guns_ArmoryBuy(play, who)) {
+                break;
+            }
             const WeaponOffer* weapon = ArmoryOffer();
             if (weapon != nullptr) {
                 GiveWeapon(play, weapon->item);
@@ -932,6 +960,15 @@ static void Buy(PlayState* play, Station& station, const Offer& offer, int who) 
                 MoveChest(play);
                 sChestUses = 0;
                 return;
+            }
+            // Guns and Zelda items share the chest: roll over both weights together.
+            int gunWeight = Guns_ChestWeight(who);
+            int roll = static_cast<int>(Rand_ZeroOne() * static_cast<float>(gunWeight + ChestWeight()));
+            const char* gun = roll < gunWeight ? Guns_ChestGive(play, who, roll) : nullptr;
+            if (gun != nullptr) {
+                Announce(gun, 3);
+                Sfx_PlaySfxCentered(NA_SE_SY_GET_BOXITEM);
+                break;
             }
             const ChestPrize& prize = RollChest();
             GiveWeapon(play, prize.item);
@@ -997,6 +1034,10 @@ static void UpdateBuyer(PlayState* play, const Buyer& buyer) {
         return;
     }
 
+    std::string rack;
+    if (nearest->type == StationType::Armory) {
+        rack = Guns_ArmoryBrowse(play, buyer.index); // R steps through the guns on the wall
+    }
     Offer offer = GetOffer(*nearest, buyer.index);
     std::string button = buyer.index == 0 ? BuyButtonName() : "A";
     std::string& prompt = *buyer.prompt;
@@ -1009,6 +1050,7 @@ static void UpdateBuyer(PlayState* play, const Buyer& buyer) {
     } else {
         prompt = button + ": " + offer.label;
     }
+    prompt += rack;
 
     if (buyer.pressed && !buyer.busy) {
         Buy(play, *nearest, offer, buyer.index);

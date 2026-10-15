@@ -7,6 +7,7 @@
 // and are held on the far side of it until its boards are gone.
 
 #include "ZombiesMode.h"
+#include "ZombiesModel.h"
 
 #include <libultraship/bridge/consolevariablebridge.h>
 
@@ -180,6 +181,10 @@ bool Barricades_HoldEnemy(TrackedEnemy& enemy, float speed) {
     }
 
     Actor* actor = enemy.actor;
+    if (ZombieActor_Busy(actor)) {
+        enemy.stuckFrames = 0;
+        return true; // climbing out of the ground or swiping through the boards
+    }
     float inX = Math_SinS(w.yaw);
     float inZ = Math_CosS(w.yaw);
 
@@ -337,9 +342,46 @@ extern "C" void ZombiesDraw_Crate(PlayState* play, const Vec3f& base, s16 yaw, f
     Gfx_DrawDListOpa(play, (Gfx*)gSmallWoodenBoxDL);
 }
 
+// A board imported from Black Ops, laid across the window like a plank: its longest
+// side along the window, scaled to the window's width.
+extern "C" void ZombiesDraw_Board(PlayState* play, Gfx* dl, const Vec3f& lo, const Vec3f& hi, float vtxScale,
+                                  const Vec3f& base, s16 yaw, float x, float y, float z, float roll, float width) {
+    Matrix_Translate(base.x, base.y, base.z, MTXMODE_NEW);
+    Matrix_RotateY(BINANG_TO_RAD(yaw), MTXMODE_APPLY);
+    Matrix_Translate(x, y, z, MTXMODE_APPLY);
+    Matrix_RotateZ(roll, MTXMODE_APPLY);
+    float lenX = hi.x - lo.x;
+    float lenZ = hi.z - lo.z;
+    bool alongZ = lenZ > lenX;
+    float length = std::max(std::max(lenX, lenZ), 1.0f);
+    float s = width / length;
+    if (alongZ) {
+        Matrix_RotateY(1.5707964f, MTXMODE_APPLY); // a quarter turn
+    }
+    Matrix_Scale(s / vtxScale, s / vtxScale, s / vtxScale, MTXMODE_APPLY);
+    Matrix_Translate(-(lo.x + hi.x) * 0.5f * vtxScale, -(lo.y + hi.y) * 0.5f * vtxScale,
+                     -(lo.z + hi.z) * 0.5f * vtxScale, MTXMODE_APPLY);
+    Gfx_DrawDListOpa(play, dl);
+}
+
 extern "C" void ZombiesBarricades_Draw(PlayState* play) {
     using namespace Zombies;
     const Run& run = GetRun();
+
+    // Black Ops' own boards when the player has imported them.
+    std::vector<std::string> boards = Model_Manifest("board_model");
+    ZModel* boardModel = boards.empty() ? nullptr : Model_Get(boards[0]);
+    Gfx* boardDl = Model_RigidDl(boardModel);
+    Vec3f boardLo, boardHi;
+    Model_Bounds(boardModel, &boardLo, &boardHi);
+    auto plank = [&](const Vec3f& base, s16 yaw, float x, float y, float z, float roll, float width, float height,
+                     float depth) {
+        if (boardDl != nullptr) {
+            ZombiesDraw_Board(play, boardDl, boardLo, boardHi, Model_VertexScale(), base, yaw, x, y, z, roll, width);
+        } else {
+            ZombiesDraw_Crate(play, base, yaw, x, y, z, roll, width, height, depth);
+        }
+    };
 
     for (size_t i = 0; i < run.windows.size(); i++) {
         const Window& w = run.windows[i];
@@ -354,12 +396,12 @@ extern "C" void ZombiesBarricades_Draw(PlayState* play) {
             float y = 14.0f + static_cast<float>(b) * 12.0f;
             float roll = (b % 2 == 0) ? 0.12f : -0.1f;
             if (b < w.boards) {
-                ZombiesDraw_Crate(play, w.pos, w.yaw, 0.0f, y, -4.0f, roll, kWindowWidth + 6.0f, 10.0f, 6.0f);
+                plank(w.pos, w.yaw, 0.0f, y, -4.0f, roll, kWindowWidth + 6.0f, 10.0f, 6.0f);
             } else if (b == w.boards && w.fallingBoard > 0) {
                 // The board just torn off tumbles outward.
                 float t = 1.0f - static_cast<float>(w.fallingBoard) / kFallFrames;
-                ZombiesDraw_Crate(play, w.pos, w.yaw, 0.0f, y - t * y, -4.0f - t * 30.0f, roll + t * 1.4f,
-                                  kWindowWidth + 6.0f, 10.0f, 6.0f);
+                plank(w.pos, w.yaw, 0.0f, y - t * y, -4.0f - t * 30.0f, roll + t * 1.4f, kWindowWidth + 6.0f, 10.0f,
+                      6.0f);
             }
         }
 

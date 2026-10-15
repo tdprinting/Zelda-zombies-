@@ -19,6 +19,12 @@ static const std::map<int32_t, const char*> kBuyButtons = {
     { 1, "D-pad Down" },
 };
 
+static const std::map<int32_t, const char*> kGunButtons = {
+    { 1, "C-Left" },
+    { 2, "C-Down" },
+    { 3, "C-Right" },
+};
+
 static void RegisterZombiesWidgets() {
     using namespace UIWidgets;
 
@@ -46,6 +52,15 @@ static void RegisterZombiesWidgets() {
                      .ComboMap(kBuyButtons)
                      .DefaultIndex(0)
                      .Tooltip("Button that starts a run and buys from a station."));
+    SohGui::mSohMenu->AddWidget(path, "Gun Button", WIDGET_CVAR_COMBOBOX)
+        .CVar(CVAR_ZOMBIES("GunButton"))
+        .Options(ComboboxOptions()
+                     .ComboMap(kGunButtons)
+                     .DefaultIndex(1)
+                     .Tooltip("The C button your Black Ops guns are on during a run; it stays free of items. "
+                              "Press it to fire (hold for automatics). The buy button reloads when there's "
+                              "nothing to buy, and holding it swaps guns. C-Up aims down the sights in "
+                              "first person, where the left stick walks."));
     SohGui::mSohMenu->AddWidget(path, "Keep Items After Run", WIDGET_CVAR_CHECKBOX)
         .CVar(CVAR_ZOMBIES("KeepItems"))
         .Options(CheckboxOptions().Tooltip(

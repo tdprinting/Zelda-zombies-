@@ -2,6 +2,7 @@
 // so it scales with the N64 frame at every resolution.
 
 #include "ZombiesMode.h"
+#include "ZombiesGuns.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -273,6 +274,32 @@ static void DrawPartner(GfxPrint* printer) {
     }
 }
 
+// The gun in hand, bottom right under the points as in Black Ops: name, then clip | reserve.
+static void DrawGun(GfxPrint* printer, bool split) {
+    std::string name, ammo, hint;
+    bool crosshair = false;
+    if (!Guns_HudInfo(&name, &ammo, &hint, &crosshair)) {
+        return;
+    }
+    if (split) {
+        GfxPrint_SetColor(printer, 230, 230, 230, 255);
+        PrintRight(printer, 38, 14, name + "  " + ammo);
+    } else {
+        GfxPrint_SetColor(printer, 200, 200, 200, 255);
+        PrintRight(printer, 38, 27, name);
+        GfxPrint_SetColor(printer, 255, 255, 255, 255);
+        PrintRight(printer, 38, 28, ammo);
+    }
+    if (!hint.empty()) {
+        GfxPrint_SetColor(printer, 255, 230, 120, 255);
+        PrintCentered(printer, split ? 11 : 24, hint);
+    }
+    if (crosshair) {
+        GfxPrint_SetColor(printer, 255, 255, 255, 200);
+        PrintAt(printer, 19, split ? 7 : 14, "+");
+    }
+}
+
 static void DrawContents(GfxPrint* printer) {
     Run& run = GetRun();
     bool inRun = run.phase == Phase::Active || run.phase == Phase::Intermission || run.phase == Phase::Intro;
@@ -285,6 +312,7 @@ static void DrawContents(GfxPrint* printer) {
 
         DrawPerks(printer, run.players[0], split ? 12 : 22);
         DrawPoints(printer, 0, split ? 13 : 26, split ? 10 : 22);
+        DrawGun(printer, split);
 
         if (split) {
             DrawPartner(printer);

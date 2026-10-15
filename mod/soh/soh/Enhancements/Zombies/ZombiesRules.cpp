@@ -232,4 +232,80 @@ const char* PowerUpName(PowerUp p) {
     }
 }
 
+int BoZombieHealth(int round) {
+    double health = 150.0;
+    for (int r = 2; r <= round; r++) {
+        if (r < 10) {
+            health += 100.0;
+        } else {
+            health += std::floor(health * 0.1);
+        }
+        if (health > 1e9) {
+            return 1000000000;
+        }
+    }
+    return static_cast<int>(health);
+}
+
+float BoDamageToHp(float boDamage, int maxHp, int round, int scalingPercent) {
+    float scale = std::max(scalingPercent, 0) / 100.0f;
+    float boHealth = 150.0f + (static_cast<float>(BoZombieHealth(round)) - 150.0f) * scale;
+    return boDamage * static_cast<float>(std::max(maxHp, 1)) / std::max(boHealth, 1.0f);
+}
+
+int OotWeaponBoDamage(OotWeapon weapon) {
+    // Matched to a gun of the item's tier by damage per second at OoT's own fire rate: the
+    // bow looses about an arrow every 0.6 s against the M14's 105 at up to 6.7 shots a second.
+    switch (weapon) {
+        case OotWeapon::Slingshot:
+            return 250; // the child's M14: Armory, 500
+        case OotWeapon::Bow:
+            return 500; // M14 / MP40 tier
+        case OotWeapon::FireArrow:
+            return 1000; // and it burns
+        case OotWeapon::IceArrow:
+            return 800; // and it freezes
+        case OotWeapon::LightArrow:
+            return 2000; // Ray Gun tier, paid for in magic
+        case OotWeapon::Boomerang:
+            return 300; // stuns, hits several, comes back: no ammo at all
+        case OotWeapon::Hookshot:
+            return 600; // stuns and pulls
+        case OotWeapon::Longshot:
+            return 800;
+        case OotWeapon::Hammer:
+            return 1500; // slow, but a Bowie knife and a half
+        case OotWeapon::DekuStick:
+            return 500; // until it breaks
+        case OotWeapon::Bomb:
+            return 800; // a grenade: one-shots to round 7, as Black Ops frags do
+        case OotWeapon::Bombchu:
+            return 1000;
+        case OotWeapon::DinsFire:
+            return 1000000000; // the Thundergun: nothing in the blast survives
+        case OotWeapon::NayrusBlade:
+            return 1000; // the sword as a Bowie knife while Nayru's Love is up
+        default:
+            return 0;
+    }
+}
+
+const char* OotWeaponName(OotWeapon weapon) {
+    static const char* names[] = { "",         "SLINGSHOT", "BOW",         "FIRE ARROW", "ICE ARROW",
+                                   "LIGHT ARROW", "BOOMERANG", "HOOKSHOT",  "LONGSHOT",   "HAMMER",
+                                   "DEKU STICK", "BOMB",      "BOMBCHU",   "DIN'S FIRE", "NAYRU'S BLADE" };
+    int i = static_cast<int>(weapon);
+    return (i >= 0 && i < static_cast<int>(OotWeapon::Count)) ? names[i] : "";
+}
+
+int ScaledItemDamage(int vanillaDamage, OotWeapon weapon, int maxHp, int round, int scalingPercent) {
+    int bo = OotWeaponBoDamage(weapon);
+    if (bo <= 0) {
+        return vanillaDamage;
+    }
+    float hp = BoDamageToHp(static_cast<float>(bo), maxHp, round, scalingPercent);
+    int scaled = hp >= 1e6f ? 1000000 : static_cast<int>(std::lround(hp));
+    return std::max(vanillaDamage, scaled);
+}
+
 } // namespace Zombies

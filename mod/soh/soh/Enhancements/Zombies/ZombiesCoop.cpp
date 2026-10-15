@@ -935,6 +935,7 @@ void Coop_Update(PlayState* play, Player* player) {
                 continue;
             }
             enemy.swipeTimer = kSwipeFrames;
+            ZombieActor_Attack(enemy.actor);
             // Black Ops health: two hits down, five with Juggernog. Off, a heart a hit.
             partner.health = BlackOpsHealth() ? HealthAfterHit(partner.health, partner.healthCapacity,
                                                                run.players[1].perks[PERK_JUGGERNOG])
